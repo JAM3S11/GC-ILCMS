@@ -1,0 +1,389 @@
+export type UserRole =
+  | 'CEO'
+  | 'VICE_CEO'
+  | 'ADMINISTRATOR'
+  | 'CLERK'
+  | 'ACCOUNTANT'
+  | 'HR'
+  | 'RECEPTIONIST'
+  | 'HEAD_OF_DEPARTMENT'
+  | 'SENIOR_CHEMIST'
+  | 'ANALYST'
+  | 'INTERN'
+  | 'ATTACHEE'
+  | 'QUALITY_MANAGER';
+
+export type LaboratoryDepartment =
+  | 'Narcotics'
+  | 'Food & Drugs'
+  | 'Criminalistic'
+  | 'DNA'
+  | 'Instruments'
+  | 'Water'
+  | 'Toxicology'
+  | 'Procurement';
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  staffId: string;
+  role: UserRole;
+  department?: LaboratoryDepartment;
+  avatarUrl?: string;
+  requiresAuthApproval?: boolean;
+  password?: string;
+}
+
+export type CaseStatus =
+  | 'RECEIVED'
+  | 'REGISTERED'
+  | 'AWAITING_ALLOCATION'
+  | 'ALLOCATED'
+  | 'IN_ANALYSIS'
+  | 'RESULTS_AVAILABLE'
+  | 'INTERPRETATION'
+  | 'REPORT_DRAFT'
+  | 'UNDER_REVIEW'
+  | 'CORRECTION_REQUIRED'
+  | 'APPROVED'
+  | 'COMPLETED'
+  | 'ARCHIVED';
+
+export type CasePriority = 'CRITICAL' | 'HIGH' | 'ROUTINE' | 'EXPEDITED';
+
+export type VisitorType = 'POLICE_OFFICER' | 'GENERAL_CLIENT';
+
+export interface OfficerVisitor {
+  id: string;
+  date: string;
+  visitorType: VisitorType;
+  officerName: string;
+  nationalId: string;
+  phone: string;
+  badgeNumber?: string;
+  station: string;
+  poBox?: string; // Postal address, captured for Food & Drugs submissions
+  vehicleRegistration?: string;
+  laboratory: LaboratoryDepartment;
+  timeIn: string;
+  timeOut?: string;
+  purposeOfVisit: string;
+  documentsPresented: string;
+  documentsVerified?: string[];
+  exhibitsPresented: string;
+  receptionistName: string;
+  signatureCaptured: boolean;
+  status: 'Awaiting Laboratory Reception' | 'In Laboratory' | 'Completed' | 'Departed';
+}
+
+export interface ExhibitItem {
+  id: string; // e.g. EXH-0001
+  caseId: string;
+  description: string;
+  submissionType: string;
+  numberOfItems: number;
+  packaging: string;
+  sealNumber: string;
+  markings: string;
+  condition: 'Intact & Sealed' | 'Compromised' | 'Damaged' | 'Resealed';
+  storageLocation: string;
+  dateReceived: string;
+  receivedFrom: string;
+  receivedBy: string;
+  laboratory: LaboratoryDepartment;
+  supportingDocuments?: string;
+  remarks?: string;
+}
+
+export interface SampleItem {
+  id: string; // e.g. SMP-0001
+  exhibitId: string;
+  caseId: string;
+  sampleDescription: string;
+  quantityTaken: string;
+  aliquotDate: string;
+  preparedBy: string;
+  storageCondition: string;
+  status: 'Awaiting Analysis' | 'In Testing' | 'Analyzed' | 'Archived';
+}
+
+/**
+ * Food & Drugs intake (mycotoxin / food quality samples).
+ * Captured by the department's own 4-step procedure rather than the
+ * generic narcotics exhibit intake form.
+ */
+export type FoodDrugSampleType = 'Aflatoxin' | 'Miscellaneous' | 'Mycotoxins';
+
+/**
+ * Registration ends at the Receiver. The Head of Section then assigns an
+ * officer, and "Reported By" is recorded only once the analysis is done.
+ */
+export type FoodDrugIntakeStatus = 'Awaiting Assignment' | 'Under Analysis' | 'Reported';
+
+export interface FoodDrugIntake {
+  id: string; // e.g. FDI-0001
+  caseId: string;
+  exhibitId: string; // links to the auto-generated ExhibitItem
+  clientName: string; // Full name of the person bringing the sample
+  nationalId: string; // digits only, max 8
+  poBox: string; // P.O Box address format
+  sampleType: FoodDrugSampleType;
+  receiver: string; // staff who received the sample
+  intakeDate: string;
+  status: FoodDrugIntakeStatus;
+  analystAssigned?: string; // Food & Drugs officer (main process), set by the Head
+  assignedBy?: string;
+  assignedDate?: string;
+  reportedBy?: string; // final step, after analysis is complete
+  reportedDate?: string;
+}
+
+/**
+ * Water & Environment exhibit intake. Registration ends at the Receiving
+ * Officer and Charges; the Head of Water & Environment then assigns the
+ * Analysis Officer, and every officer in the department can see who holds it.
+ */
+export type WaterSenderType = 'Individual' | 'Organisation';
+export type WaterTestType = 'Full Chemical Analysis' | 'Specific Chemical Analysis';
+export type WaterSourceCategory = 'Potable Water' | 'Effluent Water';
+export type WaterIntakeStatus = 'Awaiting Assignment' | 'Under Analysis' | 'Analysis Complete';
+
+export interface WaterIntake {
+  id: string; // e.g. WEI-0001
+  labReference: string; // e.g. GC/MOI/WAT/VOL I/001/2026
+  caseId: string;
+  exhibitId: string; // links to the auto-generated ExhibitItem
+  senderType: WaterSenderType;
+  senderName: string; // individual's full name, or organisation / firm name
+  senderAddress: string; // P.O Box format for individuals
+  senderMobile?: string; // individuals
+  contactPerson?: string; // organisations
+  contactPersonMobile?: string; // organisations, optional
+  receivingOfficer: string;
+  dateReceived: string;
+  testType: WaterTestType;
+  specificParameters?: string[]; // Specific Chemical Analysis only
+  sourceCategory: WaterSourceCategory;
+  sourceType: string;
+  locationFrom: string;
+  dischargeTo?: string; // Effluent only, e.g. Public Sewer or Environment
+  charges: number; // KES
+  receiptNumber?: string;
+  status: WaterIntakeStatus;
+  analysisOfficer?: string; // set by the Head of Water & Environment
+  assignedBy?: string;
+  assignedDate?: string;
+  completedBy?: string;
+  completedDate?: string;
+}
+
+export type CustodyAction =
+  | 'Received'
+  | 'Transferred'
+  | 'Stored'
+  | 'Removed from storage'
+  | 'Opened'
+  | 'Resealed'
+  | 'Returned'
+  | 'Submitted for examination';
+
+export interface CustodyRecord {
+  id: string;
+  timestamp: string;
+  sampleOrExhibitId: string;
+  fromEntity: string;
+  toEntity: string;
+  officerOrStaffName: string;
+  location: string;
+  action: CustodyAction;
+  condition: string;
+  destination: string;
+  remarks: string;
+  signatureHash: string;
+}
+
+export interface GCMSPeak {
+  peakNumber: number;
+  retentionTime: number; // e.g. 8.42 min
+  peakArea: number;
+  areaPercent: number;
+  detectedCompound: string;
+  casNumber: string;
+  matchScore: number; // 0 - 100
+  referenceLibrary: string; // e.g. NIST20 / GC-Kenya In-House Ref
+  confidenceLevel: 'HIGH' | 'MODERATE' | 'LOW' | 'REQUIRES REVIEW';
+  analystInterpretation?: string;
+}
+
+export interface GCMSResult {
+  runId: string;
+  instrumentId: string; // e.g. GC-MS-01
+  instrumentModel: string;
+  method: string;
+  date: string;
+  analystName: string;
+  sampleId: string;
+  carrierGas: string;
+  ovenProgram: string;
+  inletTemp: string;
+  splitRatio: string;
+  peaks: GCMSPeak[];
+  qcStatus: 'PASS' | 'WARNING' | 'FAIL';
+  rawChromatogramData: Array<{ time: number; intensity: number }>;
+}
+
+export interface UVVisResult {
+  runId: string;
+  instrumentId: string;
+  wavelengthRange: string;
+  solvent: string;
+  date: string;
+  analystName: string;
+  sampleId: string;
+  lambdaMaxValues: number[]; // e.g. [233, 274]
+  absorbancePeaks: Array<{ wavelength: number; absorbance: number }>;
+  referenceComparison: string;
+  qcStatus: 'PASS' | 'WARNING' | 'FAIL';
+  spectrumData: Array<{ wavelength: number; absorbance: number }>;
+}
+
+export interface ScientificReferenceSubstance {
+  id: string;
+  substanceName: string;
+  commonName: string;
+  chemicalName: string;
+  casNumber: string;
+  molecularFormula: string;
+  molecularWeight: number;
+  synonyms: string[];
+  category: string;
+  gcmsRetentionTimeExpected: number;
+  uvVisLambdaMax: number[];
+  colorTestReaction: string;
+  scheduledStatus: string;
+  source: string;
+  localRelevanceNotes: string;
+  verificationStatus: 'VERIFIED' | 'UNDER_REVIEW' | 'PROVISIONAL';
+}
+
+export interface ExaminationRecord {
+  id: string;
+  caseId: string;
+  sampleId: string;
+  examinationType: string;
+  method: string;
+  procedure: string;
+  reagents: string;
+  equipment: string;
+  instrument: string;
+  conditions: string;
+  startDate: string;
+  endDate?: string;
+  observations: string;
+  preliminaryColorTests?: string;
+  status: 'PENDING' | 'IN PROGRESS' | 'PAUSED' | 'COMPLETED' | 'REQUIRES REVIEW';
+  analystName: string;
+}
+
+export interface ScientificFinding {
+  id: string;
+  caseId: string;
+  observationsSummary: string;
+  analyticalResultsSummary: string;
+  scientificInterpretation: string;
+  supportingEvidence: string;
+  formalFindings: string;
+  conclusion: string;
+  dateRecorded: string;
+  analystName: string;
+  reviewedBySenior?: string;
+}
+
+export interface DraftReport {
+  id: string;
+  reportNumber: string;
+  caseId: string;
+  dateGenerated: string;
+  analystName: string;
+  analystTitle: string;
+  status: 'DRAFT';
+  sections: {
+    reportIdentification: string;
+    caseInformation: {
+      caseNumber: string;
+      labRefNumber: string;
+      dateReceived: string;
+      requestingStation: string;
+      investigatingOfficer: string;
+      badgeNumber: string;
+    };
+    request: string;
+    itemsReceived: string[];
+    examinationMethods: string[];
+    results: string;
+    observations: string;
+    scientificInterpretation: string;
+    findings: string;
+    conclusion: string;
+    disclaimer: string;
+  };
+}
+
+export interface ForensicCase {
+  id: string;
+  caseNumber: string; // e.g. GC/EXM/2026/0001
+  labReferenceNumber: string; // e.g. LAB/NAR/2026/0142
+  dateReceived: string;
+  dateRegistered: string;
+  requestingInstitution: string;
+  requestingDepartment: string;
+  investigatingOfficer: string;
+  officerBadge: string;
+  officerPhone: string;
+  natureOfCase: string;
+  caseCategory: string;
+  priority: CasePriority;
+  legalReference: string;
+  description: string;
+  assignedDepartment: LaboratoryDepartment;
+  assignedAnalyst: string;
+  status: CaseStatus;
+  exhibits: ExhibitItem[];
+  samples: SampleItem[];
+  foodDrugIntakes?: FoodDrugIntake[];
+  waterIntakes?: WaterIntake[];
+  custodyHistory: CustodyRecord[];
+  examinations: ExaminationRecord[];
+  gcmsResults?: GCMSResult[];
+  uvVisResults?: UVVisResult[];
+  findings?: ScientificFinding;
+  draftReport?: DraftReport;
+  visitorRecordId?: string;
+}
+
+export interface AppNotification {
+  id: string;
+  timestamp: string;
+  recipientRole?: UserRole;
+  recipientDepartment?: LaboratoryDepartment;
+  title: string;
+  message: string;
+  type: 'info' | 'warning' | 'urgent' | 'success';
+  read: boolean;
+  linkAction?: string;
+  relatedVisitorId?: string; // visitor record this alert refers to
+}
+
+export interface AuditEvent {
+  id: string;
+  timestamp: string;
+  user: string;
+  role: string;
+  action: string;
+  recordType: string;
+  recordId: string;
+  previousValue?: string;
+  newValue?: string;
+  details: string;
+}

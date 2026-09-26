@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Government Chemist Integrated Laboratory &amp; Case Management System (GC-ILCMS)</title>
+    <meta name="description" content="A centralized digital platform for forensic case management, laboratory operations, scientific analysis, evidence traceability, and draft reporting for the Government Chemist." />
+    <meta property="og:title" content="Government Chemist Integrated Laboratory &amp; Case Management System (GC-ILCMS)" />
+    <meta property="og:description" content="A centralized digital platform for forensic case management, laboratory operations, scientific analysis, evidence traceability, and draft reporting for the Government Chemist." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=Montserrat:ital,wght@0,100..900;1,100..900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <script>
+      /* Theme bootstrap — runs before first paint so there is no light/dark
+         flash (FOUC). Mirrors src/theme/themeScript.ts; keep the storage key
+         and resolution logic in sync with ThemeProvider. */
+      (function () {
+        try {
+          var k = 'gc-ilcms-theme';
+          var s = localStorage.getItem(k);
+          var m = s === 'light' || s === 'dark' || s === 'system' ? s : 'light';
+          var d = m === 'dark' || (m === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          var e = document.documentElement;
+          e.classList.toggle('dark', d);
+          e.style.colorScheme = d ? 'dark' : 'light';
+        } catch (err) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+

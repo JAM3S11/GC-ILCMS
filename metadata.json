@@ -1,0 +1,6 @@
+{
+  "name": "Government Chemist Integrated Laboratory & Case Management System (GC-ILCMS)",
+  "description": "A centralized digital platform for forensic case management, laboratory operations, scientific analysis, evidence traceability, and draft reporting for the Government Chemist.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
