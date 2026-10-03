@@ -4,10 +4,13 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --port=8000 --host=0.0.0.0",
+    "dev": "node server.js",
+    "start": "node server.js",
+    "migrate": "node scripts/migrate.js",
+    "bootstrap:super-admin": "node scripts/bootstrap-super-admin.js",
     "build": "vite build",
     "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
+    "clean": "node scripts/clean.js",
     "lint": "tsc --noEmit"
   },
   "dependencies": {
@@ -19,8 +22,11 @@
     "@vitejs/plugin-react": "^5.0.4",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
+    "express-rate-limit": "^8.7.0",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
+    "nodemailer": "^10.0.13",
+    "pg": "^8.23.0",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "reshaped": "^4.2.0",

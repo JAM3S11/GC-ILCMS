@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, FlaskConical, TestTube, Droplets, LogOut, Bell, FileText, Award, BookOpen, Shield, Settings } from 'lucide-react';
+import { LayoutDashboard, FlaskConical, TestTube, Droplets, LogOut, Bell, FileText, Settings, ShieldCheck } from 'lucide-react';
 import { LaboratoryDepartment, User, UserRole } from '../../types';
 
 /**
@@ -22,10 +22,10 @@ export const APP_NAV_GROUPS: { title: string; items: NavItem[] }[] = [
     items: [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     {
-      id: 'laboratory',
-      label: 'Laboratory',
+        id: 'laboratory',
+        label: 'Laboratory',
         icon: FlaskConical,
-        roles: ['ANALYST', 'HEAD_OF_DEPARTMENT'],
+        roles: ['ANALYST', 'SENIOR_CHEMIST', 'HEAD_OF_DEPARTMENT'],
         departments: ['Food & Drugs'],
       },
       {
@@ -44,7 +44,10 @@ export const APP_NAV_GROUPS: { title: string; items: NavItem[] }[] = [
         id: 'lab-bay',
         label: 'Lab Bay',
         icon: FlaskConical,
-        roles: ['RECEPTIONIST', 'ADMINISTRATOR', 'CLERK', 'CEO'],
+        roles: [
+          'RECEPTIONIST', 'ADMINISTRATOR', 'CLERK', 'CEO',
+          'ANALYST', 'SENIOR_CHEMIST', 'HEAD_OF_DEPARTMENT',
+        ],
       },
       {
         id: 'check-out',
@@ -56,22 +59,15 @@ export const APP_NAV_GROUPS: { title: string; items: NavItem[] }[] = [
         id: 'notifications',
         label: 'Notifications',
         icon: Bell,
-        roles: ['ADMINISTRATOR', 'CLERK', 'CEO'],
+        roles: ['RECEPTIONIST', 'ADMINISTRATOR', 'CLERK', 'CEO'],
       },
       { id: 'case-file', label: 'Case File', icon: FileText, roles: ['ADMINISTRATOR', 'CLERK', 'CEO'] },
     ],
   },
   {
-    title: 'Reference & Compliance',
+    title: 'System Administration',
     items: [
-      {
-        id: 'executive',
-        label: 'Executive',
-        icon: Award,
-        roles: ['CEO', 'VICE_CEO', 'ADMINISTRATOR'],
-      },
-      { id: 'references', label: 'Reference DB', icon: BookOpen, roles: ['ADMINISTRATOR', 'QUALITY_MANAGER', 'HEAD_OF_DEPARTMENT', 'SENIOR_CHEMIST', 'ANALYST', 'CEO', 'VICE_CEO'] },
-      { id: 'audit', label: 'Audit Trail', icon: Shield, roles: ['RECEPTIONIST', 'ADMINISTRATOR', 'QUALITY_MANAGER', 'HEAD_OF_DEPARTMENT', 'SENIOR_CHEMIST', 'ANALYST', 'CEO', 'VICE_CEO'] },
+      { id: 'super-admin', label: 'Super Admin', icon: ShieldCheck, roles: ['SUPER_ADMIN'] },
     ],
   },
 ];
@@ -80,6 +76,7 @@ export const SETTINGS_NAV_ITEM: NavItem = { id: 'settings', label: 'Settings', i
 
 /** Items with no roles/departments are open to everyone. */
 export const canSeeNavItem = (user: Pick<User, 'role' | 'department'>, item: NavItem): boolean => {
+  if (user.role === 'SUPER_ADMIN') return true;
   if (!item.roles && !item.departments) return true;
   const inDepartment = !!user.department && !!item.departments?.includes(user.department);
   return inDepartment || !!item.roles?.includes(user.role);

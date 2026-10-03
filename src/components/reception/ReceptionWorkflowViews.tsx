@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Activity,
-  ArrowRight,
   Bell,
   BellOff,
   CheckCheck,
   CheckCircle2,
+  Check,
   ClipboardCheck,
   ClipboardList,
   Clock,
@@ -17,12 +17,16 @@ import {
   LogOut,
   Package,
   Printer,
-  Send,
   Shield,
   Users,
+  UserPlus,
+  X,
 } from 'lucide-react';
 import { LaboratoryDepartment, OfficerVisitor, AppNotification } from '../../types';
 import { VISITOR_STATUS } from './visitorStatus';
+import { departmentLabel } from '../../lib/departments';
+import { NationalIdReveal } from './NationalIdReveal';
+import { LabNotifyButton } from './LabNotifyButton';
 import {
   Avatar,
   Button,
@@ -42,16 +46,30 @@ import {
 
 interface LabBayViewProps {
   visitors: OfficerVisitor[];
-  onNotifyLab: (visitor: OfficerVisitor) => void;
-  onProceedToLab: (visitor: OfficerVisitor) => void;
-  onCheckOut: (visitorId: string) => void;
+  initialSelectedVisitorId?: string | null;
+  onCheckOut: (visitorId: string) => Promise<void>;
+  onLabReceive: (visitorId: string) => Promise<void>;
+  onServiceComplete: (visitorId: string) => Promise<void>;
+  canReceiveVisits: boolean;
+  canCompleteVisits: boolean;
+  canCheckOutVisits: boolean;
+  isLoading: boolean;
+  onRevealNationalId: (visitorId: string) => Promise<string | null>;
+  hasMoreVisitors: boolean;
+  isLoadingMoreVisitors: boolean;
+  onLoadMoreVisitors: () => Promise<void>;
   currentUserName: string;
+  onOpenIntake?: (visitor: OfficerVisitor) => void;
+  onSendLabNotification?: (visitor: OfficerVisitor, resend: boolean) => Promise<void>;
 }
 
 interface CheckOutViewProps {
   visitors: OfficerVisitor[];
-  onCheckOut: (visitorId: string) => void;
-  onProceedToLab: (visitor: OfficerVisitor) => void;
+  onCheckOut: (visitorId: string) => Promise<void>;
+  canCheckOutVisits: boolean;
+  hasMoreVisitors: boolean;
+  isLoadingMoreVisitors: boolean;
+  onLoadMoreVisitors: () => Promise<void>;
 }
 
 interface NotificationsViewProps {
@@ -59,6 +77,8 @@ interface NotificationsViewProps {
   onMarkAllAsRead: () => void;
   onSelect: (notification: AppNotification) => void;
   unreadCount: number;
+  description?: string;
+  onAdminAction?: (notification: AppNotification, action: 'approve' | 'reject' | 'reset-password') => Promise<void>;
 }
 
 type VisitorProcessFilter = 'all' | 'active' | 'awaiting' | 'verified' | 'served';
@@ -98,10 +118,21 @@ const notifTone: Record<AppNotification['type'], Tone> = {
 
 export const LabBayView: React.FC<LabBayViewProps> = ({
   visitors,
-  onNotifyLab,
-  onProceedToLab,
+  initialSelectedVisitorId,
   onCheckOut,
+  onLabReceive,
+  onServiceComplete,
+  canReceiveVisits,
+  canCompleteVisits,
+  canCheckOutVisits,
+  isLoading,
+  onRevealNationalId,
+  hasMoreVisitors,
+  isLoadingMoreVisitors,
+  onLoadMoreVisitors,
   currentUserName,
+  onOpenIntake,
+  onSendLabNotification,
 }) => {
   const staged = visitors.filter((v) => v.status === 'Awaiting Laboratory Reception');
   const inLab = visitors.filter((v) => v.status === 'In Laboratory');
@@ -117,20 +148,17 @@ export const LabBayView: React.FC<LabBayViewProps> = ({
     { name: 'Toxicology Lab · Bay 2', used: Math.min(inLab.filter((v) => v.laboratory === 'Toxicology').length, 3), total: 3, tone: 'cyan' as Tone },
   ];
 
-  const [notificationSentMap, setNotificationSentMap] = useState<Record<string, boolean>>({});
   const [visitorFilter, setVisitorFilter] = useState<VisitorProcessFilter>('all');
   const [queueFilter, setQueueFilter] = useState<QueueFilter>('all');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  useEffect(() => {
+    if (initialSelectedVisitorId) setSelectedId(initialSelectedVisitorId);
+  }, [initialSelectedVisitorId]);
 
   const filteredVisitors = getFilteredVisitors(visitorFilter, visitors);
   const selectedDossier = filteredVisitors.find((v) => v.id === selectedId) ?? filteredVisitors[0];
   const queueVisitors = queueFilter === 'all' ? visitors : visitors.filter((v) => v.laboratory === queueFilter);
   const queueLaboratories = Array.from(new Set(visitors.map((v) => v.laboratory)));
-
-  const handleNotify = (vis: OfficerVisitor) => {
-    onNotifyLab(vis);
-    setNotificationSentMap((m) => ({ ...m, [vis.id]: true }));
-  };
 
   const selectVisitor = (vis: OfficerVisitor) => {
     setSelectedId(vis.id);
@@ -191,7 +219,7 @@ export const LabBayView: React.FC<LabBayViewProps> = ({
           icon={FileText}
           tone="amber"
           title="Intake dossier"
-          description={selectedDossier ? `File ref ${selectedDossier.id}` : 'No record selected'}
+          description={selectedDossier ? `Visit ${selectedDossier.visitNumber}` : 'No record selected'}
           actions={
             selectedDossier && (
               <StatusPill tone={VISITOR_STATUS[selectedDossier.status].tone} pulse={selectedDossier.status !== 'Departed'}>
@@ -204,24 +232,37 @@ export const LabBayView: React.FC<LabBayViewProps> = ({
             selectedDossier && (
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    variant={notificationSentMap[selectedDossier.id] ? 'success' : 'primary'}
-                    icon={notificationSentMap[selectedDossier.id] ? CheckCheck : Send}
-                    onClick={() => handleNotify(selectedDossier)}
-                  >
-                    {notificationSentMap[selectedDossier.id] ? 'Analyst notified' : 'Notify analyst'}
-                  </Button>
-                  <Button size="sm" icon={ArrowRight} onClick={() => onProceedToLab(selectedDossier)}>
-                    Monitor Lab Bay
-                  </Button>
+                  {canReceiveVisits && selectedDossier.status === 'Awaiting Laboratory Reception' && (
+                    <Button size="sm" variant="primary" icon={CheckCircle2} onClick={() => void onLabReceive(selectedDossier.id)}>
+                      Accept at laboratory
+                    </Button>
+                  )}
+                  {canCompleteVisits && selectedDossier.status === 'In Laboratory' && (
+                    <Button size="sm" variant="success" icon={CheckCheck} onClick={() => void onServiceComplete(selectedDossier.id)}>
+                      Mark service complete
+                    </Button>
+                  )}
+                  {onOpenIntake && selectedDossier.status === 'In Laboratory' &&
+                    ['Food & Drugs', 'Water'].includes(selectedDossier.laboratory) && (
+                      <Button size="sm" variant="primary" icon={FileText} onClick={() => onOpenIntake(selectedDossier)}>
+                        Open {selectedDossier.laboratory === 'Food & Drugs' ? 'Food & Drugs' : 'Water'} intake
+                      </Button>
+                    )}
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  {onSendLabNotification && selectedDossier.status === 'Awaiting Laboratory Reception' && (
+                    <LabNotifyButton
+                      visit={selectedDossier}
+                      size="sm"
+                      notifyLabel={`Notify ${selectedDossier.laboratory}`}
+                      onSend={(visitor, resend) => onSendLabNotification(visitor, resend)}
+                    />
+                  )}
                   <Button size="sm" variant="ghost" icon={Printer}>
                     Print tag
                   </Button>
-                  {selectedDossier.status !== 'Departed' && (
-                    <Button size="sm" variant="danger" icon={LogOut} onClick={() => onCheckOut(selectedDossier.id)}>
+                  {canCheckOutVisits && selectedDossier.status === 'Completed' && (
+                    <Button size="sm" variant="danger" icon={LogOut} onClick={() => void onCheckOut(selectedDossier.id)}>
                       Check out
                     </Button>
                   )}
@@ -230,7 +271,9 @@ export const LabBayView: React.FC<LabBayViewProps> = ({
             )
           }
         >
-          {!selectedDossier ? (
+          {isLoading ? (
+            <EmptyState icon={Inbox} title="Loading visitor records" />
+          ) : !selectedDossier ? (
             <EmptyState icon={Inbox} title="No visitor at this stage" description="Choose a different stage filter above." />
           ) : (
             <>
@@ -255,7 +298,13 @@ export const LabBayView: React.FC<LabBayViewProps> = ({
                 <DetailItem label="Intake date / time">
                   {selectedDossier.date || '—'} · {selectedDossier.timeIn}
                 </DetailItem>
-                <DetailItem label="National / service ID">{selectedDossier.nationalId || '—'}</DetailItem>
+                <DetailItem label="National ID">
+                  <NationalIdReveal
+                    visitorId={selectedDossier.id}
+                    maskedValue={selectedDossier.nationalId || '—'}
+                    onReveal={onRevealNationalId}
+                  />
+                </DetailItem>
                 <DetailItem label="Official contact">{selectedDossier.phone || '—'}</DetailItem>
                 <DetailItem label="Originating station">{selectedDossier.station || '—'}</DetailItem>
                 <DetailItem label="Service badge">
@@ -265,57 +314,26 @@ export const LabBayView: React.FC<LabBayViewProps> = ({
               </dl>
 
               <div className="space-y-3 p-4">
-                <div className="flex items-start gap-3.5 rounded-lg border border-slate-200 p-3.5 dark:border-slate-800">
-                  <div className="flex h-14 w-14 shrink-0 flex-col items-center justify-center rounded-md bg-white p-1 ring-1 ring-slate-200 dark:ring-slate-700">
-                    <div className="flex h-8 w-full items-stretch justify-between px-0.5">
-                      {[2, 3, 1, 4, 1, 3, 2].map((w, i) => (
-                        <span key={i} className="h-full bg-black" style={{ width: w }} />
-                      ))}
-                    </div>
-                    <span className="font-mono text-[7px] font-bold text-black">EXH-0001</span>
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-[13px] font-semibold text-slate-900 dark:text-white">Sealed tamper-evident evidence pouch</span>
-                      <StatusPill tone="amber" dot={false}>
-                        Seal #{selectedDossier.exhibitsPresented?.split(':')[0] || 'KE-NC-88219'}
-                      </StatusPill>
-                    </div>
-                    <p className="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-300">
-                      {selectedDossier.exhibitsPresented || 'Compounds logged intact with sealed containers.'}
-                    </p>
-                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500 dark:text-slate-400">
-                      <span>
-                        Condition: <strong className="font-medium text-emerald-600 dark:text-emerald-400">Intact</strong>
-                      </span>
-                      <span>
-                        Storage: <strong className="font-medium text-slate-700 dark:text-slate-200">Vault locker #04</strong>
-                      </span>
-                      <span>
-                        Gross wt: <strong className="font-medium text-slate-700 dark:text-slate-200">254.2 g</strong>
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
                 <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                   <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-950/50">
                     <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      <FileText className="h-3.5 w-3.5" /> Documentation & receipts
+                      <FileText className="h-3.5 w-3.5" /> Documents presented
                     </div>
                     <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-200">
-                      OB extract <span className="font-semibold text-amber-600 dark:text-amber-400">#44/11/09/2026</span>
-                      <br />
-                      Police memo · Request form P-78 (stamped)
+                      {selectedDossier.documentsPresented || 'No documents recorded.'}
                     </p>
                   </div>
                   <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-950/50">
                     <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      <ClipboardList className="h-3.5 w-3.5" /> Statutory mandate
+                      <ClipboardList className="h-3.5 w-3.5" /> Exhibits / samples summary
                     </div>
                     <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-200">
-                      Qualitative & quantitative analysis under Sec 74, Narcotic Drugs & Psychotropic Substances Act.
+                      {selectedDossier.exhibitsPresented || 'No exhibit details recorded.'}
                     </p>
+                  </div>
+                  <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-950/50 md:col-span-2">
+                    <div className="mb-1 text-[11px] font-medium text-slate-500 dark:text-slate-400">Purpose of visit</div>
+                    <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-200">{selectedDossier.purposeOfVisit}</p>
                   </div>
                 </div>
               </div>
@@ -422,6 +440,7 @@ export const LabBayView: React.FC<LabBayViewProps> = ({
                   <th className={tc.th}>Exhibits</th>
                   <th className={tc.th}>Arrived</th>
                   <th className={tc.th}>Status</th>
+                  {onSendLabNotification && <th className={`${tc.th} text-right`}>Lab notification</th>}
                 </tr>
               </thead>
               <tbody className={tc.tbody}>
@@ -440,7 +459,7 @@ export const LabBayView: React.FC<LabBayViewProps> = ({
                         </div>
                       </div>
                     </td>
-                    <td className={`${tc.td} font-mono text-xs`}>{vis.id}</td>
+                    <td className={`${tc.td} font-mono text-xs`}>{vis.visitNumber}</td>
                     <td className={tc.td}>{vis.laboratory}</td>
                     <td className={tc.td}>
                       <div className="max-w-[240px] truncate" title={vis.exhibitsPresented}>
@@ -453,6 +472,20 @@ export const LabBayView: React.FC<LabBayViewProps> = ({
                     <td className={tc.td}>
                       <StatusPill tone={VISITOR_STATUS[vis.status].tone}>{VISITOR_STATUS[vis.status].label}</StatusPill>
                     </td>
+                    {onSendLabNotification && (
+                      <td className={`${tc.td} text-right`}>
+                        {vis.status === 'Departed' ? (
+                          <span className="text-[11px] text-slate-400">Visit closed</span>
+                        ) : (
+                          <LabNotifyButton
+                            visit={vis}
+                            notifyLabel="Notify lab"
+                            stopPropagation
+                            onSend={(visitor, resend) => onSendLabNotification(visitor, resend)}
+                          />
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -460,6 +493,13 @@ export const LabBayView: React.FC<LabBayViewProps> = ({
           </div>
         )}
       </Panel>
+      {hasMoreVisitors && (
+        <div className="flex justify-center">
+          <Button variant="secondary" disabled={isLoadingMoreVisitors} onClick={() => void onLoadMoreVisitors()}>
+            {isLoadingMoreVisitors ? 'Loading older records…' : 'Load older visitor records'}
+          </Button>
+        </div>
+      )}
     </DashboardPage>
   );
 };
@@ -468,8 +508,10 @@ export const LabBayView: React.FC<LabBayViewProps> = ({
  * CHECK OUT
  * ========================================================================== */
 
-export const CheckOutView: React.FC<CheckOutViewProps> = ({ visitors, onCheckOut }) => {
-  const checkOutEligible = visitors.filter((v) => v.status === 'In Laboratory' || v.status === 'Completed');
+export const CheckOutView: React.FC<CheckOutViewProps> = ({
+  visitors, onCheckOut, canCheckOutVisits, hasMoreVisitors, isLoadingMoreVisitors, onLoadMoreVisitors,
+}) => {
+  const checkOutEligible = visitors.filter((v) => v.status === 'Completed');
   const awaitingReceipt = visitors.filter((v) => v.status === 'Awaiting Laboratory Reception');
   const departed = visitors.filter((v) => v.status === 'Departed');
   const exhibitsAccountedFor = departed.filter((v) => v.exhibitsPresented.trim().length > 0);
@@ -559,7 +601,7 @@ export const CheckOutView: React.FC<CheckOutViewProps> = ({ visitors, onCheckOut
                       <StatusPill tone={VISITOR_STATUS[v.status].tone}>{VISITOR_STATUS[v.status].label}</StatusPill>
                     </div>
                     <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">
-                      {v.badgeNumber || v.id} · {v.station} · {v.laboratory}
+                      {v.badgeNumber || v.visitNumber} · {v.station} · {v.laboratory}
                     </div>
                     <div className="truncate text-[11px] text-slate-400" title={v.exhibitsPresented}>
                       {v.exhibitsPresented || 'No exhibit details recorded'}
@@ -569,8 +611,8 @@ export const CheckOutView: React.FC<CheckOutViewProps> = ({ visitors, onCheckOut
                     <span className="flex items-center gap-1 whitespace-nowrap text-xs text-slate-500 dark:text-slate-400">
                       <LogIn className="h-3 w-3 text-emerald-500" /> {v.timeIn}
                     </span>
-                    {isPending && (
-                      <Button size="sm" variant="danger" icon={LogOut} onClick={() => onCheckOut(v.id)}>
+                    {isPending && canCheckOutVisits && (
+                      <Button size="sm" variant="danger" icon={LogOut} onClick={() => void onCheckOut(v.id)}>
                         Record departure
                       </Button>
                     )}
@@ -633,7 +675,7 @@ export const CheckOutView: React.FC<CheckOutViewProps> = ({ visitors, onCheckOut
                   <tr key={v.id} className={tc.tr}>
                     <td className={tc.td}>
                       <div className="font-medium text-slate-900 dark:text-white">{v.officerName}</div>
-                      <div className="text-[11px] text-slate-500 dark:text-slate-400">{v.badgeNumber || v.id}</div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400">{v.badgeNumber || v.visitNumber}</div>
                     </td>
                     <td className={tc.td}>{v.station || 'Not recorded'}</td>
                     <td className={tc.td}>
@@ -653,6 +695,13 @@ export const CheckOutView: React.FC<CheckOutViewProps> = ({ visitors, onCheckOut
           </div>
         )}
       </Panel>
+      {hasMoreVisitors && (
+        <div className="flex justify-center">
+          <Button variant="secondary" disabled={isLoadingMoreVisitors} onClick={() => void onLoadMoreVisitors()}>
+            {isLoadingMoreVisitors ? 'Loading older records…' : 'Load older visitor records'}
+          </Button>
+        </div>
+      )}
     </DashboardPage>
   );
 };
@@ -661,16 +710,27 @@ export const CheckOutView: React.FC<CheckOutViewProps> = ({ visitors, onCheckOut
  * NOTIFICATIONS
  * ========================================================================== */
 
-export const NotificationsView: React.FC<NotificationsViewProps> = ({ notifications, onMarkAllAsRead, onSelect, unreadCount }) => {
+export const NotificationsView: React.FC<NotificationsViewProps> = ({ notifications, onMarkAllAsRead, onSelect, unreadCount, description, onAdminAction }) => {
   const [tab, setTab] = useState<'all' | 'unread'>('all');
+  const [workingId, setWorkingId] = useState<string | null>(null);
   const rows = tab === 'unread' ? notifications.filter((n) => !n.read) : notifications;
+
+  const runAdminAction = async (notification: AppNotification, action: 'approve' | 'reject' | 'reset-password') => {
+    if (!onAdminAction) return;
+    setWorkingId(notification.id);
+    try {
+      await onAdminAction(notification, action);
+    } finally {
+      setWorkingId(null);
+    }
+  };
 
   return (
     <DashboardPage>
       <DashboardHeader
         breadcrumb={['Workspace', 'Notifications']}
         title="Notifications"
-        description="Lab alerts, exhibit admissions and departmental dispatches."
+        description={description ?? 'Lab alerts, exhibit admissions and departmental dispatches.'}
         meta={unreadCount > 0 ? <StatusPill tone="amber" pulse>{unreadCount} unread</StatusPill> : undefined}
         actions={
           unreadCount > 0 && (
@@ -702,13 +762,11 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({ notificati
         ) : (
           <ul className="divide-y divide-slate-100 dark:divide-slate-800">
             {rows.map((n) => (
-              <li key={n.id}>
+              <li key={n.id} className={`px-4 py-3.5 ${n.read ? '' : 'bg-amber-500/[0.03]'}`}>
                 <button
                   type="button"
                   onClick={() => onSelect(n)}
-                  className={`flex w-full cursor-pointer items-start gap-3 px-4 py-3.5 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40 ${
-                    n.read ? '' : 'bg-amber-500/[0.03]'
-                  }`}
+                  className="flex w-full cursor-pointer items-start gap-3 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40"
                 >
                   <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${n.read ? 'bg-transparent' : 'bg-amber-500'}`} />
                   <div className="min-w-0 flex-1">
@@ -719,12 +777,54 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({ notificati
                       </StatusPill>
                     </div>
                     <p className="mt-0.5 text-xs leading-relaxed text-slate-600 dark:text-slate-400">{n.message}</p>
+                    {n.linkAction?.startsWith('ADMIN_') && (
+                      <span className="mt-1.5 inline-block text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+                        {n.linkAction === 'ADMIN_DEPARTMENT_REQUESTS' ? 'Review department request' : n.linkAction === 'ADMIN_USERS' ? 'Open user accounts' : 'Review approval requests'} →
+                      </span>
+                    )}
                     {n.recipientDepartment && (
-                      <span className="mt-1.5 inline-block text-[11px] text-slate-400">To: {n.recipientDepartment}</span>
+                      <span className="mt-1.5 inline-block text-[11px] text-slate-400">To: {departmentLabel(n.recipientDepartment)}</span>
                     )}
                   </div>
                   <span className="whitespace-nowrap text-[11px] text-slate-400">{n.timestamp}</span>
                 </button>
+                {n.persisted && n.relatedRecordId && onAdminAction && (
+                  ((n.relatedRecordType === 'account_request' || n.relatedRecordType === 'department_change_request') ||
+                    (n.relatedRecordType === 'user' && n.title === 'Password reset requested')) && (
+                    <div className="ml-5 mt-2 flex flex-wrap gap-2" aria-label="Request actions">
+                      {n.relatedRecordType === 'user' ? (
+                        <button
+                          type="button"
+                          disabled={workingId === n.id}
+                          onClick={() => void runAdminAction(n, 'reset-password')}
+                          className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-amber-500 px-3 text-xs font-semibold text-slate-950 disabled:opacity-60"
+                        >
+                          <CheckCircle2 className="h-3.5 w-3.5" /> Send password reset link
+                        </button>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            disabled={workingId === n.id}
+                            onClick={() => void runAdminAction(n, 'approve')}
+                            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-xs font-semibold text-white disabled:opacity-60"
+                          >
+                            <CheckCircle2 className="h-3.5 w-3.5" />
+                            {n.relatedRecordType === 'account_request' ? 'Approve & invite' : 'Approve change'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={workingId === n.id}
+                            onClick={() => void runAdminAction(n, 'reject')}
+                            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-rose-200 px-3 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950/30"
+                          >
+                            <X className="h-3.5 w-3.5" /> Reject
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )
+                )}
               </li>
             ))}
           </ul>

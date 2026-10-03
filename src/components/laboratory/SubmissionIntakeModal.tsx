@@ -18,6 +18,7 @@ import {
   OfficerVisitor,
   ForensicCase,
 } from '../../types';
+import { LABORATORY_DEPARTMENTS, departmentLabel } from '../../lib/departments';
 import { Select } from '../common/Select';
 
 interface SubmissionIntakeModalProps {
@@ -58,9 +59,11 @@ export const SubmissionIntakeModal: React.FC<SubmissionIntakeModalProps> = ({
     'Suspected narcotic substance seized from suspects during interdiction at Kilindini Port Container Terminal.'
   );
   const [dateReceived, setDateReceived] = useState(new Date().toISOString().split('T')[0]);
-  const [receivedFrom, setReceivedFrom] = useState(
-    `${visitor.officerName} (${visitor.badgeNumber}, ${visitor.station})`
-  );
+  // Locked to the reception record: police officers by badge and station,
+  // everyone else by organisation.
+  const receivedFrom = visitor.visitorType === 'POLICE_OFFICER'
+    ? `${visitor.officerName} (Badge ${visitor.badgeNumber}, ${visitor.station})`
+    : `${visitor.officerName} (${visitor.station})`;
   const [receivedBy, setReceivedBy] = useState(receivingAnalystName);
   const [department, setDepartment] = useState<LaboratoryDepartment>(visitor.laboratory || 'Narcotics');
   const [storageLocation, setStorageLocation] = useState('Evidence Vault Locker V-04 (Climate Controlled)');
@@ -184,7 +187,7 @@ export const SubmissionIntakeModal: React.FC<SubmissionIntakeModalProps> = ({
                 </span>
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Official evidence admission into {department} Laboratory under Cap 245 Laws of Kenya.
+                Official evidence admission into {departmentLabel(department)} Laboratory under Cap 245 Laws of Kenya.
               </p>
             </div>
           </div>
@@ -247,9 +250,9 @@ export const SubmissionIntakeModal: React.FC<SubmissionIntakeModalProps> = ({
                   value={department}
                   onChange={setDepartment}
                   aria-label="Assigned laboratory"
-                  options={(
-                    ['Narcotics', 'Food & Drugs', 'Criminalistic', 'DNA', 'Instruments', 'Water', 'Toxicology', 'Procurement'] as const
-                  ).map((d) => ({ value: d, label: d }))}
+                  // Samples are only ever routed to one of the eight working laboratories;
+// General Administration is a staff unit, not a destination for a submission.
+                  options={LABORATORY_DEPARTMENTS.map((d) => ({ value: d, label: departmentLabel(d) }))}
                 />
               </div>
 
@@ -276,12 +279,14 @@ export const SubmissionIntakeModal: React.FC<SubmissionIntakeModalProps> = ({
               </div>
 
               <div>
-                <label className="block text-slate-600 dark:text-slate-300 font-medium mb-1">Received From (Officer)</label>
+                <label className="block text-slate-600 dark:text-slate-300 font-medium mb-1">Received From (Client)</label>
                 <input
                   type="text"
                   value={receivedFrom}
-                  onChange={(e) => setReceivedFrom(e.target.value)}
-                  className="w-full px-3 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white focus:border-amber-400 outline-none"
+                  readOnly
+                  aria-readonly="true"
+                  title="Captured at reception — cannot be edited"
+                  className="w-full px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-200 outline-none cursor-not-allowed"
                   required
                 />
               </div>

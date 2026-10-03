@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft,
   Check,
@@ -33,6 +33,7 @@ import {
 } from '../../foodDrugIntake';
 import { Button, DashboardHeader, DashboardPage, Panel, StatusPill, Tone } from '../common/Dashboard';
 import { Field, Meta, Section, inputCls } from './IntakeFormParts';
+import { ReceptionClientDetails } from './ReceptionClientDetails';
 
 /**
  * Food & Drugs sample registration. Registration ends at the Receiver; the
@@ -86,6 +87,7 @@ const SAMPLE_TYPE_INFO: Record<FoodDrugSampleType, { description: string; exampl
 };
 
 const STATUS_TONE: Record<FoodDrugIntakeStatus, Tone> = {
+  'Awaiting Approval': 'rose',
   'Awaiting Assignment': 'amber',
   'Under Analysis': 'sky',
   Reported: 'emerald',
@@ -102,11 +104,11 @@ export const FoodDrugIntakePage: React.FC<FoodDrugIntakePageProps> = ({
   // Prefill from a visitor the receptionist routed to Food & Drugs.
   const fromVisitor = visitor.laboratory === 'Food & Drugs';
   const [clientName, setClientName] = useState(fromVisitor ? visitor.officerName : '');
-  const [nationalId, setNationalId] = useState(fromVisitor ? sanitizeNationalId(visitor.nationalId || '') : '');
+  const [nationalId, setNationalId] = useState('');
   const [poBox, setPoBox] = useState(fromVisitor ? visitor.poBox || '' : '');
   const [sampleType, setSampleType] = useState<FoodDrugSampleType | ''>('');
   const [receiver, setReceiver] = useState(receivingAnalystName);
-  const [notes, setNotes] = useState('');
+  const [notes, setNotes] = useState(visitor.exhibitsPresented || visitor.purposeOfVisit || '');
 
   const intakes = activeCase.foodDrugIntakes ?? [];
   const nextId = `FDI-${String(intakes.length + 1).padStart(4, '0')}`;
@@ -114,7 +116,8 @@ export const FoodDrugIntakePage: React.FC<FoodDrugIntakePageProps> = ({
 
   const checks = [
     { label: 'Full name', value: clientName.trim(), ok: clientName.trim() !== '' },
-    { label: 'National ID', value: nationalId, ok: isValidNationalId(nationalId) },
+    // Reception already vetted the ID (it may be a passport number), so a routed visitor only needs it present.
+    { label: 'National ID', value: nationalId, ok: fromVisitor ? nationalId.trim() !== '' : isValidNationalId(nationalId) },
     { label: 'P.O Box', value: poBox.trim(), ok: isValidPoBox(poBox) },
     { label: 'Sample type', value: sampleType, ok: sampleType !== '' },
     { label: 'Receiver', value: receiver.trim(), ok: receiver.trim() !== '' },
@@ -175,7 +178,7 @@ export const FoodDrugIntakePage: React.FC<FoodDrugIntakePageProps> = ({
         sampleType,
         receiver: receivedBy,
         intakeDate: today,
-        status: 'Awaiting Assignment',
+        status: 'Awaiting Approval',
       },
     });
   };
@@ -203,7 +206,7 @@ export const FoodDrugIntakePage: React.FC<FoodDrugIntakePageProps> = ({
           {fromVisitor && (
             <div className="flex items-center gap-2 border-b border-sky-500/20 bg-sky-500/5 px-5 py-2.5 text-xs text-sky-700 dark:text-sky-300">
               <FileText className="h-3.5 w-3.5 shrink-0" />
-              Details pre-filled from reception record {visitor.id}, registered by {visitor.receptionistName}.
+              Client details come from reception record {visitor.visitNumber} and cannot be edited here.
             </div>
           )}
 
@@ -212,6 +215,16 @@ export const FoodDrugIntakePage: React.FC<FoodDrugIntakePageProps> = ({
             title="Submitter"
             description="The person or organisation bringing the sample."
           >
+            {fromVisitor ? (
+              <ReceptionClientDetails
+                visitor={visitor}
+                onNationalId={setNationalId}
+                poBox={poBox}
+                onPoBoxChange={setPoBox}
+                poBoxInvalid={poBoxInvalid}
+              />
+            ) : (
+            <>
             <Field label="Full name" required className="sm:col-span-2">
               <input
                 autoFocus
@@ -251,6 +264,8 @@ export const FoodDrugIntakePage: React.FC<FoodDrugIntakePageProps> = ({
                 className={inputCls}
               />
             </Field>
+            </>
+            )}
           </Section>
 
           <Section
@@ -395,7 +410,8 @@ export const FoodDrugIntakePage: React.FC<FoodDrugIntakePageProps> = ({
           <Panel icon={UserCheck} tone="sky" title="What happens next">
             <ol className="space-y-3 text-xs">
               {[
-                { title: 'Registered', text: 'You add the record. The sample is stored as Awaiting Assignment.', active: true },
+                { title: 'Registered', text: 'You add the record. The sample is stored as Awaiting Approval.', active: true },
+                { title: 'Documents approved', text: 'The Head of Section reviews and approves the submitted documents.' },
                 { title: 'Officer assigned', text: 'The Head of Section assigns a Food & Drugs officer to analyse it.' },
                 { title: 'Analysed & reported', text: 'After analysis, the officer records who reported the result.' },
               ].map((s, i) => (

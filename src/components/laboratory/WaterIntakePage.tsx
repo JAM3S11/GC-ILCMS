@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ArrowLeft,
   Building2,
@@ -29,6 +29,7 @@ import {
   WaterSenderType,
   WaterSourceCategory,
   WaterTestType,
+  User as StaffUser,
 } from '../../types';
 import { isValidPoBox } from '../../foodDrugIntake';
 import {
@@ -40,13 +41,13 @@ import {
   WATER_TEST_INFO,
   WATER_TEST_TYPES,
   formatKes,
-  formatWaterLabReference,
   isValidKenyanMobile,
   waterTestCharge,
 } from '../../waterIntake';
 import { Button, DashboardHeader, DashboardPage, Panel, SegmentedControl, StatusPill, Tone } from '../common/Dashboard';
 import { Select } from '../common/Select';
 import { Field, Meta, Section, inputCls } from './IntakeFormParts';
+import { ReceptionClientDetails } from './ReceptionClientDetails';
 
 /**
  * Water & Environment exhibit intake. Registration ends at Charges; the Head
@@ -70,17 +71,19 @@ export interface WaterIntakeSubmission {
 
 interface WaterIntakePageProps {
   activeCase: ForensicCase;
-  visitor: OfficerVisitor;
-  receivingOfficerName: string;
-  /** Water & Environment staff offered as Receiving Officer. */
-  staffNames?: string[];
-  onSaveIntake: (submission: WaterIntakeSubmission) => void;
+  /** The visitor routed to Water, or null while nobody has been sent. */
+  visitor: OfficerVisitor | null;
+  currentUserId: string;
+  staffMembers: Pick<StaffUser, 'id' | 'name'>[];
+  intakes: WaterIntake[];
+  onSaveIntake: (submission: WaterIntakeSubmission) => Promise<WaterIntake>;
   onCancel: () => void;
 }
 
 const WATER_STORAGE_LOCATION = 'Water & Environment Sample Store — Cold Room W-01';
 
 const STATUS_TONE: Record<WaterIntakeStatus, Tone> = {
+  'Awaiting Approval': 'rose',
   'Awaiting Assignment': 'amber',
   'Under Analysis': 'sky',
   'Analysis Complete': 'emerald',
@@ -89,27 +92,35 @@ const STATUS_TONE: Record<WaterIntakeStatus, Tone> = {
 export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
   activeCase,
   visitor,
-  receivingOfficerName,
-  staffNames = [],
+  currentUserId,
+  staffMembers,
+  intakes,
   onSaveIntake,
   onCancel,
 }) => {
-  const today = new Date().toISOString().split('T')[0];
-  // Prefill from a visitor the receptionist routed to Water & Environment.
-  const fromVisitor = visitor.laboratory === 'Water';
-
-  // Sender
-  const [senderType, setSenderType] = useState<WaterSenderType>('Individual');
-  const [fullName, setFullName] = useState(fromVisitor ? visitor.officerName : '');
-  const [poBox, setPoBox] = useState(fromVisitor ? visitor.poBox || '' : '');
-  const [mobile, setMobile] = useState(fromVisitor ? visitor.phone || '' : '');
-  const [orgName, setOrgName] = useState('');
-  const [orgAddress, setOrgAddress] = useState('');
-  const [contactPerson, setContactPerson] = useState('');
-  const [contactMobile, setContactMobile] = useState('');
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Nairobi',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+  // Client details always come from the reception record and are read only.
+  // Without a visitor routed to Water they stay empty; only the P.O Box can be
+  // typed, and only when reception left it empty.
+  const reception = visitor && visitor.laboratory === 'Water' ? visitor : null;
+  const notified = !!reception?.labNotificationSentAt;
+  const senderType: WaterSenderType = 'Organisation';
+  const [poBoxInput, setPoBoxInput] = useState('');
+  useEffect(() => {
+    setPoBoxInput('');
+  }, [reception?.id]);
+  const orgName = reception?.station ?? '';
+  const contactPerson = reception?.officerName ?? '';
+  const contactMobile = reception?.phone ?? '';
+  const orgAddress = reception?.poBox?.trim() ? reception.poBox : poBoxInput;
 
   // Receipt
-  const [receivingOfficer, setReceivingOfficer] = useState(receivingOfficerName);
+  const [receivingOfficerId, setReceivingOfficerId] = useState(currentUserId);
   const [dateReceived, setDateReceived] = useState(today);
 
   // Test
@@ -125,37 +136,27 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
 
   // Charges
   const [receiptNumber, setReceiptNumber] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
-  const intakes = activeCase.waterIntakes ?? [];
-  const nextId = `WEI-${String(intakes.length + 1).padStart(4, '0')}`;
-  const year = Number((dateReceived || today).slice(0, 4));
-  const sequence = intakes.filter((i) => i.labReference.endsWith(`/${year}`)).length + 1;
-  const labReference = formatWaterLabReference(sequence, year);
+  const labReference = 'Issued when registered';
 
-  const isIndividual = senderType === 'Individual';
   const isEffluent = sourceCategory === 'Effluent Water';
   const allParameters = [...parameters, ...(otherParameter.trim() ? [otherParameter.trim()] : [])];
   const charge = testType ? waterTestCharge(testType, senderType) : 0;
 
-  const poBoxInvalid = poBox.trim() !== '' && !isValidPoBox(poBox);
-  const mobileInvalid = mobile.trim() !== '' && !isValidKenyanMobile(mobile);
-  const contactMobileInvalid = contactMobile.trim() !== '' && !isValidKenyanMobile(contactMobile);
+  const poBoxInvalid = orgAddress.trim() !== '' && !isValidPoBox(orgAddress);
 
-  const senderChecks = isIndividual
-    ? [
-        { label: 'Full name', value: fullName.trim(), ok: fullName.trim() !== '' },
-        { label: 'P.O Box', value: poBox.trim(), ok: isValidPoBox(poBox) },
-        { label: 'Mobile', value: mobile.trim(), ok: isValidKenyanMobile(mobile) },
-      ]
-    : [
-        { label: 'Organisation', value: orgName.trim(), ok: orgName.trim() !== '' },
-        { label: 'Address', value: orgAddress.trim(), ok: orgAddress.trim() !== '' },
-        { label: 'Contact person', value: contactPerson.trim(), ok: contactPerson.trim() !== '' && !contactMobileInvalid },
-      ];
+  const senderChecks = [
+    { label: 'Client', value: contactPerson.trim(), ok: !!reception },
+    { label: 'Organisation / station', value: orgName.trim(), ok: orgName.trim() !== '' },
+    { label: 'P.O Box', value: orgAddress.trim(), ok: isValidPoBox(orgAddress) },
+    { label: 'Lab notified', value: notified ? 'Yes' : 'Not yet', ok: notified },
+  ];
 
   const checks = [
     ...senderChecks,
-    { label: 'Receiving officer', value: receivingOfficer.trim(), ok: receivingOfficer.trim() !== '' },
+    { label: 'Receiving officer', value: staffMembers.find((member) => member.id === receivingOfficerId)?.name ?? '', ok: !!receivingOfficerId },
     { label: 'Date received', value: dateReceived, ok: dateReceived !== '' && dateReceived <= today },
     {
       label: 'Type of test',
@@ -185,17 +186,15 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
     setDischargeTo('');
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canSubmit || !testType || !sourceCategory) return;
+    if (!canSubmit || !reception || !testType || !sourceCategory || saving) return;
 
     const exhibitId = `EXH-${String(activeCase.exhibits.length + 1).padStart(4, '0')}`;
-    const senderName = isIndividual ? fullName.trim() : orgName.trim();
-    const senderAddress = isIndividual ? poBox.trim() : orgAddress.trim();
-    const receivedBy = receivingOfficer.trim();
-    const receivedFrom = isIndividual
-      ? `${senderName} (${senderAddress})`
-      : `${senderName} (${senderAddress}) — attn. ${contactPerson.trim()}`;
+    const senderName = orgName.trim();
+    const senderAddress = orgAddress.trim();
+    const receivedBy = staffMembers.find((member) => member.id === receivingOfficerId)?.name ?? '';
+    const receivedFrom = `${senderName} (${senderAddress}) — attn. ${contactPerson.trim()}`;
     const testLabel =
       testType === 'Specific Chemical Analysis' ? `${testType} (${allParameters.join(', ')})` : testType;
     const locality = `${sourceType}, ${locationFrom.trim()}${isEffluent ? ` → ${dischargeTo}` : ''}`;
@@ -208,7 +207,7 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
       submissionType: 'Water & Environment Sample',
       numberOfItems: 1,
       packaging: 'Sealed Water Sampling Bottle',
-      sealNumber: `WE-SEAL-${Math.floor(100000 + Math.random() * 900000)}`,
+      sealNumber: '',
       markings: `Marked "${labReference}" on receipt`,
       condition: 'Intact & Sealed',
       storageLocation: WATER_STORAGE_LOCATION,
@@ -219,42 +218,51 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
       remarks: `${testLabel}. Charges ${formatKes(charge)}. Awaiting Analysis Officer assignment.`,
     };
 
-    onSaveIntake({
-      caseNumber: activeCase.caseNumber,
-      submissionType: 'Water & Environment Sample',
-      description,
-      dateReceived,
-      receivedFrom,
-      receivedBy,
-      department: 'Water',
-      storageLocation: WATER_STORAGE_LOCATION,
-      supportingDocuments: (fromVisitor && visitor.documentsPresented) || '',
-      remarks: `${labReference}. ${testLabel}. Received by ${receivedBy}.`,
-      exhibits: [exhibit],
-      waterIntake: {
-        id: nextId,
-        labReference,
-        caseId: activeCase.id,
-        exhibitId,
-        senderType,
-        senderName,
-        senderAddress,
-        senderMobile: isIndividual ? mobile.trim() : undefined,
-        contactPerson: isIndividual ? undefined : contactPerson.trim(),
-        contactPersonMobile: isIndividual ? undefined : contactMobile.trim() || undefined,
-        receivingOfficer: receivedBy,
+    setSaving(true);
+    setSaveError('');
+    try {
+      await onSaveIntake({
+        caseNumber: activeCase.caseNumber,
+        submissionType: 'Water & Environment Sample',
+        description,
         dateReceived,
-        testType,
-        specificParameters: testType === 'Specific Chemical Analysis' ? allParameters : undefined,
-        sourceCategory,
-        sourceType,
-        locationFrom: locationFrom.trim(),
-        dischargeTo: isEffluent ? dischargeTo : undefined,
-        charges: charge,
-        receiptNumber: receiptNumber.trim() || undefined,
-        status: 'Awaiting Assignment',
-      },
-    });
+        receivedFrom,
+        receivedBy,
+        department: 'Water',
+        storageLocation: WATER_STORAGE_LOCATION,
+        supportingDocuments: reception.documentsPresented || '',
+        remarks: `${labReference}. ${reception.purposeOfVisit}. ${reception.exhibitsPresented ? `Reception notes: ${reception.exhibitsPresented}. ` : ''}${testLabel}. Received by ${receivedBy}.`,
+        exhibits: [exhibit],
+        waterIntake: {
+          id: '',
+          labReference: '',
+          caseId: activeCase.id,
+          exhibitId,
+          receptionVisitId: reception.id,
+          senderType,
+          senderName,
+          senderAddress,
+          contactPerson: contactPerson.trim(),
+          contactPersonMobile: contactMobile.trim() || undefined,
+          receivingOfficer: receivedBy,
+          receivingOfficerId,
+          dateReceived,
+          testType,
+          specificParameters: testType === 'Specific Chemical Analysis' ? allParameters : undefined,
+          sourceCategory,
+          sourceType,
+          locationFrom: locationFrom.trim(),
+          dischargeTo: isEffluent ? dischargeTo : undefined,
+          charges: charge,
+          receiptNumber: receiptNumber.trim() || undefined,
+          status: 'Awaiting Approval',
+        },
+      });
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'The Water exhibit could not be saved.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -277,10 +285,15 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
           onSubmit={handleSubmit}
           className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:col-span-8 dark:border-slate-800 dark:bg-slate-900"
         >
-          {fromVisitor && (
+          {reception && notified ? (
             <div className="flex items-center gap-2 border-b border-sky-500/20 bg-sky-500/5 px-5 py-2.5 text-xs text-sky-700 dark:text-sky-300">
               <FileText className="h-3.5 w-3.5 shrink-0" />
-              Details pre-filled from reception record {visitor.id}, registered by {visitor.receptionistName}.
+              Client details come from reception record {reception.visitNumber}, registered by {reception.receptionistName}, and cannot be edited here.
+            </div>
+          ) : (
+            <div role="status" className="flex items-center gap-2 border-b border-amber-500/20 bg-amber-500/5 px-5 py-2.5 text-xs text-amber-700 dark:text-amber-300">
+              <FileText className="h-3.5 w-3.5 shrink-0" />
+              No client has been sent to Water & Environment yet. You can fill in the exhibit details now, but the exhibit can only be registered once reception has notified this laboratory.
             </div>
           )}
 
@@ -299,100 +312,13 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
           </Section>
 
           {/* 2. Sender */}
-          <Section icon={isIndividual ? User : Building2} title="Sender" description="The individual or organisation submitting the sample.">
-            <div className="sm:col-span-2">
-              <SegmentedControl
-                ariaLabel="Sender category"
-                value={senderType}
-                onChange={setSenderType}
-                options={[
-                  { value: 'Individual', label: 'Individual' },
-                  { value: 'Organisation', label: 'Organisation' },
-                ]}
-              />
-            </div>
-
-            {isIndividual ? (
-              <>
-                <Field label="Full name" required className="sm:col-span-2">
-                  <input
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    placeholder="e.g. John Kamau Mwangi"
-                    autoComplete="off"
-                    className={inputCls}
-                  />
-                </Field>
-                <Field
-                  label="Address (P.O Box)"
-                  required
-                  icon={MapPin}
-                  error={poBoxInvalid}
-                  hint={poBoxInvalid ? 'Use the format P.O Box 40245-00100' : 'Box number, then postal code'}
-                >
-                  <input value={poBox} onChange={(e) => setPoBox(e.target.value)} placeholder="P.O Box 40245-00100" className={inputCls} />
-                </Field>
-                <Field
-                  label="Mobile number"
-                  required
-                  icon={Phone}
-                  error={mobileInvalid}
-                  hint={mobileInvalid ? 'Use 07XX XXX XXX, 01XX XXX XXX or +254…' : 'Safaricom, Airtel or Telkom number'}
-                >
-                  <input
-                    type="tel"
-                    inputMode="tel"
-                    value={mobile}
-                    onChange={(e) => setMobile(e.target.value)}
-                    placeholder="0712 345 678"
-                    className={inputCls}
-                  />
-                </Field>
-              </>
-            ) : (
-              <>
-                <Field label="Name of organisation / firm" required className="sm:col-span-2">
-                  <input
-                    value={orgName}
-                    onChange={(e) => setOrgName(e.target.value)}
-                    placeholder="e.g. Nairobi City Water & Sewerage Co."
-                    autoComplete="off"
-                    className={inputCls}
-                  />
-                </Field>
-                <Field label="Address" required icon={MapPin} hint="Postal or physical address" className="sm:col-span-2">
-                  <input
-                    value={orgAddress}
-                    onChange={(e) => setOrgAddress(e.target.value)}
-                    placeholder="e.g. P.O Box 30656-00100, Nairobi"
-                    className={inputCls}
-                  />
-                </Field>
-                <Field label="Contact person" required icon={User}>
-                  <input
-                    value={contactPerson}
-                    onChange={(e) => setContactPerson(e.target.value)}
-                    placeholder="e.g. Eng. Mary Achieng"
-                    className={inputCls}
-                  />
-                </Field>
-                <Field
-                  label="Contact person's mobile"
-                  icon={Phone}
-                  error={contactMobileInvalid}
-                  hint={contactMobileInvalid ? 'Use 07XX XXX XXX, 01XX XXX XXX or +254…' : 'Optional'}
-                >
-                  <input
-                    type="tel"
-                    inputMode="tel"
-                    value={contactMobile}
-                    onChange={(e) => setContactMobile(e.target.value)}
-                    placeholder="0712 345 678"
-                    className={inputCls}
-                  />
-                </Field>
-              </>
-            )}
+          <Section icon={Building2} title="Sender" description="The police station or organisation submitting the sample, as recorded at reception.">
+            <ReceptionClientDetails
+              visitor={reception}
+              poBox={orgAddress}
+              onPoBoxChange={setPoBoxInput}
+              poBoxInvalid={poBoxInvalid}
+            />
           </Section>
 
           {/* 3. Receipt */}
@@ -400,10 +326,10 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
             <Field label="Receiving officer" required icon={UserCheck} hint="Defaults to you">
               <Select
                 aria-label="Receiving officer"
-                value={receivingOfficer}
-                onChange={setReceivingOfficer}
+                value={receivingOfficerId}
+                onChange={setReceivingOfficerId}
                 placeholder="Select officer…"
-                options={staffNames.map((n) => ({ value: n, label: n }))}
+                options={staffMembers.map((member) => ({ value: member.id, label: member.name }))}
               />
             </Field>
             <Field label="Date of receiving" required icon={Calendar} error={dateReceived > today} hint={dateReceived > today ? 'Cannot be in the future' : undefined}>
@@ -412,7 +338,7 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
           </Section>
 
           {/* 4. Type of test */}
-          <Section icon={FlaskConical} title="Type of test" description={`Charges shown for ${isIndividual ? 'an individual' : 'an organisation'}.`}>
+          <Section icon={FlaskConical} title="Type of test" description="Charges shown for an organisation.">
             <RadioRows
               label="Type of test"
               options={WATER_TEST_TYPES}
@@ -527,7 +453,7 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
               />
             </Field>
             <div className="grid grid-cols-2 gap-3 rounded-lg bg-slate-50 p-3 text-xs dark:bg-slate-950/50">
-              <Meta label="Record ID" value={nextId} mono />
+              <Meta label="Exhibit ID" value="Issued on save" mono />
               <Meta label="Storage" value="Cold Room W-01" icon={Warehouse} />
             </div>
           </Section>
@@ -544,11 +470,12 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
             </div>
             <div className="flex gap-2">
               <Button onClick={onCancel}>Cancel</Button>
-              <Button type="submit" variant="primary" icon={Check} disabled={!canSubmit}>
-                Register exhibit
+              <Button type="submit" variant="primary" icon={Check} disabled={!canSubmit || saving}>
+                {saving ? 'Saving…' : 'Register exhibit'}
               </Button>
             </div>
           </div>
+          {saveError && <div role="alert" className="border-t border-rose-200 bg-rose-50 px-5 py-3 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">{saveError}</div>}
         </form>
 
         {/* ------------------------------ Aside ----------------------------- */}
@@ -579,7 +506,8 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
           <Panel icon={UserCheck} tone="amber" title="What happens next">
             <ol className="space-y-3 text-xs">
               {[
-                { title: 'Registered', text: 'You register the exhibit. It is stored as Awaiting Assignment.', active: true },
+                { title: 'Registered', text: 'You register the exhibit. It is stored as Awaiting Approval.', active: true },
+                { title: 'Documents approved', text: 'The Head of Water & Environment reviews and approves the submitted documents.' },
                 { title: 'Analysis Officer assigned', text: 'The Head of Water & Environment assigns an officer. Everyone in the department can see who holds it.' },
                 { title: 'Analysis complete', text: 'The assigned officer marks the analysis complete.' },
               ].map((s, i) => (
@@ -600,7 +528,7 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
             </ol>
           </Panel>
 
-          <Panel icon={History} title="Recent intakes" description={`${intakes.length} on ${activeCase.caseNumber}`} flush>
+          <Panel icon={History} title="Recent intakes" description={`${intakes.length} in the Water register`} flush>
             {intakes.length === 0 ? (
               <p className="px-4 py-5 text-center text-xs text-slate-400">No exhibits registered yet.</p>
             ) : (

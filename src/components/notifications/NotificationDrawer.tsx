@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { AlertTriangle, Bell, BellOff, Check, CheckCheck, CheckCircle2, Info, Siren, X } from 'lucide-react';
 import { AppNotification } from '../../types';
+import { departmentLabel } from '../../lib/departments';
 
 /**
  * Notification centre: a popover anchored under the header bell (full width
@@ -214,12 +215,17 @@ const NotificationRow: React.FC<{
             {n.title}
           </span>
           <span className="mt-0.5 line-clamp-2 block text-xs leading-relaxed text-slate-500 dark:text-slate-400">{n.message}</span>
+          {n.linkAction?.startsWith('ADMIN_') && (
+            <span className="mt-1 inline-block text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+              {n.linkAction === 'ADMIN_DEPARTMENT_REQUESTS' ? 'Review department request' : n.linkAction === 'ADMIN_USERS' ? 'Open user accounts' : 'Review approval requests'} →
+            </span>
+          )}
           <span className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[11px] text-slate-400">
             <span>{n.timestamp}</span>
             {n.recipientDepartment && (
               <>
                 <span aria-hidden="true">·</span>
-                <span>{n.recipientDepartment}</span>
+                <span>{departmentLabel(n.recipientDepartment)}</span>
               </>
             )}
             <span aria-hidden="true">·</span>

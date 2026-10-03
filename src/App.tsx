@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   User,
   UserRole,
@@ -12,16 +12,15 @@ import {
   FoodDrugIntake,
   LaboratoryDepartment,
   WaterIntake,
+  ReceptionVisitDraft,
 } from './types';
 import { FlaskConical } from 'lucide-react';
 import {
-  INITIAL_USERS,
   DEMO_CASE,
-  INITIAL_VISITOR,
   INITIAL_NOTIFICATIONS,
   INITIAL_AUDIT_LOGS,
 } from './data/initialData';
-import { LandingPage, DEMO_ACCOUNTS } from './components/landing/LandingPage';
+import { LandingPage } from './components/landing/LandingPage';
 import { FoodDrugIntakePage } from './components/laboratory/FoodDrugIntakePage';
 import { WaterIntakePage } from './components/laboratory/WaterIntakePage';
 import { Header } from './components/common/Header';
@@ -30,10 +29,18 @@ import { PrototypeToolbar } from './components/common/PrototypeToolbar';
 import { GlobalSearchModal } from './components/common/GlobalSearchModal';
 import { PrototypeTourModal } from './components/common/PrototypeTourModal';
 import { VisitorDeskView } from './components/reception/VisitorDeskView';
+import { ReceptionVisitStats } from './components/reception/VisitorDeskViewProps';
 import { VisitorRegistrationPage } from './components/reception/VisitorRegistrationPage';
 import { LabBayView, CheckOutView, NotificationsView } from './components/reception/ReceptionWorkflowViews';
+import { departmentLabel, isInstitutionWide } from './lib/departments';
+import { laboratoryLabel } from './data/laboratories';
+import { formatKes } from './waterIntake';
 
 import { LaboratoryWorkspace } from './components/laboratory/LaboratoryWorkspace';
+import { WaterLaboratoryView } from './components/laboratory/WaterLaboratoryView';
+import { WaterIntakeEdit } from './components/laboratory/WaterIntakeEditModal';
+import { FoodDrugIntakeEdit } from './components/laboratory/FoodDrugIntakeEditModal';
+import { FoodDrugLaboratoryView } from './components/laboratory/FoodDrugLaboratoryView';
 import { DigitalCaseFile } from './components/case/DigitalCaseFile';
 import { ReferenceDatabaseView } from './components/reference/ReferenceDatabaseView';
 import { ExecutiveDashboard } from './components/dashboard/ExecutiveDashboard';
@@ -44,9 +51,11 @@ import { NotificationDrawer } from './components/notifications/NotificationDrawe
 import { AuditTrailView } from './components/audit/AuditTrailView';
 import { SettingsView, readUserSettings } from './components/settings/SettingsView';
 import { useTheme } from './theme/ThemeProvider';
+import { ApiError, apiRequest } from './lib/api';
+import { SuperAdminPage } from './components/admin/SuperAdminPage';
 
-const LABORATORY_WORKSPACE_ROLES: UserRole[] = ['ANALYST', 'HEAD_OF_DEPARTMENT'];
-const RECEPTIONIST_VIEWS = new Set(['dashboard', 'register-visitor', 'lab-bay', 'check-out', 'audit', 'settings']);
+const LABORATORY_WORKSPACE_ROLES: UserRole[] = ['ANALYST', 'SENIOR_CHEMIST', 'HEAD_OF_DEPARTMENT'];
+const RECEPTIONIST_VIEWS = new Set(['dashboard', 'register-visitor', 'lab-bay', 'check-out', 'notifications', 'audit', 'settings']);
 
 // Every member of these departments (interns included) works the laboratory
 // workspace, since each of them registers submissions for the section.
@@ -62,13 +71,31 @@ const isReceptionist = (role?: UserRole | null) => role === 'RECEPTIONIST';
 export default function App() {
   const { setMode } = useTheme();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [checkingSession, setCheckingSession] = useState(true);
   const [activeView, setActiveView] = useState<string>('landing');
   const [activeCase, setActiveCase] = useState<ForensicCase>(DEMO_CASE);
-  const [visitors, setVisitors] = useState<OfficerVisitor[]>([INITIAL_VISITOR]);
+  const [waterIntakes, setWaterIntakes] = useState<WaterIntake[]>([]);
+  const [waterIntakesLoading, setWaterIntakesLoading] = useState(false);
+  const [waterIntakesError, setWaterIntakesError] = useState('');
+  const [waterStaff, setWaterStaff] = useState<Pick<User, 'id' | 'name' | 'role'>[]>([]);
+  const [visitors, setVisitors] = useState<OfficerVisitor[]>([]);
+  const [receptionVisitStats, setReceptionVisitStats] = useState<ReceptionVisitStats | null>(null);
+  const [receptionVisitStatsError, setReceptionVisitStatsError] = useState('');
+  const [receptionVisitStatsLoading, setReceptionVisitStatsLoading] = useState(false);
+  const [selectedIntakeVisitId, setSelectedIntakeVisitId] = useState<string | null>(null);
+  const [visitsLoading, setVisitsLoading] = useState(false);
+  const [visitsHasMore, setVisitsHasMore] = useState(false);
+  const [visitsLoadingMore, setVisitsLoadingMore] = useState(false);
+  const receptionVisitsFullyLoaded = useRef(false);
+  const [visitsError, setVisitsError] = useState('');
   const [notifications, setNotifications] = useState<AppNotification[]>(INITIAL_NOTIFICATIONS);
+  const [receptionActivityNotifications, setReceptionActivityNotifications] = useState<AppNotification[]>([]);
+  const [receptionActivityNotificationError, setReceptionActivityNotificationError] = useState('');
+  const [adminNotifications, setAdminNotifications] = useState<AppNotification[]>([]);
+  const [adminNotificationError, setAdminNotificationError] = useState('');
+  const [superAdminTab, setSuperAdminTab] = useState<'requests' | 'department-requests' | 'users' | 'audit'>('requests');
   const [auditLogs, setAuditLogs] = useState<AuditEvent[]>(INITIAL_AUDIT_LOGS);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [officerVerified, setOfficerVerified] = useState(true);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Global modals for Verification and Intake
@@ -79,45 +106,68 @@ export default function App() {
   // Drugs officer always opens intake on a Food & Drugs submission.
   const intakeVisitor = useMemo(
     () =>
-      visitors.find((v) => !!currentUser?.department && v.laboratory === currentUser.department) ??
-      visitors[0],
-    [visitors, currentUser?.department]
+      selectedIntakeVisitId
+        ? visitors.find((v) =>
+            v.id === selectedIntakeVisitId &&
+            v.status !== 'Departed' &&
+            (!currentUser?.department || v.laboratory === currentUser.department)
+          )
+        :
+      visitors.find((v) =>
+        v.status !== 'Departed' &&
+        (!currentUser?.department || v.laboratory === currentUser.department)
+      ),
+    [visitors, selectedIntakeVisitId, currentUser?.department]
   );
+  const officerVerified = !!intakeVisitor &&
+    intakeVisitor.status !== 'Awaiting Laboratory Reception' &&
+    intakeVisitor.status !== 'Departed';
 
-  // Officers the Food & Drugs Head of Section can assign samples to.
-  const foodDrugOfficers = useMemo(() => {
-    const seen = new Set<string>();
-    return [...INITIAL_USERS, ...DEMO_ACCOUNTS].filter((u) => {
-      if (u.department !== 'Food & Drugs' || u.role === 'HEAD_OF_DEPARTMENT' || seen.has(u.name)) return false;
-      seen.add(u.name);
-      return true;
-    });
-  }, []);
+  // Officers the Food & Drugs Head of Section can assign samples to: every
+  // active staff account in that department, loaded from the API.
+  const [foodDrugStaff, setFoodDrugStaff] = useState<Pick<User, 'id' | 'name' | 'role'>[]>([]);
+  const foodDrugOfficers = useMemo(
+    () => foodDrugStaff.filter((u) => u.role !== 'HEAD_OF_DEPARTMENT'),
+    [foodDrugStaff],
+  );
+  useEffect(() => {
+    if (currentUser?.department !== 'Food & Drugs') {
+      setFoodDrugStaff([]);
+      return;
+    }
+    let cancelled = false;
+    apiRequest<{ officers: Pick<User, 'id' | 'name' | 'role'>[] }>('/api/department/officers')
+      .then((result) => { if (!cancelled) setFoodDrugStaff(result.officers); })
+      .catch(() => { if (!cancelled) setFoodDrugStaff([]); });
+    return () => { cancelled = true; };
+  }, [currentUser?.id, currentUser?.department]);
 
-  // Water & Environment staff: every member can receive an exhibit; only
-  // officers (not the Head) are offered as Analysis Officers.
-  const waterStaff = useMemo(() => {
-    const seen = new Set<string>();
-    return [...INITIAL_USERS, ...DEMO_ACCOUNTS].filter((u) => {
-      if (u.department !== 'Water' || seen.has(u.name)) return false;
-      seen.add(u.name);
-      return true;
-    });
-  }, []);
   const waterOfficers = useMemo(() => waterStaff.filter((u) => u.role !== 'HEAD_OF_DEPARTMENT'), [waterStaff]);
 
   // Departmental alerts: staff attached to a laboratory only see notifications
   // addressed to their own department (or their role), never another
-  // department's intake. Roles with no department — reception, administration,
-  // executive — continue to see everything.
+  // department's intake. Institution-wide staff — reception, administration,
+  // executive, quality management, and super-admins — continue to see
+  // everything, which is why General Administration must not be treated as a
+  // filterable unit here.
   const visibleNotifications = useMemo(() => {
-    if (!currentUser || !currentUser.department) return notifications;
+    if (currentUser?.role === 'SUPER_ADMIN') return adminNotifications;
+    if (currentUser?.role === 'RECEPTIONIST') return receptionActivityNotifications;
+    if (isInstitutionWide(currentUser)) return notifications;
+    // isInstitutionWide is false here only for a signed-in, lab-attached user,
+    // so currentUser is guaranteed non-null below.
+    const { department, role } = currentUser!;
     return notifications.filter(
       (n) =>
-        (n.recipientDepartment && n.recipientDepartment === currentUser.department) ||
-        (n.recipientRole && n.recipientRole === currentUser.role)
+        (n.recipientDepartment && n.recipientDepartment === department) ||
+        (n.recipientRole && n.recipientRole === role)
+    ).concat(
+      receptionActivityNotifications.filter((notification) =>
+        (notification.recipientDepartment && notification.recipientDepartment === department) ||
+        (notification.recipientRole && notification.recipientRole === role)
+      )
     );
-  }, [notifications, currentUser]);
+  }, [notifications, adminNotifications, receptionActivityNotifications, currentUser]);
 
   // Prototype Modal States
   const [searchOpen, setSearchOpen] = useState(false);
@@ -127,7 +177,28 @@ export default function App() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
+    apiRequest<{ user: User }>('/api/auth/me')
+      .then(({ user }) => {
+        if (!cancelled) {
+          setCurrentUser(user);
+          setActiveView(user.role === 'SUPER_ADMIN' ? 'super-admin' : 'dashboard');
+        }
+      })
+      .catch((error: unknown) => {
+        if (!cancelled && !(error instanceof ApiError && error.status === 401)) {
+          showToast(error instanceof Error ? error.message : 'Unable to verify your sign-in session.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCheckingSession(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
     if (!currentUser) return;
+    if (currentUser.role === 'SUPER_ADMIN') return;
     const settings = readUserSettings(currentUser.id);
     setMode(settings.themeMode);
     setSidebarCollapsed(settings.compactSidebar);
@@ -163,16 +234,213 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
+  const loadAdminNotifications = useCallback(async () => {
+    if (currentUser?.role !== 'SUPER_ADMIN') return;
+    try {
+      const { notifications: rows } = await apiRequest<{
+        notifications: Array<Omit<AppNotification, 'timestamp' | 'persisted' | 'relatedRecordType' | 'relatedRecordId'> & {
+          createdAt: string;
+          recordType?: string;
+          recordId?: string;
+        }>;
+      }>('/api/admin/notifications');
+      setAdminNotifications(rows.map(({ createdAt, recordType, recordId, ...notification }) => ({
+        ...notification,
+        timestamp: new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(createdAt)),
+        relatedRecordType: recordType,
+        relatedRecordId: recordId,
+        persisted: true,
+      })));
+      setAdminNotificationError('');
+    } catch (cause) {
+      setAdminNotificationError(cause instanceof Error ? cause.message : 'Unable to load super-admin notifications.');
+    }
+  }, [currentUser?.id, currentUser?.role]);
+
+  useEffect(() => {
+    if (currentUser?.role !== 'SUPER_ADMIN') {
+      setAdminNotifications([]);
+      setAdminNotificationError('');
+      return;
+    }
+    void loadAdminNotifications();
+    const intervalId = window.setInterval(() => void loadAdminNotifications(), 15_000);
+    return () => window.clearInterval(intervalId);
+  }, [currentUser?.id, currentUser?.role, loadAdminNotifications]);
+
+  const loadReceptionActivityNotifications = useCallback(async () => {
+    if (!currentUser || currentUser.role === 'SUPER_ADMIN') return;
+    try {
+      const { notifications: rows } = await apiRequest<{
+        notifications: Array<Omit<AppNotification, 'timestamp' | 'persisted'> & { createdAt: string }>;
+      }>('/api/notifications');
+      setReceptionActivityNotifications(rows.map(({ createdAt, ...notification }) => ({
+        ...notification,
+        timestamp: new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(createdAt)),
+        persisted: true,
+      })));
+      setReceptionActivityNotificationError('');
+    } catch (cause) {
+      setReceptionActivityNotificationError(cause instanceof Error ? cause.message : 'Unable to load live reception activity.');
+    }
+  }, [currentUser?.id, currentUser?.role]);
+
+  useEffect(() => {
+    if (!currentUser || currentUser.role === 'SUPER_ADMIN') {
+      setReceptionActivityNotifications([]);
+      setReceptionActivityNotificationError('');
+      return;
+    }
+    void loadReceptionActivityNotifications();
+    const intervalId = window.setInterval(() => void loadReceptionActivityNotifications(), 10_000);
+    return () => window.clearInterval(intervalId);
+  }, [currentUser?.id, currentUser?.role, loadReceptionActivityNotifications]);
+
+  const loadWaterIntakes = useCallback(async (showError = false) => {
+    if (!currentUser ||
+        (currentUser.role !== 'SUPER_ADMIN' && currentUser.department !== 'Water')) {
+      setWaterIntakes([]);
+      setWaterStaff([]);
+      return;
+    }
+    try {
+      const result = await apiRequest<{
+        intakes: WaterIntake[];
+        officers: Pick<User, 'id' | 'name' | 'role'>[];
+      }>('/api/water/intakes');
+      setWaterIntakes(result.intakes);
+      setWaterStaff(result.officers);
+      setWaterIntakesError('');
+    } catch (error) {
+      setWaterIntakesError(error instanceof Error ? error.message : 'Unable to load Water Lab exhibits.');
+      if (showError) showToast(error instanceof Error ? error.message : 'Unable to load Water Lab exhibits.');
+    }
+  }, [currentUser?.id, currentUser?.role, currentUser?.department]);
+
+  useEffect(() => {
+    if (!currentUser ||
+        (currentUser.role !== 'SUPER_ADMIN' && currentUser.department !== 'Water')) {
+      setWaterIntakes([]);
+      setWaterStaff([]);
+      setWaterIntakesError('');
+      setWaterIntakesLoading(false);
+      return;
+    }
+    setWaterIntakesLoading(true);
+    void loadWaterIntakes(true).finally(() => setWaterIntakesLoading(false));
+    const intervalId = window.setInterval(() => {
+      void loadWaterIntakes();
+    }, 15_000);
+    return () => window.clearInterval(intervalId);
+  }, [currentUser?.id, currentUser?.role, currentUser?.department, loadWaterIntakes]);
+
+  const loadReceptionVisits = useCallback(async (showLoading = true) => {
+    if (!currentUser) {
+      setVisitors([]);
+      setVisitsLoading(false);
+      receptionVisitsFullyLoaded.current = false;
+      setVisitsHasMore(false);
+      return;
+    }
+    if (showLoading) {
+      setVisitsLoading(true);
+      setVisitsError('');
+    }
+    try {
+      const result = await apiRequest<{ visits: OfficerVisitor[]; hasMore: boolean }>('/api/reception/visits?limit=100&date=all');
+      setVisitors((previous) => {
+        const pageIds = new Set(result.visits.map((visit) => visit.id));
+        return [...result.visits, ...previous.filter((visit) => !pageIds.has(visit.id))];
+      });
+      setVisitsHasMore(result.hasMore && !receptionVisitsFullyLoaded.current);
+      setVisitsError('');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to load reception visits.';
+      setVisitsError(message);
+      if (showLoading) showToast(message);
+    } finally {
+      if (showLoading) setVisitsLoading(false);
+    }
+  }, [currentUser?.id]);
+
+  const loadOlderReceptionVisits = async () => {
+    const lastVisit = visitors[visitors.length - 1];
+    if (!lastVisit || visitsLoadingMore || !visitsHasMore) return;
+    setVisitsLoadingMore(true);
+    try {
+      const params = new URLSearchParams({
+        limit: '100',
+        date: 'all',
+        before: lastVisit.arrivedAt,
+        beforeId: lastVisit.id,
+      });
+      const result = await apiRequest<{ visits: OfficerVisitor[]; hasMore: boolean }>(`/api/reception/visits?${params}`);
+      setVisitors((previous) => {
+        const existingIds = new Set(previous.map((visit) => visit.id));
+        return [...previous, ...result.visits.filter((visit) => !existingIds.has(visit.id))];
+      });
+      setVisitsHasMore(result.hasMore);
+      receptionVisitsFullyLoaded.current = !result.hasMore;
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Unable to load older visitor records.');
+    } finally {
+      setVisitsLoadingMore(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!currentUser) {
+      setVisitors([]);
+      setVisitsLoading(false);
+      receptionVisitsFullyLoaded.current = false;
+      return;
+    }
+    void loadReceptionVisits();
+    const intervalId = window.setInterval(() => {
+      void loadReceptionVisits(false);
+    }, 15_000);
+    return () => window.clearInterval(intervalId);
+  }, [currentUser?.id, loadReceptionVisits]);
+
+  const loadReceptionVisitStats = useCallback(async () => {
+    if (currentUser?.role !== 'RECEPTIONIST') {
+      setReceptionVisitStats(null);
+      setReceptionVisitStatsError('');
+      setReceptionVisitStatsLoading(false);
+      return;
+    }
+    setReceptionVisitStatsLoading(true);
+    try {
+      const result = await apiRequest<{ stats: ReceptionVisitStats }>('/api/reception/visits/stats');
+      setReceptionVisitStats(result.stats);
+      setReceptionVisitStatsError('');
+    } catch (error) {
+      setReceptionVisitStatsError(error instanceof Error ? error.message : 'Unable to load visitor totals.');
+    } finally {
+      setReceptionVisitStatsLoading(false);
+    }
+  }, [currentUser?.id, currentUser?.role]);
+
+  useEffect(() => {
+    if (currentUser?.role !== 'RECEPTIONIST') {
+      setReceptionVisitStats(null);
+      setReceptionVisitStatsError('');
+      return;
+    }
+    void loadReceptionVisitStats();
+    const intervalId = window.setInterval(() => void loadReceptionVisitStats(), 15_000);
+    return () => window.clearInterval(intervalId);
+  }, [currentUser?.id, currentUser?.role, loadReceptionVisitStats]);
+
   const handleLogin = (user: User) => {
     setCurrentUser(user);
-    // User logs directly into the real operational dashboard
-    setActiveView('dashboard');
+    setActiveView(user.role === 'SUPER_ADMIN' ? 'super-admin' : 'dashboard');
 
     // Add audit log
     const newLog: AuditEvent = {
       id: `AUD-${Date.now().toString().slice(-4)}`,
       timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
-      user: `${user.name} (${user.staffId})`,
+      user: user.name,
       role: user.role,
       action: 'USER_LOGIN',
       recordType: 'Session',
@@ -180,132 +448,315 @@ export default function App() {
       details: `User successfully authenticated into GC-ILCMS with role ${user.role}.`,
     };
     setAuditLogs((prev) => [newLog, ...prev]);
-    showToast(`Welcome ${user.name} (${user.role}) — Opened Operational Dashboard`);
+    showToast(user.role === 'SUPER_ADMIN'
+      ? `Welcome ${user.name} — Opened Super-admin Console`
+      : `Welcome ${user.name} (${user.role}) — Opened Operational Dashboard`);
   };
 
-  const handleSignOut = () => {
-    setCurrentUser(null);
-    setActiveView('landing');
-    showToast('Signed out of forensic workstation. Returned to public portal.');
-  };
-
-  const handleNavigateView = (view: string) => {    if (view === 'landing') {
+  const handleSignOut = async () => {
+    try {
+      await apiRequest<void>('/api/auth/logout', { method: 'POST' });
       setCurrentUser(null);
       setActiveView('landing');
+      showToast('Signed out.');
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401) {
+        setCurrentUser(null);
+        setActiveView('landing');
+        showToast('Your session had already expired.');
+        return;
+      }
+      showToast(error instanceof Error ? error.message : 'Could not end the server session.');
+    }
+  };
+
+  const handleNavigateView = (view: string) => {
+    if (view === 'landing') {
+      void handleSignOut();
       return;
     }
 
+    if (!currentUser) {
+      showToast('Sign in to access the system.');
+      return;
+    }
+
+    const isSuperAdmin = currentUser.role === 'SUPER_ADMIN';
+    if (view === 'super-admin' && !isSuperAdmin) {
+      showToast('Super-admin access is restricted.');
+      return;
+    }
     if (isReceptionist(currentUser?.role) && !RECEPTIONIST_VIEWS.has(view)) {
       showToast('Reception access is limited to registration, Lab Bay monitoring, and check-out.');
       return;
     }
 
-    if (view === 'food-drug-intake' && currentUser?.department !== 'Food & Drugs') {
+    if (!isSuperAdmin && view === 'food-drug-intake' && currentUser.department !== 'Food & Drugs') {
       showToast('Food & Drugs sample registration is restricted to Food & Drugs staff.');
       return;
     }
 
-    if (view === 'water-intake' && currentUser?.department !== 'Water') {
+    if (!isSuperAdmin && view === 'water-intake' && currentUser.department !== 'Water') {
       showToast('Water & Environment exhibit intake is restricted to Water & Environment staff.');
       return;
     }
 
-    if (view === 'laboratory' && !canAccessLaboratoryWorkspace(currentUser)) {
+    if (!isSuperAdmin && view === 'laboratory' && !canAccessLaboratoryWorkspace(currentUser)) {
       showToast('Laboratory Workspace is restricted to Analyst and Head of Department roles, and Food & Drugs staff.');
       return;
     }
 
-    if (!currentUser) {
-      setCurrentUser(INITIAL_USERS[0]); // Default to Dr. Wanjiku (Reporting Analyst)
-    }
     setActiveView(view);
   };
 
-  const handleRegisterVisitor = (newVisitor: OfficerVisitor) => {
-    setVisitors((prev) => [newVisitor, ...prev]);
-
-    // Add alert notification for target laboratory
-    const isFoodDrug = newVisitor.laboratory === 'Food & Drugs';
-    const newNotif: AppNotification = {
-      id: `NOTIF-${Date.now()}`,
-      timestamp: 'Just now',
-      title: isFoodDrug
-        ? 'Incoming Food & Drugs Sample Submission'
-        : 'Incoming Police Seizure Exhibit',
-      message: isFoodDrug
-        ? `${newVisitor.officerName} (${newVisitor.poBox || newVisitor.station}) has been registered at reception and is awaiting sample registration.`
-        : `${newVisitor.officerName} (${newVisitor.station}) presented exhibits for ${newVisitor.laboratory} examination.`,
-      recipientDepartment: newVisitor.laboratory,
-      type: 'urgent',
-      read: false,
-      linkAction: 'LAB_VERIFICATION',
-      relatedVisitorId: newVisitor.id,
-    };
-    setNotifications((prev) => [newNotif, ...prev]);
-
-    // Add audit event
-    const audit: AuditEvent = {
-      id: `AUD-${Date.now().toString().slice(-4)}`,
-      timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
-      user: currentUser ? `${currentUser.name} (${currentUser.staffId})` : 'Reception Desk',
-      role: currentUser ? currentUser.role : 'RECEPTIONIST',
-      action: 'VISITOR_REGISTERED',
-      recordType: 'Visitor',
-      recordId: newVisitor.id,
-      details: `Registered officer ${newVisitor.officerName} from ${newVisitor.station} with exhibits for ${newVisitor.laboratory} Lab.`,
-    };
-    setAuditLogs((prev) => [audit, ...prev]);
-    showToast(`Visitor ${newVisitor.id} registered & laboratory notified.`);
+  const markNotificationRead = async (id: string, read: boolean) => {
+    const notification = visibleNotifications.find((item) => item.id === id);
+    if (notification?.persisted) {
+      try {
+        const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
+        await apiRequest(`${isSuperAdmin ? '/api/admin/notifications' : '/api/notifications'}/${id}/read`, {
+          method: 'PATCH',
+          body: JSON.stringify({ read }),
+        });
+        if (isSuperAdmin) await loadAdminNotifications();
+        else await loadReceptionActivityNotifications();
+      } catch (cause) {
+        showToast(cause instanceof Error ? cause.message : 'Could not update notification.');
+      }
+      return;
+    }
+    setNotifications((previous) => previous.map((item) => item.id === id ? { ...item, read } : item));
   };
 
-  const handleSendLabNotification = (visitor: OfficerVisitor) => {
-    showToast(`Notification sent to Head of ${visitor.laboratory} Laboratory.`);
+  const markAllNotificationsRead = async () => {
+    if (currentUser) {
+      try {
+        const isSuperAdmin = currentUser.role === 'SUPER_ADMIN';
+        await apiRequest(`${isSuperAdmin ? '/api/admin/notifications' : '/api/notifications'}/read-all`, { method: 'PATCH', body: '{}' });
+        if (isSuperAdmin) await loadAdminNotifications();
+        else await loadReceptionActivityNotifications();
+        showToast(isSuperAdmin ? 'All administration notifications marked as read.' : 'All notifications marked as read.');
+      } catch (cause) {
+        showToast(cause instanceof Error ? cause.message : 'Could not mark notifications as read.');
+      }
+      return;
+    }
+    setNotifications((previous) => previous.map((item) => ({ ...item, read: true })));
+    showToast('All notifications marked as read.');
   };
 
-  const handleCheckOutVisitor = (id: string) => {
-    const outTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
-    const target = visitors.find((v) => v.id === id);
-    setVisitors((prev) =>
-      prev.map((v) =>
-        v.id === id ? { ...v, timeOut: outTime, status: 'Departed' } : v
-      )
-    );
-
-    const audit: AuditEvent = {
-      id: `AUD-${Date.now().toString().slice(-4)}`,
-      timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
-      user: currentUser ? `${currentUser.name} (${currentUser.staffId})` : 'Reception Desk',
-      role: currentUser ? currentUser.role : 'RECEPTIONIST',
-      action: 'VISITOR_CHECKED_OUT',
-      recordType: 'Visitor',
-      recordId: id,
-      details: `Recorded departure of ${target?.officerName ?? 'client'} at ${outTime} and closed visitor register entry.`,
-    };
-    setAuditLogs((prev) => [audit, ...prev]);
-    showToast(`Visitor ${id} checked out at ${outTime}.`);
+  const dismissNotification = async (id: string) => {
+    const notification = visibleNotifications.find((item) => item.id === id);
+    if (notification?.persisted) {
+      try {
+        const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
+        await apiRequest(`${isSuperAdmin ? '/api/admin/notifications' : '/api/notifications'}/${id}`, { method: 'DELETE' });
+        if (isSuperAdmin) await loadAdminNotifications();
+        else await loadReceptionActivityNotifications();
+      } catch (cause) {
+        showToast(cause instanceof Error ? cause.message : 'Could not dismiss notification.');
+      }
+      return;
+    }
+    setNotifications((previous) => previous.filter((item) => item.id !== id));
   };
 
+  const performAdminNotificationAction = async (
+    notification: AppNotification,
+    action: 'approve' | 'reject' | 'reset-password',
+  ) => {
+    if (action === 'reset-password' && notification.relatedRecordType === 'user' && notification.relatedRecordId) {
+      try {
+        const result = await apiRequest<{ message: string; emailSent?: boolean }>(
+          `/api/admin/users/${notification.relatedRecordId}/reset-password`,
+          { method: 'POST', body: '{}' },
+        );
+        showToast(result.message);
+        if (result.emailSent !== false) {
+          try {
+            await apiRequest(`/api/admin/notifications/${notification.id}`, { method: 'DELETE' });
+          } catch {
+            showToast('The reset link was sent, but its notification could not be dismissed.');
+          }
+        }
+        await loadAdminNotifications();
+      } catch (cause) {
+        showToast(cause instanceof Error ? cause.message : 'Could not send a password reset link.');
+      }
+      return;
+    }
+    if (action !== 'reset-password' && notification.relatedRecordType === 'account_request' && notification.relatedRecordId) {
+      try {
+        const result = await apiRequest<{ message: string; emailSent?: boolean }>(
+          `/api/admin/requests/${notification.relatedRecordId}/${action}`,
+          { method: 'POST', body: '{}' },
+        );
+        showToast(result.message);
+        try {
+          await apiRequest(`/api/admin/notifications/${notification.id}`, { method: 'DELETE' });
+        } catch {
+          showToast('The request was processed, but its notification could not be dismissed.');
+        }
+        await loadAdminNotifications();
+      } catch (cause) {
+        showToast(cause instanceof Error ? cause.message : 'Could not process the account request.');
+      }
+      return;
+    }
+    if (action !== 'reset-password' && notification.relatedRecordType === 'department_change_request' && notification.relatedRecordId) {
+      try {
+        const result = await apiRequest<{ message: string }>(
+          `/api/admin/department-change-requests/${notification.relatedRecordId}/${action}`,
+          { method: 'POST', body: '{}' },
+        );
+        showToast(result.message);
+        try {
+          await apiRequest(`/api/admin/notifications/${notification.id}`, { method: 'DELETE' });
+        } catch {
+          showToast('The request was processed, but its notification could not be dismissed.');
+        }
+        await loadAdminNotifications();
+      } catch (cause) {
+        showToast(cause instanceof Error ? cause.message : 'Could not process the department request.');
+      }
+    }
+  };
+
+  const selectNotification = async (notification: AppNotification) => {
+    if (notification.persisted) {
+      await markNotificationRead(notification.id, true);
+      setNotificationsOpen(false);
+      if (notification.linkAction === 'RECEPTION_LAB_BAY' && notification.relatedVisitorId) {
+        try {
+          const { visit } = await apiRequest<{ visit: OfficerVisitor }>(
+            `/api/reception/visits/${notification.relatedVisitorId}`,
+          );
+          setVisitors((previous) => [visit, ...previous.filter((current) => current.id !== visit.id)]);
+          setSelectedIntakeVisitId(visit.id);
+          setActiveView('lab-bay');
+        } catch (cause) {
+          showToast(cause instanceof Error ? cause.message : 'Could not load the visitor record.');
+        }
+        return;
+      }
+      if (notification.linkAction === 'RECEPTION_REGISTER' && notification.relatedVisitorId) {
+        try {
+          const { visit } = await apiRequest<{ visit: OfficerVisitor }>(
+            `/api/reception/visits/${notification.relatedVisitorId}`,
+          );
+          setVisitors((previous) => [visit, ...previous.filter((current) => current.id !== visit.id)]);
+          setSelectedIntakeVisitId(visit.id);
+        } catch (cause) {
+          showToast(cause instanceof Error ? cause.message : 'Could not load the visitor record.');
+        }
+        setActiveView(currentUser?.role === 'RECEPTIONIST' ? 'dashboard' : 'reception');
+        return;
+      }
+      if (currentUser?.role === 'SUPER_ADMIN') {
+        const nextTab = notification.linkAction === 'ADMIN_DEPARTMENT_REQUESTS'
+          ? 'department-requests'
+          : notification.linkAction === 'ADMIN_USERS'
+            ? 'users'
+            : 'requests';
+        setSuperAdminTab(nextTab);
+        setActiveView('super-admin');
+      } else if (notification.linkAction === 'RECEPTION_LAB_BAY') {
+        setActiveView('lab-bay');
+      } else if (notification.linkAction === 'RECEPTION_REGISTER') {
+        setActiveView('reception');
+      }
+      return;
+    }
+    setNotifications((previous) => previous.map((item) => item.id === notification.id ? { ...item, read: true } : item));
+    setNotificationsOpen(false);
+  };
+
+  const handleSendLabNotification = async (visitor: OfficerVisitor, resend = false) => {
+    try {
+      const result = await apiRequest<{ message: string; notifiedAt: string }>(
+        `/api/reception/visits/${visitor.id}/notify-lab`,
+        { method: 'POST', body: JSON.stringify({ resend }) },
+      );
+      setVisitors((previous) => previous.map((visit) =>
+        visit.id === visitor.id ? { ...visit, labNotificationSentAt: result.notifiedAt } : visit
+      ));
+      await loadReceptionActivityNotifications();
+      showToast(result.message);
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 404 && cause.message === 'API route not found.') {
+        showToast('The server is running an older version. Restart it with npm run dev, then try again.');
+      } else {
+        showToast(cause instanceof Error ? cause.message : `Could not notify ${visitor.laboratory}.`);
+      }
+    }
+  };
+
+  const handleRegisterVisitor = async (draft: ReceptionVisitDraft): Promise<boolean> => {
+    try {
+      const { visit } = await apiRequest<{ visit: OfficerVisitor }>('/api/reception/visits', {
+        method: 'POST',
+        body: JSON.stringify(draft),
+      });
+      setVisitors((prev) => [visit, ...prev.filter((current) => current.id !== visit.id)]);
+      void loadReceptionVisitStats();
+      await loadReceptionActivityNotifications();
+      setAuditLogs((prev) => [
+        {
+          id: `AUD-${Date.now().toString().slice(-4)}`,
+          timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
+          user: currentUser ? currentUser.name : 'Reception',
+          role: currentUser ? currentUser.role : 'RECEPTIONIST',
+          action: 'LAB_NOTIFICATION_DISPATCHED',
+          recordType: 'Notification',
+          recordId: visit.visitNumber,
+          details: `Dispatched automated arrival alert to ${laboratoryLabel(visit.laboratory)} staff for visitor ${visit.visitNumber}.`,
+        },
+        ...prev,
+      ]);
+      showToast(`Visitor ${visit.visitNumber} registered and ${laboratoryLabel(visit.laboratory)} has been notified.`);
+      return true;
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not register visitor.');
+      return false;
+    }
+  };
+
+  const transitionReceptionVisit = async (id: string, action: 'lab-received' | 'service-completed' | 'check-out') => {
+    try {
+      const result = await apiRequest<{ visit: OfficerVisitor }>(`/api/reception/visits/${id}/${action}`, { method: 'POST', body: '{}' });
+      setVisitors((previous) => previous.map((visit) => visit.id === result.visit.id ? result.visit : visit));
+      await loadReceptionVisits(false);
+      void loadReceptionVisitStats();
+      showToast(action === 'lab-received'
+        ? 'Laboratory receipt recorded.'
+        : action === 'service-completed'
+          ? 'Laboratory service marked complete.'
+          : 'Visitor departure recorded.');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not update visitor status.');
+    }
+  };
+
+  const handleCheckOutVisitor = (id: string) => transitionReceptionVisit(id, 'check-out');
   const handleVerifyOfficer = (visitorId?: string) => {
-    const targetId = visitorId || visitors[0]?.id || 'VIS-2026-0042';
-    setOfficerVerified(true);
-    setVisitors((prev) =>
-      prev.map((v) =>
-        v.id === targetId ? { ...v, status: 'In Laboratory' } : v
-      )
-    );
-
-    const audit: AuditEvent = {
-      id: `AUD-${Date.now().toString().slice(-4)}`,
-      timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
-      user: currentUser ? `${currentUser.name} (${currentUser.staffId})` : 'Analyst',
-      role: currentUser ? currentUser.role : 'ANALYST',
-      action: 'OFFICER_VERIFIED',
-      recordType: 'Visitor',
-      recordId: targetId,
-      details: 'Officer credentials verified and exhibits accepted into Narcotics Receiving Bay.',
-    };
-    setAuditLogs((prev) => [audit, ...prev]);
-    showToast('Officer credentials verified. Exhibits admitted for analytical intake.');
+    if (!visitorId) return Promise.resolve();
+    return transitionReceptionVisit(visitorId, 'lab-received');
+  };
+  const handleRevealNationalId = async (id: string): Promise<string | null> => {
+    try {
+      const result = await apiRequest<{ nationalId: string }>(`/api/reception/visits/${id}/national-id`);
+      return result.nationalId;
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not reveal National ID.');
+      return null;
+    }
+  };
+  const openOfficerVerification = () => {
+    if (!intakeVisitor) {
+      showToast('No current visitor is waiting for laboratory receipt.');
+      return;
+    }
+    setShowOfficerModal(true);
   };
 
   const handleRegisterSubmission = (submissionData: {
@@ -335,7 +786,7 @@ export default function App() {
         timestamp: `${submissionData.dateReceived} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
         sampleOrExhibitId: ex.id,
         fromEntity: submissionData.receivedFrom,
-        toEntity: `${submissionData.receivedBy} (${submissionData.department} Lab)`,
+        toEntity: `${submissionData.receivedBy} (${departmentLabel(submissionData.department)} Lab)`,
         officerOrStaffName: submissionData.receivedBy,
         location: submissionData.storageLocation,
         action: 'Received',
@@ -367,12 +818,12 @@ export default function App() {
     const audit: AuditEvent = {
       id: `AUD-${Date.now().toString().slice(-4)}`,
       timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
-      user: currentUser ? `${currentUser.name} (${currentUser.staffId})` : 'Analyst',
+      user: currentUser ? currentUser.name : 'Analyst',
       role: currentUser ? currentUser.role : 'ANALYST',
       action: 'EXHIBITS_REGISTERED',
       recordType: 'Exhibit',
       recordId: submissionData.exhibits[0]?.id || 'EXH-BATCH',
-      details: `Registered ${submissionData.exhibits.length} exhibit item(s) from ${submissionData.receivedFrom} into ${submissionData.department} Lab vault.`,
+      details: `Registered ${submissionData.exhibits.length} exhibit item(s) from ${submissionData.receivedFrom} into ${departmentLabel(submissionData.department)} Lab vault.`,
     };
     setAuditLogs((prev) => [audit, ...prev]);
 
@@ -416,6 +867,54 @@ export default function App() {
     showToast(`Registered ${submissionData.exhibits.length} exhibit(s) into Digital Case File.`);
   };
 
+  const handleRegisterWaterIntake = async (
+    submissionData: Parameters<typeof handleRegisterSubmission>[0],
+  ): Promise<WaterIntake> => {
+    const draft = submissionData.waterIntake;
+    if (!draft) throw new Error('Water exhibit details are missing.');
+    const result = await apiRequest<{ intake: WaterIntake }>('/api/water/intakes', {
+      method: 'POST',
+      body: JSON.stringify({
+        receptionVisitId: draft.receptionVisitId,
+        senderType: draft.senderType,
+        senderName: draft.senderName,
+        senderAddress: draft.senderAddress,
+        senderMobile: draft.senderMobile,
+        contactPerson: draft.contactPerson,
+        contactPersonMobile: draft.contactPersonMobile,
+        receivingOfficerId: draft.receivingOfficerId,
+        dateReceived: draft.dateReceived,
+        testType: draft.testType,
+        specificParameters: draft.specificParameters ?? [],
+        sourceCategory: draft.sourceCategory,
+        sourceType: draft.sourceType,
+        locationFrom: draft.locationFrom,
+        dischargeTo: draft.dischargeTo,
+        receiptNumber: draft.receiptNumber,
+        supportingDocuments: submissionData.supportingDocuments,
+        remarks: submissionData.remarks,
+      }),
+    });
+    const savedIntake = { ...result.intake, caseId: draft.caseId };
+    const persistedExhibit = {
+      ...submissionData.exhibits[0],
+      id: savedIntake.exhibitId,
+      sealNumber: savedIntake.sealNumber ?? submissionData.exhibits[0].sealNumber,
+      packaging: savedIntake.packaging ?? submissionData.exhibits[0].packaging,
+      condition: savedIntake.condition ?? submissionData.exhibits[0].condition,
+      storageLocation: savedIntake.storageLocation ?? submissionData.exhibits[0].storageLocation,
+      markings: `Marked "${savedIntake.labReference}" on receipt`,
+      remarks: `${savedIntake.testType}. Charges ${formatKes(savedIntake.charges)}. Awaiting Analysis Officer assignment.`,
+    };
+    handleRegisterSubmission({
+      ...submissionData,
+      exhibits: [persistedExhibit],
+      waterIntake: savedIntake,
+    });
+    setWaterIntakes((previous) => [savedIntake, ...previous.filter((intake) => intake.id !== savedIntake.id)]);
+    return savedIntake;
+  };
+
   const updateFoodDrugIntake = (intakeId: string, patch: Partial<FoodDrugIntake>) =>
     setActiveCase((prev) => ({
       ...prev,
@@ -428,7 +927,7 @@ export default function App() {
       {
         id: `AUD-${Date.now().toString().slice(-4)}`,
         timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
-        user: `${currentUser.name} (${currentUser.staffId})`,
+        user: currentUser.name,
         role: currentUser.role,
         action,
         recordType: 'Exhibit',
@@ -437,6 +936,37 @@ export default function App() {
       },
       ...prev,
     ]);
+  };
+
+  // Stage 1b: the Head of the Food & Drugs section signs off the submitted
+  // documents before an officer can be assigned.
+  const handleApproveFoodDrugIntake = (intakeId: string) => {
+    const intake = activeCase.foodDrugIntakes?.find((i) => i.id === intakeId);
+    if (!currentUser || !intake || intake.status !== 'Awaiting Approval') return;
+    if (currentUser.role !== 'HEAD_OF_DEPARTMENT' || currentUser.department !== 'Food & Drugs') {
+      showToast('Only the Head of the Food & Drugs section can approve these documents.');
+      return;
+    }
+    updateFoodDrugIntake(intakeId, {
+      status: 'Awaiting Assignment',
+      approvedBy: currentUser.name,
+      approvedDate: new Date().toISOString().split('T')[0],
+    });
+    logFoodDrugAudit('FD_DOCUMENTS_APPROVED', intakeId, `Approved the submitted documents for ${intakeId}.`);
+    setNotifications((prev) => [
+      {
+        id: `NOTIF-${Date.now()}`,
+        timestamp: 'Just now',
+        title: 'Food & Drugs documents approved',
+        message: `${intakeId} (${intake.sampleType}) documents were approved by ${currentUser.name} and the sample is ready for an officer.`,
+        recipientDepartment: 'Food & Drugs',
+        type: 'success',
+        read: false,
+        linkAction: 'LAB_WORKSPACE',
+      },
+      ...prev,
+    ]);
+    showToast(`${intakeId} documents approved.`);
   };
 
   // Stage 2: only the Head of the Food & Drugs section assigns an officer.
@@ -490,69 +1020,149 @@ export default function App() {
     showToast(`${intakeId} reported by ${reportedBy}.`);
   };
 
-  const updateWaterIntake = (intakeId: string, patch: Partial<WaterIntake>) =>
-    setActiveCase((prev) => ({
-      ...prev,
-      waterIntakes: prev.waterIntakes?.map((i) => (i.id === intakeId ? { ...i, ...patch } : i)),
-    }));
+  // The Head of Water & Environment signs off the submitted documents before
+  // any Analysis Officer can be assigned. Enforced by the API.
+  const handleApproveWaterIntake = async (intakeId: string) => {
+    try {
+      const { intake } = await apiRequest<{ intake: WaterIntake }>(`/api/water/intakes/${intakeId}/approve`, {
+        method: 'POST',
+        body: '{}',
+      });
+      setWaterIntakes((previous) => [intake, ...previous.filter((item) => item.id !== intake.id)]);
+      setNotifications((previous) => [
+        {
+          id: `NOTIF-${Date.now()}`,
+          timestamp: 'Just now',
+          title: 'Water & Environment documents approved',
+          message: `${intake.labReference} (${intake.testType}) was approved by ${intake.approvedBy} and is ready for an Analysis Officer.`,
+          recipientDepartment: 'Water',
+          type: 'success',
+          read: false,
+          linkAction: 'LAB_WORKSPACE',
+        },
+        ...previous,
+      ]);
+      showToast(`${intake.labReference} documents approved.`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not approve the Water exhibit documents.');
+    }
+  };
 
   // Only the Head of Water & Environment assigns the Analysis Officer. The
-  // alert goes to the whole department so every officer sees who holds it.
-  const handleAssignWaterIntake = (intakeId: string, officer: string) => {
-    const intake = activeCase.waterIntakes?.find((i) => i.id === intakeId);
-    if (!currentUser || !intake || intake.status !== 'Awaiting Assignment') return;
-    if (currentUser.role !== 'HEAD_OF_DEPARTMENT' || currentUser.department !== 'Water') {
-      showToast('Only the Head of Water & Environment can assign an Analysis Officer.');
+  // assignment and completion transitions are enforced by the API.
+  const handleAssignWaterIntake = async (intakeId: string, officerId: string) => {
+    try {
+      const { intake } = await apiRequest<{ intake: WaterIntake }>(`/api/water/intakes/${intakeId}/assign`, {
+        method: 'POST',
+        body: JSON.stringify({ analysisOfficerId: officerId }),
+      });
+      setWaterIntakes((previous) => [intake, ...previous.filter((item) => item.id !== intake.id)]);
+      setNotifications((previous) => [
+        {
+          id: `NOTIF-${Date.now()}`,
+          timestamp: 'Just now',
+          title: 'Water & Environment exhibit assigned',
+          message: `${intake.labReference} (${intake.testType}) has been assigned to ${intake.analysisOfficer} for analysis by ${intake.assignedBy}.`,
+          recipientDepartment: 'Water',
+          type: 'info',
+          read: false,
+          linkAction: 'LAB_WORKSPACE',
+        },
+        ...previous,
+      ]);
+      showToast(`${intake.labReference} assigned to ${intake.analysisOfficer}.`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not assign the Water exhibit.');
+    }
+  };
+
+  const handleCompleteWaterIntake = async (intakeId: string) => {
+    try {
+      const { intake } = await apiRequest<{ intake: WaterIntake }>(`/api/water/intakes/${intakeId}/complete`, {
+        method: 'POST',
+        body: '{}',
+      });
+      setWaterIntakes((previous) => [intake, ...previous.filter((item) => item.id !== intake.id)]);
+      showToast(`${intake.labReference} marked analysis complete.`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not complete the Water exhibit.');
+    }
+  };
+
+  // One edit per intake, before analysis starts, then it is locked. The API
+  // enforces this; errors are thrown so the edit dialog can show them.
+  const handleEditWaterIntake = async (intakeId: string, edit: WaterIntakeEdit): Promise<boolean> => {
+    const { intake } = await apiRequest<{ intake: WaterIntake }>(`/api/water/intakes/${intakeId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(edit),
+    });
+    setWaterIntakes((previous) => previous.map((item) => (item.id === intake.id ? intake : item)));
+    showToast(`${intake.labReference} updated. It can't be edited again.`);
+    return true;
+  };
+
+  // Only the Head of Water & Environment deletes an intake (enforced by the API).
+  const handleDeleteWaterIntake = async (intakeId: string) => {
+    try {
+      const result = await apiRequest<{ message: string }>(`/api/water/intakes/${intakeId}`, { method: 'DELETE' });
+      setWaterIntakes((previous) => previous.filter((item) => item.id !== intakeId));
+      showToast(result.message);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not delete the Water exhibit.');
+    }
+  };
+
+  const handleEditFoodDrugIntake = (intakeId: string, edit: FoodDrugIntakeEdit) => {
+    const intake = activeCase.foodDrugIntakes?.find((i) => i.id === intakeId);
+    if (!currentUser || !intake) return;
+    if (intake.edited) {
+      showToast(`${intakeId} has already been edited once and cannot be edited again.`);
       return;
     }
-    updateWaterIntake(intakeId, {
-      status: 'Under Analysis',
-      analysisOfficer: officer,
-      assignedBy: currentUser.name,
-      assignedDate: new Date().toISOString().split('T')[0],
+    if (intake.status !== 'Awaiting Approval' && intake.status !== 'Awaiting Assignment') {
+      showToast('An intake cannot be edited once analysis has started.');
+      return;
+    }
+    updateFoodDrugIntake(intakeId, {
+      ...edit,
+      edited: true,
+      editedDate: new Date().toISOString().split('T')[0],
     });
-    logFoodDrugAudit('WE_EXHIBIT_ASSIGNED', intake.labReference, `Assigned ${intake.labReference} to ${officer} as Analysis Officer.`);
-    setNotifications((prev) => [
-      {
-        id: `NOTIF-${Date.now()}`,
-        timestamp: 'Just now',
-        title: 'Water & Environment exhibit assigned',
-        message: `${intake.labReference} (${intake.testType}) has been assigned to ${officer} for analysis by ${currentUser.name}.`,
-        recipientDepartment: 'Water',
-        type: 'info',
-        read: false,
-        linkAction: 'LAB_WORKSPACE',
-      },
+    logFoodDrugAudit('FD_SAMPLE_EDITED', intakeId, `Edited ${intakeId} (one-time edit used).`);
+    showToast(`${intakeId} updated. It can't be edited again.`);
+  };
+
+  const handleDeleteFoodDrugIntake = (intakeId: string) => {
+    const intake = activeCase.foodDrugIntakes?.find((i) => i.id === intakeId);
+    if (!currentUser || !intake) return;
+    if (currentUser.role !== 'HEAD_OF_DEPARTMENT' || currentUser.department !== 'Food & Drugs') {
+      showToast('Only the Head of the Food & Drugs section can delete an intake.');
+      return;
+    }
+    setActiveCase((prev) => ({
       ...prev,
-    ]);
-    showToast(`${intake.labReference} assigned to ${officer}.`);
+      foodDrugIntakes: prev.foodDrugIntakes?.filter((i) => i.id !== intakeId),
+      exhibits: prev.exhibits.filter((exhibit) => exhibit.id !== intake.exhibitId),
+    }));
+    logFoodDrugAudit('FD_SAMPLE_DELETED', intakeId, `Deleted intake ${intakeId} (${intake.sampleType}, ${intake.clientName}).`);
+    showToast(`${intakeId} deleted.`);
   };
 
-  const handleCompleteWaterIntake = (intakeId: string) => {
-    const intake = activeCase.waterIntakes?.find((i) => i.id === intakeId);
-    if (!currentUser || !intake || intake.status !== 'Under Analysis') return;
-    const allowed =
-      currentUser.department === 'Water' &&
-      (currentUser.role === 'HEAD_OF_DEPARTMENT' || currentUser.name === intake.analysisOfficer);
-    if (!allowed) {
-      showToast('Only the assigned Analysis Officer or the Head can complete this exhibit.');
-      return;
-    }
-    updateWaterIntake(intakeId, {
-      status: 'Analysis Complete',
-      completedBy: currentUser.name,
-      completedDate: new Date().toISOString().split('T')[0],
-    });
-    logFoodDrugAudit('WE_ANALYSIS_COMPLETE', intake.labReference, `Analysis of ${intake.labReference} completed by ${currentUser.name}.`);
-    showToast(`${intake.labReference} marked analysis complete.`);
-  };
-
-  const isFoodDrugUser = currentUser?.department === 'Food & Drugs';
-  const isWaterUser = currentUser?.department === 'Water';
+  const isFoodDrugUser = currentUser?.role === 'SUPER_ADMIN' || currentUser?.department === 'Food & Drugs';
+  const isWaterUser = currentUser?.role === 'SUPER_ADMIN' || currentUser?.department === 'Water';
 
   // Every intake button funnels through here: Food & Drugs staff go to the
   // registration page, everyone else gets the generic exhibit intake modal.
   const openIntake = () => {
+    // Water's intake form can be opened and filled before a client arrives; registering stays locked until reception notifies the lab.
+    if (isWaterUser) {
+      handleNavigateView('water-intake');
+      return;
+    }
+    if (!intakeVisitor || intakeVisitor.status === 'Departed') {
+      showToast('A current visitor record is required before laboratory intake.');
+      return;
+    }
     if (isFoodDrugUser) {
       handleNavigateView('food-drug-intake');
       return;
@@ -574,7 +1184,7 @@ export default function App() {
     const audit: AuditEvent = {
       id: `AUD-${Date.now().toString().slice(-4)}`,
       timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
-      user: currentUser ? `${currentUser.name} (${currentUser.staffId})` : 'Gazetted Analyst',
+      user: currentUser ? currentUser.name : 'Gazetted Analyst',
       role: currentUser ? currentUser.role : 'ANALYST',
       action: 'DRAFT_REPORT_UPDATED',
       recordType: 'Report',
@@ -591,13 +1201,15 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col selection:bg-amber-500 selection:text-slate-950 font-sans dark:bg-slate-950 dark:text-slate-100">
       {/* Toast popup */}
       {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-50 px-4 py-2.5 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs shadow-2xl flex items-center gap-2 border border-amber-400 animate-fade-in">
+        <div role="status" aria-live="polite" className="fixed bottom-5 right-5 z-50 px-4 py-2.5 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs shadow-2xl flex items-center gap-2 border border-amber-400 animate-fade-in">
           <span>{toastMessage}</span>
         </div>
       )}
 
       {/* IF NOT AUTHENTICATED OR ON LANDING VIEW -> RENDER REFINED LANDING PAGE */}
-      {(!currentUser || activeView === 'landing') ? (
+      {checkingSession ? (
+        <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Checking sign-in session…</div>
+      ) : (!currentUser || activeView === 'landing') ? (
         <LandingPage onLogin={handleLogin} />
       ) : (
         /* IF AUTHENTICATED -> RENDER FULL GC-ILCMS INTERNAL WORKSPACE
@@ -629,8 +1241,8 @@ export default function App() {
             auditLogs={auditLogs}
             activeCase={activeCase}
             officerVerified={officerVerified}
-            waitingVisitor={visitors[0]}
-            onOpenVerifyOfficer={() => setShowOfficerModal(true)}
+            waitingVisitor={intakeVisitor}
+            onOpenVerifyOfficer={openOfficerVerification}
             onOpenIntakeModal={openIntake}
             onOpenCaseFile={() => setActiveView('case-file')}
             onOpenNotifications={() => setNotificationsOpen(true)}
@@ -639,17 +1251,30 @@ export default function App() {
             mobileNavOpen={mobileNavOpen}
             onCloseMobileNav={() => setMobileNavOpen(false)}
           >
+            {visitsError && (
+              <div role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+                Reception records could not be refreshed: {visitsError}
+              </div>
+            )}
             {activeView === 'dashboard' && (
               currentUser.role === 'RECEPTIONIST' ? (
                 <VisitorDeskView
                   visitors={visitors}
+                  visitStats={receptionVisitStats}
+                  visitStatsError={receptionVisitStatsError}
+                  visitStatsLoading={receptionVisitStatsLoading}
                   onRegisterVisitor={handleRegisterVisitor}
                   onSendLabNotification={handleSendLabNotification}
+                  onRevealNationalId={handleRevealNationalId}
                   onProceedToLab={(v) => {
                     handleNavigateView('lab-bay');
-                    showToast(`Opened Lab Bay monitoring for ${v.officerName}.`);
+                    showToast(`Opened Lab Bay for ${v.visitNumber}.`);
                   }}
                   onCheckOutVisitor={handleCheckOutVisitor}
+                  isLoading={visitsLoading}
+                  hasMoreVisitors={visitsHasMore}
+                  isLoadingMoreVisitors={visitsLoadingMore}
+                  onLoadMoreVisitors={loadOlderReceptionVisits}
                   currentUserName={currentUser.name}
                   onNavigate={handleNavigateView}
                 />
@@ -658,9 +1283,12 @@ export default function App() {
                   currentUser={currentUser}
                   activeCase={activeCase}
                   visitors={visitors}
+                  waterIntakes={waterIntakes}
+                  waterIntakesLoading={waterIntakesLoading}
+                  waterIntakesError={waterIntakesError}
                   officerVerified={officerVerified}
                   onNavigate={handleNavigateView}
-                  onOpenVerifyOfficer={() => setShowOfficerModal(true)}
+                  onOpenVerifyOfficer={openOfficerVerification}
                   onOpenIntakeModal={openIntake}
                   onOpenCaseFile={(id) => setActiveView('case-file')}
                   onOpenGCMS={() => setActiveView('case-file')}
@@ -671,13 +1299,21 @@ export default function App() {
             {activeView === 'reception' && (
               <VisitorDeskView
                 visitors={visitors}
+                visitStats={receptionVisitStats}
+                visitStatsError={receptionVisitStatsError}
+                visitStatsLoading={receptionVisitStatsLoading}
                 onRegisterVisitor={handleRegisterVisitor}
                 onSendLabNotification={handleSendLabNotification}
+                onRevealNationalId={handleRevealNationalId}
                 onProceedToLab={(v) => {
                   handleNavigateView('lab-bay');
-                  showToast(`Opened Lab Bay monitoring for ${v.officerName}.`);
+                  showToast(`Opened Lab Bay for ${v.visitNumber}.`);
                 }}
                 onCheckOutVisitor={handleCheckOutVisitor}
+                isLoading={visitsLoading}
+                hasMoreVisitors={visitsHasMore}
+                isLoadingMoreVisitors={visitsLoadingMore}
+                onLoadMoreVisitors={loadOlderReceptionVisits}
                 currentUserName={currentUser.name}
                 onNavigate={handleNavigateView}
               />
@@ -686,9 +1322,10 @@ export default function App() {
             {activeView === 'register-visitor' && (
               <VisitorRegistrationPage
                 currentUserName={currentUser.name}
-                onRegister={(v) => {
-                  handleRegisterVisitor(v);
-                  setActiveView('dashboard');
+                onRegister={async (draft) => {
+                  const saved = await handleRegisterVisitor(draft);
+                  if (saved) setActiveView('dashboard');
+                  return saved;
                 }}
                 onCancel={() => setActiveView('dashboard')}
               />
@@ -697,39 +1334,75 @@ export default function App() {
             {activeView === 'lab-bay' && (
               <LabBayView
                 visitors={visitors}
-                onNotifyLab={(visitor) => handleSendLabNotification(visitor)}
-                onProceedToLab={function () {
-                  showToast('Laboratory Workspace is restricted to Analyst and Head of Department roles, and Food & Drugs staff.');
-                }}
-                onCheckOut={(visitorId) => handleCheckOutVisitor(visitorId)}
+                initialSelectedVisitorId={selectedIntakeVisitId}
+                onCheckOut={handleCheckOutVisitor}
+                onLabReceive={(visitorId) => transitionReceptionVisit(visitorId, 'lab-received')}
+                onServiceComplete={(visitorId) => transitionReceptionVisit(visitorId, 'service-completed')}
+                onRevealNationalId={handleRevealNationalId}
+                canReceiveVisits={['ANALYST', 'SENIOR_CHEMIST', 'HEAD_OF_DEPARTMENT'].includes(currentUser.role)}
+                canCompleteVisits={['ANALYST', 'SENIOR_CHEMIST', 'HEAD_OF_DEPARTMENT'].includes(currentUser.role)}
+                canCheckOutVisits={['RECEPTIONIST', 'ADMINISTRATOR', 'CLERK', 'CEO'].includes(currentUser.role)}
+                isLoading={visitsLoading}
+                hasMoreVisitors={visitsHasMore}
+                isLoadingMoreVisitors={visitsLoadingMore}
+                onLoadMoreVisitors={loadOlderReceptionVisits}
                 currentUserName={currentUser.name}
+                onSendLabNotification={
+                  currentUser.department === 'Food & Drugs' || currentUser.department === 'Water'
+                    ? handleSendLabNotification
+                    : undefined
+                }
+                onOpenIntake={
+                  (currentUser.department === 'Food & Drugs' || currentUser.department === 'Water')
+                    ? (visit) => {
+                        if (visit.status !== 'In Laboratory') {
+                          showToast('The laboratory must receive this client before intake.');
+                          return;
+                        }
+                        setSelectedIntakeVisitId(visit.id);
+                        setActiveView(visit.laboratory === 'Food & Drugs' ? 'food-drug-intake' : 'water-intake');
+                      }
+                    : undefined
+                }
               />
             )}
 
             {activeView === 'check-out' && (
               <CheckOutView
                 visitors={visitors}
-                onCheckOut={(visitorId) => handleCheckOutVisitor(visitorId)}
-                onProceedToLab={function () {
-                  showToast('Laboratory Workspace is restricted to Analyst and Head of Department roles, and Food & Drugs staff.');
-                }}
+                onCheckOut={handleCheckOutVisitor}
+                canCheckOutVisits={['RECEPTIONIST', 'ADMINISTRATOR', 'CLERK', 'CEO'].includes(currentUser.role)}
+                hasMoreVisitors={visitsHasMore}
+                isLoadingMoreVisitors={visitsLoadingMore}
+                onLoadMoreVisitors={loadOlderReceptionVisits}
               />
             )}
 
             {activeView === 'notifications' && (
-              <NotificationsView
-                notifications={visibleNotifications}
-                onMarkAllAsRead={() => {
-                  setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-                  showToast('All notifications marked as read.');
-                }}
-                onSelect={(n) => {
-                  // Routing disabled for now: selecting a notification only
-                  // marks it read, it no longer jumps to the reception desk.
-                  setNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, read: true } : x)));
-                }}
-                unreadCount={unreadCount}
-              />
+              <>
+                {currentUser.role === 'SUPER_ADMIN' && adminNotificationError && (
+                  <div role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+                    Super-admin notifications could not be loaded: {adminNotificationError}
+                  </div>
+                )}
+                {currentUser.role !== 'SUPER_ADMIN' && receptionActivityNotificationError && (
+                  <div role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+                    Live visit activity could not be loaded: {receptionActivityNotificationError}
+                  </div>
+                )}
+                <NotificationsView
+                  notifications={visibleNotifications}
+                  onMarkAllAsRead={() => void markAllNotificationsRead()}
+                  onSelect={(notification) => void selectNotification(notification)}
+                  onAdminAction={performAdminNotificationAction}
+                  unreadCount={unreadCount}
+                  description={currentUser.role === 'SUPER_ADMIN'
+                    ? 'Account registrations, department requests and account security actions. Select an alert to open its administration workflow.'
+                    : currentUser.role === 'RECEPTIONIST'
+                      ? 'Live reception activity, including newly registered clients, laboratory routing and checkout updates.'
+                    : undefined}
+                />
+              </>
             )}
 
             {activeView === 'laboratory' && !canAccessLaboratoryWorkspace(currentUser) && (
@@ -742,29 +1415,71 @@ export default function App() {
               </div>
             )}
 
-            {activeView === 'laboratory' && canAccessLaboratoryWorkspace(currentUser) && (
+            {activeView === 'laboratory' && canAccessLaboratoryWorkspace(currentUser) && intakeVisitor && (
               <LaboratoryWorkspace
                 currentDepartment={currentUser.department || 'Narcotics'}
                 activeCase={activeCase}
                 visitor={intakeVisitor}
                 onOpenCaseFile={(id) => setActiveView('case-file')}
-                onVerifyOfficer={handleVerifyOfficer}
+                onVerifyOfficer={() => handleVerifyOfficer(intakeVisitor.id)}
                 officerVerified={officerVerified}
                 onRegisterSubmission={handleRegisterSubmission}
+                currentUserId={currentUser.id}
                 currentUserName={currentUser.name}
                 currentUserRole={currentUser.role}
                 foodDrugOfficers={foodDrugOfficers}
+                onApproveFoodDrugIntake={handleApproveFoodDrugIntake}
                 onAssignFoodDrugIntake={handleAssignFoodDrugIntake}
                 onReportFoodDrugIntake={handleReportFoodDrugIntake}
+                onEditFoodDrugIntake={handleEditFoodDrugIntake}
+                onDeleteFoodDrugIntake={handleDeleteFoodDrugIntake}
                 waterOfficers={waterOfficers}
+                waterIntakes={waterIntakes}
+                onApproveWaterIntake={handleApproveWaterIntake}
                 onAssignWaterIntake={handleAssignWaterIntake}
                 onCompleteWaterIntake={handleCompleteWaterIntake}
+                onEditWaterIntake={handleEditWaterIntake}
+                onDeleteWaterIntake={handleDeleteWaterIntake}
                 onOpenIntake={openIntake}
               />
             )}
+            {activeView === 'laboratory' && canAccessLaboratoryWorkspace(currentUser) && !intakeVisitor && currentUser.department === 'Water' && (
+              <WaterLaboratoryView
+                intakes={waterIntakes}
+                currentUser={currentUser}
+                officers={waterOfficers}
+                onOpenIntake={openIntake}
+                onApprove={handleApproveWaterIntake}
+                onAssign={handleAssignWaterIntake}
+                onComplete={handleCompleteWaterIntake}
+                onEdit={handleEditWaterIntake}
+                onDelete={handleDeleteWaterIntake}
+              />
+            )}
+            {activeView === 'laboratory' && canAccessLaboratoryWorkspace(currentUser) && !intakeVisitor && currentUser.department === 'Food & Drugs' && (
+              <FoodDrugLaboratoryView
+                intakes={activeCase.foodDrugIntakes ?? []}
+                currentUser={currentUser}
+                officers={foodDrugOfficers}
+                onOpenIntake={openIntake}
+                onApprove={handleApproveFoodDrugIntake}
+                onAssign={handleAssignFoodDrugIntake}
+                onReport={handleReportFoodDrugIntake}
+                onEdit={handleEditFoodDrugIntake}
+                onDelete={handleDeleteFoodDrugIntake}
+              />
+            )}
+            {activeView === 'laboratory' && canAccessLaboratoryWorkspace(currentUser) && !intakeVisitor && currentUser.department !== 'Water' && currentUser.department !== 'Food & Drugs' && (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center dark:border-slate-700 dark:bg-slate-900">
+                <FlaskConical className="mx-auto h-8 w-8 text-slate-400" />
+                <h2 className="mt-3 text-sm font-bold text-slate-900 dark:text-white">No active reception visits</h2>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">New arrivals routed to your laboratory will appear in Lab Bay.</p>
+              </div>
+            )}
 
-            {activeView === 'food-drug-intake' && isFoodDrugUser && (
+            {activeView === 'food-drug-intake' && isFoodDrugUser && intakeVisitor && (
               <FoodDrugIntakePage
+                key={intakeVisitor.id}
                 activeCase={activeCase}
                 visitor={intakeVisitor}
                 receivingAnalystName={currentUser.name}
@@ -776,21 +1491,29 @@ export default function App() {
                 onCancel={() => handleNavigateView('laboratory')}
               />
             )}
+            {activeView === 'food-drug-intake' && isFoodDrugUser && !intakeVisitor && (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center dark:border-slate-700 dark:bg-slate-900">
+                <h2 className="text-sm font-bold text-slate-900 dark:text-white">No active reception visit</h2>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">A Food &amp; Drugs arrival must be received at Lab Bay before intake.</p>
+              </div>
+            )}
 
             {activeView === 'water-intake' && isWaterUser && (
+              // Fillable even before a client is sent; registering stays disabled until reception has notified Water.
               <WaterIntakePage
                 activeCase={activeCase}
-                visitor={intakeVisitor}
-                receivingOfficerName={currentUser.name}
-                staffNames={[currentUser.name, ...waterStaff.map((o) => o.name).filter((n) => n !== currentUser.name)]}
-                onSaveIntake={(data) => {
-                  handleRegisterSubmission(data);
+                visitor={intakeVisitor ?? null}
+                currentUserId={currentUser.id}
+                staffMembers={waterStaff}
+                intakes={waterIntakes}
+                onSaveIntake={async (data) => {
+                  const intake = await handleRegisterWaterIntake(data);
                   handleNavigateView('laboratory');
+                  return intake;
                 }}
                 onCancel={() => handleNavigateView('laboratory')}
               />
             )}
-
             {activeView === 'case-file' && (
               <DigitalCaseFile
                 caseData={activeCase}
@@ -799,6 +1522,10 @@ export default function App() {
             )}
 
             {activeView === 'references' && <ReferenceDatabaseView />}
+
+            {activeView === 'super-admin' && currentUser.role === 'SUPER_ADMIN' && (
+              <SuperAdminPage currentUserId={currentUser.id} initialTab={superAdminTab} />
+            )}
 
             {activeView === 'executive' && (
               <ExecutiveDashboard
@@ -824,22 +1551,22 @@ export default function App() {
           </AppShell>
 
           {/* Global Officer Verification Modal (Triggerable from Dashboard or Workspaces) */}
-          <OfficerVerificationModal
+          {intakeVisitor && <OfficerVerificationModal
             isOpen={showOfficerModal}
             onClose={() => setShowOfficerModal(false)}
-            visitor={visitors[0]}
+            visitor={intakeVisitor}
             currentAnalystName={currentUser.name}
-            onConfirmVerification={(data) => {
-              handleVerifyOfficer();
+            onConfirmVerification={async (data) => {
+              await handleVerifyOfficer(intakeVisitor.id);
               setShowOfficerModal(false);
               if (data.proceedToIntake) {
                 openIntake();
               }
             }}
-          />
+          />}
 
           {/* Global Submission & Exhibits Intake Modal (Triggerable from Dashboard or Workspaces) */}
-          <SubmissionIntakeModal
+          {intakeVisitor && <SubmissionIntakeModal
             isOpen={showIntakeModal}
             onClose={() => setShowIntakeModal(false)}
             activeCase={activeCase}
@@ -849,7 +1576,7 @@ export default function App() {
               handleRegisterSubmission(data);
               setShowIntakeModal(false);
             }}
-          />
+          />}
 
           {/* Notifications Drawer */}
           <NotificationDrawer
@@ -857,23 +1584,13 @@ export default function App() {
             onClose={() => setNotificationsOpen(false)}
             notifications={visibleNotifications}
             unreadCount={visibleNotifications.filter((n) => !n.read).length}
-            onMarkAllAsRead={() => {
-              setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-              showToast('All alerts marked as read.');
+            onMarkAllAsRead={() => void markAllNotificationsRead()}
+            onSelectNotification={(notification) => void selectNotification(notification)}
+            onToggleRead={(id) => {
+              const notification = visibleNotifications.find((item) => item.id === id);
+              if (notification) void markNotificationRead(id, !notification.read);
             }}
-            onSelectNotification={(notif) => {
-              // Click-through routing is disabled for now: selecting a
-              // notification only marks it read. It no longer jumps to the
-              // originating screen, the lab workspace, or an intake page.
-              setNotifications((prev) =>
-                prev.map((n) => (n.id === notif.id ? { ...n, read: true } : n))
-              );
-              setNotificationsOpen(false);
-            }}
-            onToggleRead={(id) =>
-              setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: !n.read } : n)))
-            }
-            onDismiss={(id) => setNotifications((prev) => prev.filter((n) => n.id !== id))}
+            onDismiss={(id) => void dismissNotification(id)}
           />
         </div>
       )}

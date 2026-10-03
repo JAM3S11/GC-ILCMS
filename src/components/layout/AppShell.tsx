@@ -33,6 +33,7 @@ import {
   OfficerVisitor,
 } from '../../types';
 import { laboratoryLabel } from '../../data/laboratories';
+import { departmentQualifier } from '../../lib/departments';
 import { APP_NAV_GROUPS, NavItem, SETTINGS_NAV_ITEM, canSeeNavItem } from './appNav';
 
 /** 'HEAD_OF_DEPARTMENT' → 'Head of department' */
@@ -85,7 +86,8 @@ export const AppShell: React.FC<AppShellProps> = ({
   children,
 }) => {
 
-  const [rightSidebarCollapsed, setRightSidebarCollapsed] = React.useState(true);
+  // Command Center temporarily disabled.
+  // const [rightSidebarCollapsed, setRightSidebarCollapsed] = React.useState(true);
 
   const navGroups = APP_NAV_GROUPS;
 
@@ -132,7 +134,8 @@ export const AppShell: React.FC<AppShellProps> = ({
   // and the collapse toggle is replaced by a close button.
   const renderSidebar = (mobile: boolean, onToggle: () => void) => {
     const collapsed = mobile ? false : sidebarCollapsed;
-    const workspace = currentUser.department ? laboratoryLabel(currentUser.department) : 'Government Chemist';
+    const labQualifier = departmentQualifier(currentUser.department);
+    const workspace = labQualifier ? laboratoryLabel(labQualifier) : 'Government Chemist';
     const roleLabel = humaniseRole(currentUser.role);
 
     const visible = (item: NavItem) => canSeeNavItem(currentUser, item);
@@ -192,7 +195,14 @@ export const AppShell: React.FC<AppShellProps> = ({
           {!collapsed && (
             <div className="min-w-0 flex-1">
               <div className="line-clamp-2 text-[13px] font-semibold leading-tight text-slate-900 dark:text-white">{workspace}</div>
-              <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">{roleLabel}</div>
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="truncate text-[11px] text-slate-500 dark:text-slate-400">{roleLabel}</span>
+                {currentUser.role === 'HEAD_OF_DEPARTMENT' && (
+                  <span className="shrink-0 rounded bg-emerald-500/15 px-1 py-px text-[9px] font-bold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+                    Head
+                  </span>
+                )}
+              </div>
             </div>
           )}
           <button
@@ -300,8 +310,7 @@ export const AppShell: React.FC<AppShellProps> = ({
       {/* ======================= MAIN CONTENT ======================= */}
       <main className="flex-1 min-w-0 min-h-0 overflow-y-auto p-3 md:p-5">{children}</main>
 
-      {/* ======================= RIGHT SIDEBAR ======================= */}
-      {/* Open trigger — always mounted, slides+fades in when the panel is closed */}
+      {/* Command Center temporarily disabled — remove these comment markers to re-enable.
       <button
         onClick={() => setRightSidebarCollapsed(false)}
         aria-label="Show command center"
@@ -335,7 +344,6 @@ export const AppShell: React.FC<AppShellProps> = ({
           <PanelRightClose className="w-4 h-4" />
         </button>
         <div className="flex flex-col flex-1 min-h-0 p-4 bg-slate-50 dark:bg-slate-900/95 rounded-md">
-            {/* Header */}
             <div className="shrink-0 flex items-center gap-2">
               <h2 className="text-[13px] font-bold text-slate-900 dark:text-white flex items-center gap-2">
                 <Activity className="w-4 h-4 text-amber-500 dark:text-amber-400" />
@@ -347,10 +355,8 @@ export const AppShell: React.FC<AppShellProps> = ({
               </span>
             </div>
 
-            {/* Scrollable content */}
             <div className="flex flex-col flex-1 min-h-0 overflow-y-auto space-y-4 mt-4 pr-1">
 
-        {/* Pending officer alert */}
         {!officerVerified && waitingVisitor && currentUser.role !== 'RECEPTIONIST' && (
           <div className="p-3 rounded-xl bg-gradient-to-r from-amber-500/15 to-white border border-amber-500/40 space-y-2.5 dark:to-slate-950">
             <div className="flex items-center gap-2">
@@ -375,7 +381,6 @@ export const AppShell: React.FC<AppShellProps> = ({
           </div>
         )}
 
-        {/* Notifications */}
         {currentUser.role !== 'RECEPTIONIST' && (
         <div className="space-y-2.5">
           <div className="flex items-center justify-between">
@@ -410,7 +415,6 @@ export const AppShell: React.FC<AppShellProps> = ({
         </div>
         )}
 
-        {/* Recent custody */}
         <div className="space-y-2.5">
           <div className="flex items-center justify-between">
             <h3 className="text-[10px] font-mono uppercase tracking-wider text-slate-500 dark:text-slate-400">Chain of Custody</h3>
@@ -435,7 +439,6 @@ export const AppShell: React.FC<AppShellProps> = ({
           </div>
         </div>
 
-        {/* Instrument telemetry */}
         <div className="space-y-2.5">
           <h3 className="text-[10px] font-mono uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
             <Zap className="w-3 h-3 text-purple-500 dark:text-purple-400" /> Instrument Telemetry
@@ -455,7 +458,6 @@ export const AppShell: React.FC<AppShellProps> = ({
           </div>
         </div>
 
-        {/* Vault environment */}
         <div className="p-3 rounded-xl bg-white border border-slate-200 space-y-2 dark:bg-slate-950 dark:border-slate-800">
           <h3 className="text-[10px] font-mono uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
             <Gauge className="w-3 h-3 text-teal-500 dark:text-teal-400" /> Vault Environment
@@ -472,7 +474,6 @@ export const AppShell: React.FC<AppShellProps> = ({
           </div>
         </div>
 
-        {/* Activity stream */}
         <div className="space-y-2.5">
           <h3 className="text-[10px] font-mono uppercase tracking-wider text-slate-500 dark:text-slate-400">Live Activity</h3>
           <div className="space-y-2">
@@ -488,7 +489,6 @@ export const AppShell: React.FC<AppShellProps> = ({
           </div>
         </div>
 
-        {/* Quick actions */}
         <div className="pt-1 space-y-2">
           <h3 className="text-[10px] font-mono uppercase tracking-wider text-slate-500 dark:text-slate-400">Quick Actions</h3>
           <div className="grid grid-cols-2 gap-2">
@@ -522,6 +522,7 @@ export const AppShell: React.FC<AppShellProps> = ({
           </div>
           </div>
       </aside>
+      */}
     </div>
   );
 };

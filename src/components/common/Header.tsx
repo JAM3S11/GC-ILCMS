@@ -11,6 +11,7 @@ import { LogoPlaceholder } from './LogoPlaceholder';
 import { ThemeToggle } from './ThemeToggle';
 import { Kbd, isMacPlatform } from './GlobalSearchModal';
 import { User, UserRole } from '../../types';
+import { departmentQualifier } from '../../lib/departments';
 
 
 interface HeaderProps {
@@ -91,6 +92,8 @@ export const Header: React.FC<HeaderProps> = ({
         return 'Records Clerk';
       case 'ADMINISTRATOR':
         return 'System Administrator';
+      case 'SUPER_ADMIN':
+        return 'Super Administrator';
       case 'ACCOUNTANT':
         return 'Accountant';
       case 'HR':
@@ -119,6 +122,7 @@ export const Header: React.FC<HeaderProps> = ({
       case 'RECEPTIONIST':
         return 'text-sky-400';
       case 'ADMINISTRATOR':
+      case 'SUPER_ADMIN':
         return 'text-rose-400';
       case 'QUALITY_MANAGER':
         return 'text-teal-400';
@@ -171,11 +175,12 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
 
-        {/* Department chip */}
-        {currentUser.department && (
+        {/* Department chip. Institution-wide staff have no laboratory, so the
+            chip reads "General Administration" rather than "… Lab". */}
+        {departmentQualifier(currentUser.department) && (
           <div className="hidden lg:flex items-center gap-2 pl-4 min-w-0">
             <span className="px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-[11px] font-mono text-slate-600 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-300 truncate whitespace-nowrap max-w-[180px]">
-              {currentUser.department} Lab
+              {departmentQualifier(currentUser.department)} Lab
             </span>
           </div>
         )}
@@ -211,7 +216,6 @@ export const Header: React.FC<HeaderProps> = ({
           )}
 
           {/* Notifications */}
-          {currentUser.role !== 'RECEPTIONIST' && (
           <button
             onClick={onToggleNotifications}
             aria-label="Open notifications"
@@ -225,7 +229,6 @@ export const Header: React.FC<HeaderProps> = ({
               </span>
             )}
           </button>
-          )}
 
           {/* Theme: Light / System / Dark */}
           <ThemeToggle variant="icon" />
@@ -247,8 +250,15 @@ export const Header: React.FC<HeaderProps> = ({
                 <span className="text-[13px] font-semibold text-slate-900 leading-tight dark:text-white truncate max-w-[110px] lg:max-w-[150px] xl:max-w-[220px]">
                   {currentUser.name}
                 </span>
-                <span className={`text-[10px] font-mono uppercase leading-tight truncate max-w-[110px] lg:max-w-[150px] ${getRoleTextColor(currentUser.role)}`}>
-                  {currentUser.role}
+                <span className="flex items-center gap-1 min-w-0">
+                  <span className={`text-[10px] font-mono uppercase leading-tight truncate max-w-[110px] lg:max-w-[150px] ${getRoleTextColor(currentUser.role)}`}>
+                    {currentUser.role}
+                  </span>
+                  {currentUser.role === 'HEAD_OF_DEPARTMENT' && (
+                    <span className="shrink-0 rounded bg-emerald-500/15 px-1 py-px text-[9px] font-bold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+                      Head
+                    </span>
+                  )}
                 </span>
               </div>
               <ChevronDown
@@ -271,12 +281,19 @@ export const Header: React.FC<HeaderProps> = ({
                     </div>
                     <div className="min-w-0">
                       <div className="text-sm font-bold text-slate-900 truncate dark:text-white">{currentUser.name}</div>
-                      <div className={`text-xs font-mono ${getRoleTextColor(currentUser.role)}`}>
+                      <div className={`flex items-center gap-1.5 text-xs font-mono ${getRoleTextColor(currentUser.role)}`}>
                         {getRoleLabel(currentUser.role)}
+                        {currentUser.role === 'HEAD_OF_DEPARTMENT' && (
+                          <span className="rounded bg-emerald-500/15 px-1 py-px text-[9px] font-bold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+                            Head
+                          </span>
+                        )}
                       </div>
                       {currentUser.department && (
                         <div className="text-[11px] text-slate-500 mt-0.5 dark:text-slate-400">
-                          {currentUser.department} Laboratory
+                          {departmentQualifier(currentUser.department)
+                            ? `${departmentQualifier(currentUser.department)} Laboratory`
+                            : 'General Administration'}
                         </div>
                       )}
                     </div>

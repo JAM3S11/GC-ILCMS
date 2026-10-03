@@ -1,12 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence, useReducedMotion, type Transition } from 'motion/react';
 import {
   Shield,
   KeyRound,
   FlaskConical,
   CheckCircle2,
-  ChevronDown,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
@@ -23,9 +21,12 @@ import {
 import { LogoPlaceholder } from '../common/LogoPlaceholder';
 import { Select } from '../common/Select';
 import { LaboratoryDepartment, User, UserRole } from '../../types';
-import { INITIAL_USERS } from '../../data/initialData';
-
-const SHARED_PASSWORD = 'GC-ILCMS@2026';
+import { apiRequest } from '../../lib/api';
+import {
+  DEPARTMENT_LABELS,
+  departmentForRole,
+  departmentsForRole,
+} from '../../lib/departments';
 
 const EASE_OUT: Transition['ease'] = [0.22, 0.61, 0.36, 1];
 const TAB_SPRING: Transition = { type: 'spring', stiffness: 520, damping: 34 };
@@ -51,107 +52,51 @@ const roleTierIcon: Record<string, React.ReactNode> = {
   intern: <KeyRound className="w-3.5 h-3.5" />,
 };
 
-const departmentOptions: LaboratoryDepartment[] = [
-  'Narcotics', 'Food & Drugs', 'Criminalistic', 'DNA', 'Instruments', 'Water', 'Toxicology', 'Procurement',
-];
-
-const SCIENTIFIC_ROLES: UserRole[] = ['ANALYST', 'SENIOR_CHEMIST', 'INTERN', 'ATTACHEE'];
-
-const isScientificRole = (role: UserRole): boolean => SCIENTIFIC_ROLES.includes(role);
-
 const ADMIN_PROVISIONED_ROLES: UserRole[] = ['CEO', 'VICE_CEO', 'ADMINISTRATOR', 'HEAD_OF_DEPARTMENT'];
 
 const SELF_REGISTER_ROLES: UserRole[] = CREDENTIAL_GROUPS
   .flatMap(g => g.roles)
   .filter(role => !ADMIN_PROVISIONED_ROLES.includes(role));
 
-type AuthMode = 'signin' | 'register' | 'reset';
-
-type DemoAccount = User & { title: string };
-
-export const DEMO_ACCOUNTS: DemoAccount[] = [
-  /*
-   * Temporarily disabled demo accounts. Keep the Receptionist, Food & Drugs,
-   * and Water accounts active for the current workflow demo.
-  { id: 'DEMO-001', name: 'Mr. William K. Munyoki', title: 'CEO', email: 'william.munyoki@chemist.go.ke', staffId: 'DEMO-CEO-001', role: 'CEO', password: SHARED_PASSWORD },
-  { id: 'DEMO-002', name: 'Dr. Joseph K. Kimani', title: 'Vice CEO & Head of Directorate of Forensics Science Service', email: 'joseph.kimani@chemist.go.ke', staffId: 'DEMO-VCEO-002', role: 'VICE_CEO', password: SHARED_PASSWORD },
-  { id: 'DEMO-003', name: 'Mrs. Rose N. Sikuku', title: 'Principal Deputy to the GC & Director of Research, Innovation and Quality Assurance', email: 'rose.sikuku@chemist.go.ke', staffId: 'DEMO-HOD-003', role: 'HEAD_OF_DEPARTMENT', department: 'Procurement', password: SHARED_PASSWORD },
-  { id: 'DEMO-004', name: 'Mr. Geoffrey Anyona', title: 'Head of Research, Instrumentation and Quality Assurance Division', email: 'geoffrey.anyona@chemist.go.ke', staffId: 'DEMO-HOD-004', role: 'HEAD_OF_DEPARTMENT', department: 'Instruments', password: SHARED_PASSWORD },
-  { id: 'DEMO-005', name: 'Ms. Catherine S. Murambi', title: 'Head Instrumentation', email: 'catherine.murambi@chemist.go.ke', staffId: 'DEMO-HOD-005', role: 'HEAD_OF_DEPARTMENT', department: 'Instruments', password: SHARED_PASSWORD },
-  { id: 'DEMO-006', name: 'Ms. Abigael Cheruiyot', title: 'Officer - Instrumentation', email: 'abigael.cheruiyot@chemist.go.ke', staffId: 'DEMO-SCI-006', role: 'ANALYST', department: 'Instruments', password: SHARED_PASSWORD },
-  { id: 'DEMO-007', name: 'Dr. Christine N. Matindi', title: 'Head of Quality Assurance', email: 'christine.matindi@chemist.go.ke', staffId: 'DEMO-QMS-007', role: 'QUALITY_MANAGER', password: SHARED_PASSWORD },
-  { id: 'DEMO-008', name: 'Ms. Anne Nthenya', title: 'Officer - Quality Assurance', email: 'anne.nthenya@chemist.go.ke', staffId: 'DEMO-SCI-008', role: 'ANALYST', department: 'Procurement', password: SHARED_PASSWORD },
-  { id: 'DEMO-009', name: 'Dr. Muthini M. Mutiso', title: 'Head Research and Innovation', email: 'muthini.mutiso@chemist.go.ke', staffId: 'DEMO-HOD-009', role: 'HEAD_OF_DEPARTMENT', department: 'Procurement', password: SHARED_PASSWORD },
-  */
-  { id: 'DEMO-010', name: 'Ms. Joyce Nyoike', title: 'Head Food and Water Service Division', email: 'joyce.nyoike@chemist.go.ke', staffId: 'DEMO-HOD-010', role: 'HEAD_OF_DEPARTMENT', department: 'Water', password: SHARED_PASSWORD },
-  { id: 'DEMO-011', name: 'Ms. Dorcus N. Muthusi', title: 'Head Foods, Drugs and Chemical Substances Section', email: 'dorcus.muthusi@chemist.go.ke', staffId: 'DEMO-HOD-011', role: 'HEAD_OF_DEPARTMENT', department: 'Food & Drugs', password: SHARED_PASSWORD },
-  { id: 'DEMO-012', name: 'Ms. Emily K. Okworo', title: 'Officer - Foods, Drugs and Chemical Substance', email: 'emily.okworo@chemist.go.ke', staffId: 'DEMO-SCI-012', role: 'ANALYST', department: 'Food & Drugs', password: SHARED_PASSWORD },
-  { id: 'DEMO-013', name: 'Ms. Jane N. Kisutia', title: 'Head Water and Environment', email: 'jane.kisutia@chemist.go.ke', staffId: 'DEMO-HOD-013', role: 'HEAD_OF_DEPARTMENT', department: 'Water', password: SHARED_PASSWORD },
-  { id: 'DEMO-014', name: 'Ms. Betsy C. Chepkwony', title: 'Officer - Water and Environment', email: 'betsy.chepkwony@chemist.go.ke', staffId: 'DEMO-SCI-014', role: 'ANALYST', department: 'Water', password: SHARED_PASSWORD },
-  /*
-  { id: 'DEMO-015', name: 'Mr. James M. Welimo', title: 'Head Forensic and Clinical Toxicology Division', email: 'james.welimo@chemist.go.ke', staffId: 'DEMO-HOD-015', role: 'HEAD_OF_DEPARTMENT', department: 'Toxicology', password: SHARED_PASSWORD },
-  { id: 'DEMO-016', name: 'Ms. Everlyn A. Onyango', title: 'Officer - Forensic and Clinical Toxicology', email: 'everlyn.onyango@chemist.go.ke', staffId: 'DEMO-SCI-016', role: 'ANALYST', department: 'Toxicology', password: SHARED_PASSWORD },
-  { id: 'DEMO-017', name: 'Ms. Grace N. Njenga', title: 'Head Forensic Criminalistics Division and Criminalistic Section', email: 'grace.njenga@chemist.go.ke', staffId: 'DEMO-HOD-017', role: 'HEAD_OF_DEPARTMENT', department: 'Criminalistic', password: SHARED_PASSWORD },
-  { id: 'DEMO-018', name: 'Ms. Teresa N. Maina', title: 'Officer - Criminalistic Division', email: 'teresa.maina@chemist.go.ke', staffId: 'DEMO-SCI-018', role: 'ANALYST', department: 'Criminalistic', password: SHARED_PASSWORD },
-  { id: 'DEMO-019', name: 'Mr. Daniel Boit', title: 'Head Narcotics Section', email: 'daniel.boit@chemist.go.ke', staffId: 'DEMO-HOD-019', role: 'HEAD_OF_DEPARTMENT', department: 'Narcotics', password: SHARED_PASSWORD },
-  { id: 'DEMO-020', name: 'Ms. Sarah M. Muriuki', title: 'Officer - Narcotics', email: 'sarah.muriuki@chemist.go.ke', staffId: 'DEMO-SCI-020', role: 'ANALYST', department: 'Narcotics', password: SHARED_PASSWORD },
-  { id: 'DEMO-021', name: 'Ms. Margaret G. Kanja', title: 'Officer - Narcotics', email: 'margaret.kanja@chemist.go.ke', staffId: 'DEMO-SCI-021', role: 'ANALYST', department: 'Narcotics', password: SHARED_PASSWORD },
-  { id: 'DEMO-022', name: 'Ms. Nellie Pappa', title: 'Head Forensic Biology Division', email: 'nellie.pappa@chemist.go.ke', staffId: 'DEMO-HOD-022', role: 'HEAD_OF_DEPARTMENT', department: 'DNA', password: SHARED_PASSWORD },
-  { id: 'DEMO-023', name: 'Mr. Henry K. Sang', title: 'Head Homicide Section', email: 'henry.sang@chemist.go.ke', staffId: 'DEMO-HOD-023', role: 'HEAD_OF_DEPARTMENT', department: 'DNA', password: SHARED_PASSWORD },
-  { id: 'DEMO-024', name: 'Mr. Stanley I. Mosite', title: 'Officer - Homicide Section', email: 'stanley.mosite@chemist.go.ke', staffId: 'DEMO-SCI-024', role: 'ANALYST', department: 'DNA', password: SHARED_PASSWORD },
-  { id: 'DEMO-025', name: 'Ms. Margaret W. Maina', title: 'Head Sexual Offences and Genetic Relatedness', email: 'margaret.maina@chemist.go.ke', staffId: 'DEMO-HOD-025', role: 'HEAD_OF_DEPARTMENT', department: 'DNA', password: SHARED_PASSWORD },
-  { id: 'DEMO-026', name: 'Ms. Brenda S. Mbalanya', title: 'Officer - Forensic Biology', email: 'brenda.mbalanya@chemist.go.ke', staffId: 'DEMO-SCI-026', role: 'ANALYST', department: 'DNA', password: SHARED_PASSWORD },
-  */
-  { id: 'DEMO-027', name: 'Ms. Ezna Ratemo', title: 'Receptionist', email: 'ezna.ratemo@chemist.go.ke', staffId: 'DEMO-REC-027', role: 'RECEPTIONIST', password: SHARED_PASSWORD },
-  /*
-  { id: 'DEMO-028', name: 'Mr. Lee Omae', title: 'Office Assistant', email: 'lee.omae@chemist.go.ke', staffId: 'DEMO-CLK-028', role: 'CLERK', password: SHARED_PASSWORD },
-  { id: 'DEMO-029', name: 'Ms. Lucy', title: 'Office Assistant', email: 'lucy@chemist.go.ke', staffId: 'DEMO-CLK-029', role: 'CLERK', password: SHARED_PASSWORD },
-  { id: 'DEMO-030', name: 'Mr. James Daniel', title: 'Clerical Officer', email: 'james.daniel@chemist.go.ke', staffId: 'DEMO-CLK-030', role: 'CLERK', password: SHARED_PASSWORD },
-  { id: 'DEMO-031', name: 'Ms. Diana Kemunto', title: 'Clerical Officer', email: 'diana.kemunto@chemist.go.ke', staffId: 'DEMO-CLK-031', role: 'CLERK', password: SHARED_PASSWORD },
-  { id: 'DEMO-032', name: 'Ms. Glory', title: 'Administration', email: 'glory@chemist.go.ke', staffId: 'DEMO-ADM-032', role: 'ADMINISTRATOR', password: SHARED_PASSWORD },
-  { id: 'DEMO-033', name: 'Mr. Nchoshoi Shungea', title: 'HR', email: 'nchoshoi.shungea@chemist.go.ke', staffId: 'DEMO-HR-033', role: 'HR', password: SHARED_PASSWORD },
-  { id: 'DEMO-034', name: 'Mr. John Siele', title: 'Intern - ICT', email: 'john.siele@chemist.go.ke', staffId: 'DEMO-INT-034', role: 'INTERN', password: SHARED_PASSWORD },
-  */
-  { id: 'DEMO-035', name: 'Mr. Stephen', title: 'Intern - Foods, Drugs and Chemical Substance Section', email: 'stephen@chemist.go.ke', staffId: 'DEMO-INT-035', role: 'INTERN', department: 'Food & Drugs', password: SHARED_PASSWORD },
-  /*
-  { id: 'DEMO-036', name: 'Ms. Melan', title: 'Intern - Criminalistic Section', email: 'melan@chemist.go.ke', staffId: 'DEMO-INT-036', role: 'INTERN', department: 'Criminalistic', password: SHARED_PASSWORD },
-  */
-];
+type AuthMode = 'signin' | 'register' | 'activate' | 'forgot' | 'reset';
 
 const AUTH_COPY: Record<AuthMode, { title: string; subtitle: string; switchPrompt: string; switchCta: string; switchTo: AuthMode }> = {
   signin: {
     title: 'Sign in to GC-ILCMS',
-    subtitle: 'Welcome back. Use your staff email or ID.',
+    subtitle: 'Welcome back. Sign in with your work email.',
     switchPrompt: 'No account yet?',
     switchCta: 'Create account',
     switchTo: 'register',
   },
   register: {
-    title: 'Create your account',
-    subtitle: 'For Government Chemist staff. Senior roles are set up by an administrator.',
+    title: 'Request an account',
+    subtitle: 'A super-admin must approve your request before you receive a 15-minute activation link.',
     switchPrompt: 'Already have an account?',
     switchCta: 'Sign in',
     switchTo: 'signin',
   },
-  reset: {
+  activate: {
+    title: 'Activate your account',
+    subtitle: 'Set a password to complete your staff account activation.',
+    switchPrompt: 'Already activated?',
+    switchCta: 'Sign in',
+    switchTo: 'signin',
+  },
+  forgot: {
     title: 'Reset your password',
-    subtitle: 'Enter your work email and we will send you a reset link.',
+    subtitle: 'Enter your work email and we will send you a one-time reset link.',
     switchPrompt: 'Remembered it?',
-    switchCta: 'Back to sign in',
+    switchCta: 'Sign in',
+    switchTo: 'signin',
+  },
+  reset: {
+    title: 'Choose a new password',
+    subtitle: 'Set a new password to regain access to your account.',
+    switchPrompt: 'Changed your mind?',
+    switchCta: 'Sign in',
     switchTo: 'signin',
   },
 };
-
-const PASSWORD_RULES: { label: string; test: (value: string) => boolean }[] = [
-  { label: '8+ characters', test: (v) => v.length >= 8 },
-  { label: 'a number', test: (v) => /\d/.test(v) },
-  { label: 'a symbol', test: (v) => /[^A-Za-z0-9]/.test(v) },
-];
-
-const passwordStrength = (value: string): number => PASSWORD_RULES.filter(rule => rule.test(value)).length;
-
-const STRENGTH_LABELS = ['Too weak', 'Weak', 'Fair', 'Good'];
-const STRENGTH_COLORS = ['bg-slate-200', 'bg-rose-500', 'bg-amber-500', 'bg-emerald-500'];
 
 const FormError: React.FC<{ message: string }> = ({ message }) => (
   <p role="alert" className="flex items-center gap-1.5 text-[12px] text-rose-600">
@@ -160,156 +105,12 @@ const FormError: React.FC<{ message: string }> = ({ message }) => (
   </p>
 );
 
-const DemoAccountList: React.FC<{
-  accounts: DemoAccount[];
-  onSelect: (account: DemoAccount) => void;
-}> = ({ accounts, onSelect }) => {
-  const [isOpen, setIsOpen] = useState(false);
-  const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const accountGroups = [
-    { id: 'water', label: 'Water & Environment', accounts: accounts.filter((account) => account.department === 'Water') },
-    { id: 'food-drugs', label: 'Food & Drugs', accounts: accounts.filter((account) => account.department === 'Food & Drugs') },
-    { id: 'reception', label: 'Receptionist', accounts: accounts.filter((account) => account.role === 'RECEPTIONIST') },
-  ].filter((group) => group.accounts.length > 0);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setIsOpen(false);
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [isOpen]);
-
-  const overlayContainer = triggerRef.current?.closest<HTMLElement>('[data-demo-accounts-panel]');
-
-  return (
-    <>
-      <button
-        ref={triggerRef}
-        type="button"
-        onClick={() => setIsOpen((current) => !current)}
-        aria-haspopup="dialog"
-        aria-expanded={isOpen}
-        className="flex w-full cursor-pointer items-center justify-between gap-3 rounded-xl border border-dashed border-[#dcdce3] bg-slate-50/60 px-3 py-3 text-left transition-colors hover:border-[#f26522] hover:bg-orange-50/50 sm:px-4"
-      >
-        <span className="min-w-0 text-[11px] font-semibold text-[#111] sm:text-[12px]">
-          Demo accounts <span className="font-normal text-slate-500">· View {accounts.length} staff</span>
-        </span>
-        <ChevronDown className="h-4 w-4 shrink-0 text-slate-400" />
-      </button>
-
-      {isOpen && overlayContainer && createPortal(
-        <AnimatePresence>
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.18, ease: EASE_OUT }}
-            className="absolute inset-0 z-50 flex items-center justify-center overflow-hidden rounded-3xl bg-slate-950/45 p-3 backdrop-blur-sm sm:p-5"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Demo accounts"
-            onMouseDown={(event) => {
-              if (event.target === event.currentTarget) setIsOpen(false);
-            }}
-          >
-            <motion.div
-              initial={{ opacity: 0, y: 16, scale: 0.98 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 10, scale: 0.98 }}
-              transition={{ duration: 0.2, ease: EASE_OUT }}
-              className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-2xl bg-white shadow-[0_24px_70px_rgba(2,6,23,0.3)]"
-              onMouseDown={(event) => event.stopPropagation()}
-            >
-              <div className="flex items-start justify-between gap-4 border-b border-[#e6e6eb] px-4 py-4 sm:px-6">
-                <div>
-                  <h3 className="text-base font-bold text-[#111] sm:text-lg">Demo accounts</h3>
-                  <p className="mt-1 text-[11px] text-slate-500 sm:text-xs">Select a staff member to fill in their sign-in details.</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsOpen(false)}
-                  className="shrink-0 cursor-pointer rounded-lg px-2.5 py-1.5 text-xs font-semibold text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
-                >
-                  Close
-                </button>
-              </div>
-              <div className="min-h-0 overflow-y-auto overscroll-contain p-3 sm:p-5">
-                <div className="mx-auto w-full max-w-2xl space-y-2">
-                  {accountGroups.map((group) => {
-                    const expanded = expandedGroup === group.id;
-                    const panelId = `demo-accounts-${group.id}`;
-                    return (
-                      <section key={group.id} className="overflow-hidden rounded-xl border border-[#e6e6eb] bg-slate-50/70">
-                        <button
-                          type="button"
-                          aria-expanded={expanded}
-                          aria-controls={panelId}
-                          onClick={() => setExpandedGroup(expanded ? null : group.id)}
-                          className="flex w-full cursor-pointer items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-orange-50/70"
-                        >
-                          <span className="text-sm font-semibold text-slate-800">{group.label}</span>
-                          <span className="flex items-center gap-2 text-xs text-slate-500">
-                            {group.accounts.length} {group.accounts.length === 1 ? 'account' : 'accounts'}
-                            <ChevronDown className={`h-4 w-4 transition-transform ${expanded ? 'rotate-180' : ''}`} />
-                          </span>
-                        </button>
-                        {expanded && (
-                          <div id={panelId} className="grid gap-1 border-t border-[#e6e6eb] bg-white p-2 sm:grid-cols-2">
-                            {group.accounts.map((account) => (
-                              <button
-                                key={account.id}
-                                type="button"
-                                onClick={() => {
-                                  onSelect(account);
-                                  setIsOpen(false);
-                                }}
-                                className="flex min-h-[52px] w-full cursor-pointer items-start gap-2 rounded-lg border border-transparent bg-white px-2.5 py-2.5 text-left transition-colors hover:border-[#f26522] hover:bg-orange-50 sm:px-3 sm:py-2"
-                              >
-                                <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-orange-100 text-[9px] font-bold text-[#c94c17]">
-                                  {account.name.split(' ').filter(Boolean).map((word) => word[0]).slice(0, 2).join('')}
-                                </span>
-                                <span className="min-w-0 flex-1">
-                                  <span className="block break-words text-[11px] font-semibold leading-snug text-slate-800">{account.name}</span>
-                                  <span className="block break-words text-[10px] leading-relaxed text-slate-500">{account.title}</span>
-                                </span>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </section>
-                    );
-                  })}
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        </AnimatePresence>,
-        overlayContainer
-      )}
-    </>
-  );
-};
-
 const getRoleTier = (role: UserRole): string => {
   const group = CREDENTIAL_GROUPS.find(g => g.roles.includes(role));
   return group?.tier || 'standard';
 };
 
-const departmentLabels: Record<string, string> = {
-  'Narcotics': 'Narcotics & Psychotropic',
-  'Food & Drugs': 'Food, Cosmetics & Pharma',
-  'Criminalistic': 'Criminalistic & Physical Evidence',
-  'DNA': 'Forensic DNA Profiling',
-  'Instruments': 'Trace Elemental Analysis',
-  'Water': 'Environmental & Water Quality',
-  'Toxicology': 'Forensic Toxicology',
-  'Procurement': 'Reference Materials & CRM',
-};
+const departmentLabels = DEPARTMENT_LABELS;
 
 const SLIDE_MS = 5000;
 const INTRO_SECONDS = 5;
@@ -402,7 +203,7 @@ const TermsDialog: React.FC<TermsDialogProps> = ({ open, onClose }) => {
     },
     {
       title: '2. Information & data collected',
-      body: 'The system records your identity (name, email, staff ID), role, and department to control access. When you use it, the platform persists case records, exhibit descriptions, analysis results, and custody events that you legitimately create or are assigned to. It does not collect unrelated personal data.',
+      body: 'The system records your identity (name, email), role, and department to control access. When you use it, the platform persists case records, exhibit descriptions, analysis results, and custody events that you legitimately create or are assigned to. It does not collect unrelated personal data.',
     },
     {
       title: '3. How your data is protected',
@@ -482,27 +283,54 @@ const TermsDialog: React.FC<TermsDialogProps> = ({ open, onClose }) => {
 
 export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
   const shouldReduceMotion = useReducedMotion();
+  // Read the token once at mount. Re-deriving it on every render races the
+  // effect below that strips the query string from the address bar, which drops
+  // the token mid-flow and leaves the form unusable.
+  // Reset links land on /reset-password?token=..., activation links on
+  // /activate?token=...
+  const [{ token: invitationToken, expiresAt: invitationExpiresAt, resetToken, resetExpiresAt }] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const expires = params.get('expires');
+    const isResetLink = window.location.pathname === '/reset-password';
+    return {
+      token: isResetLink ? '' : params.get('token') ?? '',
+      expiresAt: expires ? Date.parse(expires) || 0 : 0,
+      resetToken: isResetLink ? params.get('token') ?? '' : '',
+      resetExpiresAt: expires ? Date.parse(expires) || 0 : 0,
+    };
+  });
   const [activeStep, setActiveStep] = useState(0);
   const [carouselPaused, setCarouselPaused] = useState(false);
-  const [authMode, setAuthMode] = useState<AuthMode>('signin');
-  const [loginId, setLoginId] = useState('');
+  const [authMode, setAuthMode] = useState<AuthMode>(
+    resetToken ? 'reset' : invitationToken ? 'activate' : 'signin',
+  );
+  const [loginEmail, setLoginEmail] = useState('');
   const [loginPass, setLoginPass] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [showSigninPass, setShowSigninPass] = useState(false);
-  const [keepSignedIn, setKeepSignedIn] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
   const [regFullName, setRegFullName] = useState('');
   const [regEmail, setRegEmail] = useState('');
-  const [regStaffId, setRegStaffId] = useState('');
-  const [regPassword, setRegPassword] = useState('');
-  const [showRegPass, setShowRegPass] = useState(false);
+
   const [regError, setRegError] = useState<string | null>(null);
+  const [registrationMessage, setRegistrationMessage] = useState('');
   const [regRole, setRegRole] = useState<UserRole>('ANALYST');
-  const [regDepartment, setRegDepartment] = useState<LaboratoryDepartment | undefined>(departmentOptions[0]);
+  const [regDepartment, setRegDepartment] = useState<LaboratoryDepartment>(departmentForRole('ANALYST'));
   const [regSubmitted, setRegSubmitted] = useState(false);
-  const [resetEmail, setResetEmail] = useState('');
-  const [resetSent, setResetSent] = useState(false);
+  const [activationPassword, setActivationPassword] = useState('');
+  const [activationError, setActivationError] = useState<string | null>(null);
+  const [activationComplete, setActivationComplete] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotError, setForgotError] = useState<string | null>(null);
+  const [forgotMessage, setForgotMessage] = useState('');
+  const [resetPassword, setResetPassword] = useState('');
+  const [resetConfirm, setResetConfirm] = useState('');
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [resetComplete, setResetComplete] = useState(false);
+  const [showResetPass, setShowResetPass] = useState(false);
+  const [activationSecondsLeft, setActivationSecondsLeft] = useState(() =>
+    invitationExpiresAt ? Math.max(0, Math.ceil((invitationExpiresAt - Date.now()) / 1000)) : 0);
   // Mobile only: the carousel plays first, then the sign-in modal opens.
   const [showMobileAuth, setShowMobileAuth] = useState(false);
   const [introSecondsLeft, setIntroSecondsLeft] = useState(INTRO_SECONDS);
@@ -532,6 +360,24 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
     return () => window.clearTimeout(timeout);
   }, [autoAdvance, activeStep]);
 
+  useEffect(() => {
+    if (!invitationExpiresAt) return;
+    const updateTimer = () => setActivationSecondsLeft(
+      Math.max(0, Math.ceil((invitationExpiresAt - Date.now()) / 1000)),
+    );
+    updateTimer();
+    const timer = window.setInterval(updateTimer, 1000);
+    return () => window.clearInterval(timer);
+  }, [invitationExpiresAt]);
+
+  useEffect(() => {
+    if (activationComplete && invitationToken) window.history.replaceState({}, '', window.location.pathname);
+  }, [activationComplete, invitationToken]);
+
+  useEffect(() => {
+    if (resetComplete) window.history.replaceState({}, '', '/');
+  }, [resetComplete]);
+
   const moveStep = (direction: -1 | 1) => {
     setActiveStep((current) => (current + direction + LIFECYCLE_STEPS.length) % LIFECYCLE_STEPS.length);
   };
@@ -542,52 +388,113 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
     setAuthMode(mode);
     setLoginError(null);
     setRegError(null);
-    setResetSent(false);
+    setActivationError(null);
+    if (mode === 'register') {
+      setRegSubmitted(false);
+      setRegistrationMessage('');
+    }
   };
 
-  const handleSignIn = (e: React.FormEvent) => {
+  const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submitting) return;
     setLoginError(null);
-    const matched = [...INITIAL_USERS, ...DEMO_ACCOUNTS].find(u => u.email.toLowerCase() === loginId.toLowerCase() || u.staffId.toLowerCase() === loginId.toLowerCase());
-    if (matched?.password && loginPass !== matched.password) {
-      setLoginError('That password is incorrect. Try again or reset it.');
-      return;
-    }
-    const user: User = matched ?? { id: `USR-${Date.now().toString().slice(-4)}`, name: loginId.split('@')[0] || 'User', email: loginId, staffId: 'GC-SCI-2026', role: 'ANALYST', department: 'Narcotics' };
     setSubmitting(true);
-    window.setTimeout(() => onLogin(user), shouldReduceMotion ? 0 : 600);
+    try {
+      const result = await apiRequest<{ user: User }>('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ email: loginEmail, password: loginPass }),
+      });
+      onLogin(result.user);
+    } catch (cause) {
+      setLoginError(cause instanceof Error ? cause.message : 'Sign-in failed.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
-  const handleRegister = (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setRegError(null);
-    if (ADMIN_PROVISIONED_ROLES.includes(regRole)) return;
-    if (passwordStrength(regPassword) < PASSWORD_RULES.length) {
-      setRegError('Use a password with 8+ characters, a number and a symbol.');
-      return;
+    setSubmitting(true);
+    try {
+      const result = await apiRequest<{ message: string }>('/api/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({
+          fullName: regFullName,
+          email: regEmail,
+          role: regRole,
+          department: regDepartment,
+        }),
+      });
+      setRegSubmitted(true);
+      setRegError(null);
+      setRegistrationMessage(result.message);
+    } catch (cause) {
+      setRegError(cause instanceof Error ? cause.message : 'Could not submit the account request.');
+    } finally {
+      setSubmitting(false);
     }
-    const isScientific = isScientificRole(regRole);
-    const user: User = {
-      id: `USR-${Date.now().toString().slice(-4)}`,
-      name: regFullName || 'New Analyst',
-      email: regEmail || 'staff@chemist.go.ke',
-      staffId: regStaffId || 'GC-REG-2026',
-      role: regRole,
-      department: isScientific ? regDepartment : undefined,
-      password: regPassword,
-    };
-    setRegSubmitted(true);
-    setTimeout(() => { onLogin(user); }, 1000);
   };
 
-  const handleReset = (e: React.FormEvent) => {
+  const handleActivate = async (e: React.FormEvent) => {
     e.preventDefault();
-    setResetSent(true);
+    setActivationError(null);
+    setSubmitting(true);
+    try {
+      await apiRequest('/api/auth/activate', {
+        method: 'POST',
+        body: JSON.stringify({ token: invitationToken, password: activationPassword }),
+      });
+      setActivationComplete(true);
+      window.history.replaceState({}, '', window.location.pathname);
+    } catch (cause) {
+      setActivationError(cause instanceof Error ? cause.message : 'Account activation failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setForgotError(null);
+    setSubmitting(true);
+    try {
+      const result = await apiRequest<{ message: string }>('/api/auth/forgot-password', {
+        method: 'POST',
+        body: JSON.stringify({ email: forgotEmail }),
+      });
+      setForgotMessage(result.message);
+      setForgotError(null);
+    } catch (cause) {
+      setForgotError(cause instanceof Error ? cause.message : 'The reset link could not be requested.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetError(null);
+    if (resetPassword !== resetConfirm) {
+      setResetError('The two passwords do not match.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await apiRequest('/api/auth/reset-password', {
+        method: 'POST',
+        body: JSON.stringify({ token: resetToken, password: resetPassword }),
+      });
+      setResetComplete(true);
+    } catch (cause) {
+      setResetError(cause instanceof Error ? cause.message : 'The password could not be updated.');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const copy = AUTH_COPY[authMode];
-  const regStrength = passwordStrength(regPassword);
 
   const panelVariants = {
     hidden: {},
@@ -652,7 +559,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                     <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-300 animate-pulse-ring" />
                     <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-300" />
                   </span>
-                  Demo access
+                  Secure staff access
                 </div>
               </motion.div>
 
@@ -875,30 +782,21 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                       <div className="space-y-6">
                         <form onSubmit={handleSignIn} className="space-y-[18px]">
                           <div className="space-y-2">
-                            <label htmlFor="loginId" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">Email or staff ID</label>
+                            <label htmlFor="loginEmail" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">Work email</label>
                             <input
-                              id="loginId"
-                              type="text"
-                              autoComplete="username"
-                              value={loginId}
-                              onChange={(e) => setLoginId(e.target.value)}
-                              placeholder="Select a demo account or enter your staff email"
+                              id="loginEmail"
+                              type="email"
+                              autoComplete="email"
+                              value={loginEmail}
+                              onChange={(e) => setLoginEmail(e.target.value)}
+                              placeholder="name@chemist.go.ke"
                               required
                               className={inputClass}
                             />
                           </div>
 
                           <div className="space-y-2">
-                            <div className="flex items-center justify-between">
-                              <label htmlFor="signinPass" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">Password</label>
-                              <button
-                                type="button"
-                                onClick={() => { setResetEmail(loginId.includes('@') ? loginId : ''); switchMode('reset'); }}
-                                className="cursor-pointer text-[12px] font-semibold text-[#f26522] hover:underline"
-                              >
-                                Forgot password?
-                              </button>
-                            </div>
+                            <label htmlFor="signinPass" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">Password</label>
                             <div className="relative">
                               <input
                                 id="signinPass"
@@ -906,7 +804,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                                 autoComplete="current-password"
                                 value={loginPass}
                                 onChange={(e) => setLoginPass(e.target.value)}
-                                placeholder="Select a demo account or enter your password"
+                                placeholder="Enter your password"
                                 required
                                 className={`${inputClass} pr-11`}
                               />
@@ -923,32 +821,135 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
 
                           {loginError && <FormError message={loginError} />}
 
-                          <label className="flex items-center gap-2 text-[12px] text-[#222]">
-                            <input
-                              type="checkbox"
-                              checked={keepSignedIn}
-                              onChange={(e) => setKeepSignedIn(e.target.checked)}
-                              className="h-[15px] w-[15px] accent-[#f26522]"
-                            />
-                            Keep me signed in
-                          </label>
-
                           <button type="submit" disabled={submitting} className={`${primaryBtnClass} inline-flex items-center justify-center gap-2 disabled:cursor-wait disabled:opacity-80`}>
                             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
                             {submitting ? 'Signing in…' : 'Sign in'}
                           </button>
+
+                          <button
+                            type="button"
+                            onClick={() => { setForgotEmail(loginEmail); setAuthMode('forgot'); }}
+                            className="cursor-pointer text-[12px] font-semibold text-[#f26522] underline-offset-2 hover:underline"
+                          >
+                            Forgot your password?
+                          </button>
                         </form>
 
-                        <DemoAccountList
-                          accounts={DEMO_ACCOUNTS}
-                          onSelect={(account) => {
-                            setLoginId(account.email);
-                            setLoginPass(account.password || SHARED_PASSWORD);
-                            setShowSigninPass(true);
-                            setLoginError(null);
-                          }}
-                        />
+                      </div>
+                    )}
 
+                    {authMode === 'forgot' && (
+                      <div className="space-y-6">
+                        <form onSubmit={handleForgotPassword} className="space-y-[18px]">
+                          <div className="space-y-2">
+                            <label htmlFor="forgotEmail" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">Work email</label>
+                            <input
+                              id="forgotEmail"
+                              type="email"
+                              autoComplete="email"
+                              value={forgotEmail}
+                              onChange={(e) => setForgotEmail(e.target.value)}
+                              placeholder="name@chemist.go.ke"
+                              required
+                              className={inputClass}
+                            />
+                          </div>
+
+                          {forgotError && <FormError message={forgotError} />}
+
+                          {forgotMessage ? (
+                            <div className="rounded-2xl bg-emerald-50 p-4 text-center">
+                              <Check className="mx-auto mb-2 h-8 w-8 text-emerald-500" />
+                              <p className="text-sm font-semibold text-slate-700">Check your inbox</p>
+                              <p className="mt-1 text-xs text-slate-600">{forgotMessage}</p>
+                            </div>
+                          ) : (
+                            <button type="submit" disabled={submitting} className={`${primaryBtnClass} inline-flex items-center justify-center gap-2 disabled:cursor-wait disabled:opacity-80`}>
+                              {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                              {submitting ? 'Sending…' : 'Send reset link'}
+                            </button>
+                          )}
+                        </form>
+                      </div>
+                    )}
+
+                    {authMode === 'reset' && (
+                      <div className="space-y-6">
+                        {!resetToken ? (
+                          <>
+                            <FormError message="This reset link is missing its token. Request a new link from the sign-in page." />
+                            <button
+                              type="button"
+                              onClick={() => setAuthMode('forgot')}
+                              className={`${primaryBtnClass} inline-flex w-full items-center justify-center gap-2`}
+                            >
+                              Request a new link
+                            </button>
+                          </>
+                        ) : resetComplete ? (
+                          <div className="rounded-2xl bg-emerald-50 p-4 text-center">
+                            <Check className="mx-auto mb-2 h-8 w-8 text-emerald-500" />
+                            <p className="text-sm font-semibold text-slate-700">Password updated</p>
+                            <p className="mt-1 text-xs text-slate-600">Sign in with your new password. Any other active sessions were signed out.</p>
+                            <button
+                              type="button"
+                              onClick={() => setAuthMode('signin')}
+                              className="mt-3 cursor-pointer text-[12px] font-semibold text-[#f26522] underline-offset-2 hover:underline"
+                            >
+                              Go to sign in
+                            </button>
+                          </div>
+                        ) : (
+                          <form onSubmit={handleResetPassword} className="space-y-[18px]">
+                            <div className="space-y-2">
+                              <label htmlFor="resetPassword" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">New password</label>
+                              <div className="relative">
+                                <input
+                                  id="resetPassword"
+                                  type={showResetPass ? 'text' : 'password'}
+                                  autoComplete="new-password"
+                                  value={resetPassword}
+                                  onChange={(e) => setResetPassword(e.target.value)}
+                                  placeholder="At least 12 characters"
+                                  minLength={12}
+                                  required
+                                  className={`${inputClass} pr-11`}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setShowResetPass((prev) => !prev)}
+                                  aria-label={showResetPass ? 'Hide password' : 'Show password'}
+                                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8b8b98] hover:text-[#f26522] cursor-pointer"
+                                >
+                                  {showResetPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                </button>
+                              </div>
+                              <p className="text-[11px] text-slate-500">Use at least 12 characters.</p>
+                            </div>
+
+                            <div className="space-y-2">
+                              <label htmlFor="resetConfirm" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">Confirm new password</label>
+                              <input
+                                id="resetConfirm"
+                                type={showResetPass ? 'text' : 'password'}
+                                autoComplete="new-password"
+                                value={resetConfirm}
+                                onChange={(e) => setResetConfirm(e.target.value)}
+                                placeholder="Repeat the new password"
+                                minLength={12}
+                                required
+                                className={inputClass}
+                              />
+                            </div>
+
+                            {resetError && <FormError message={resetError} />}
+
+                            <button type="submit" disabled={submitting} className={`${primaryBtnClass} inline-flex items-center justify-center gap-2 disabled:cursor-wait disabled:opacity-80`}>
+                              {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                              {submitting ? 'Updating…' : 'Update password'}
+                            </button>
+                          </form>
+                        )}
                       </div>
                     )}
 
@@ -957,7 +958,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                         {regSubmitted ? (
                           <div className="rounded-2xl bg-emerald-50 p-4 text-center">
                             <Check className="mx-auto mb-2 h-8 w-8 text-emerald-500" />
-                            <p className="text-sm text-slate-700">Account created. Signing you in…</p>
+                            <p className="text-sm font-semibold text-slate-700">Request submitted</p>
+                            <p className="mt-1 text-xs text-slate-600">{registrationMessage}</p>
                           </div>
                         ) : (
                           <>
@@ -991,57 +993,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                                   className={inputClass}
                                 />
                               </div>
-                              <div className="space-y-2">
-                                <label htmlFor="regStaffId" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">Staff ID</label>
-                                <input
-                                  id="regStaffId"
-                                  type="text"
-                                  value={regStaffId}
-                                  onChange={(e) => setRegStaffId(e.target.value)}
-                                  placeholder="GC-0000"
-                                  required
-                                  className={inputClass}
-                                />
                               </div>
-                            </div>
-
-                            <div className="space-y-2">
-                              <label htmlFor="regPass" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">Password</label>
-                              <div className="relative">
-                                <input
-                                  id="regPass"
-                                  type={showRegPass ? 'text' : 'password'}
-                                  autoComplete="new-password"
-                                  value={regPassword}
-                                  onChange={(e) => { setRegPassword(e.target.value); setRegError(null); }}
-                                  placeholder="Create a password"
-                                  required
-                                  aria-describedby="regPassHint"
-                                  className={`${inputClass} pr-11`}
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => setShowRegPass((prev) => !prev)}
-                                  aria-label={showRegPass ? 'Hide password' : 'Show password'}
-                                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8b8b98] hover:text-[#f26522] cursor-pointer"
-                                >
-                                  {showRegPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                                </button>
-                              </div>
-                              <div id="regPassHint" className="flex items-center gap-3">
-                                <div className="grid flex-1 grid-cols-3 gap-1" aria-hidden="true">
-                                  {PASSWORD_RULES.map((rule, index) => (
-                                    <span
-                                      key={rule.label}
-                                      className={`h-1 rounded-full transition-colors ${index < regStrength ? STRENGTH_COLORS[regStrength] : 'bg-slate-200'}`}
-                                    />
-                                  ))}
-                                </div>
-                                <span className="text-[11px] text-slate-500">
-                                  {regPassword ? STRENGTH_LABELS[regStrength] : PASSWORD_RULES.map(r => r.label).join(', ')}
-                                </span>
-                              </div>
-                            </div>
 
                             <p className="pt-2 text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-slate-400">Your role</p>
 
@@ -1052,7 +1004,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                                 value={regRole}
                                 onChange={(role) => {
                                   setRegRole(role);
-                                  setRegDepartment(isScientificRole(role) ? departmentOptions[0] : undefined);
+                                  setRegDepartment(departmentForRole(role, regDepartment));
                                 }}
                                 buttonClassName={`${inputClass} !py-0 !pl-[14px]`}
                                 options={SELF_REGISTER_ROLES.map((role) => ({ value: role, label: role.replace(/_/g, ' ') }))}
@@ -1063,25 +1015,28 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                               </p>
                             </div>
 
-                            {isScientificRole(regRole) && (
-                              <div className="space-y-2">
-                                <label htmlFor="regDept" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">Department</label>
-                                <Select<LaboratoryDepartment>
-                                  id="regDept"
-                                  value={regDepartment ?? departmentOptions[0]}
-                                  onChange={setRegDepartment}
-                                  buttonClassName={`${inputClass} !py-0 !pl-[14px]`}
-                                  options={departmentOptions.map((dept) => ({ value: dept, label: departmentLabels[dept] }))}
-                                />
-                              </div>
-                            )}
+                            <div className="space-y-2">
+                              <label htmlFor="regDept" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">Department</label>
+                              <Select<LaboratoryDepartment>
+                                id="regDept"
+                                value={regDepartment}
+                                onChange={setRegDepartment}
+                                buttonClassName={`${inputClass} !py-0 !pl-[14px]`}
+                                options={departmentsForRole(regRole).map((dept) => ({ value: dept, label: departmentLabels[dept] }))}
+                              />
+                              <p className="text-[11px] text-slate-500">
+                                {departmentsForRole(regRole).length === 1
+                                  ? 'This role is institution-wide and is not attached to a laboratory.'
+                                  : 'Select the laboratory division you work in.'}
+                              </p>
+                            </div>
 
                             {regError && <FormError message={regError} />}
 
-                            <button type="submit" className={primaryBtnClass}>Create account</button>
+                            <button type="submit" disabled={submitting} className={`${primaryBtnClass} disabled:opacity-60`}>{submitting ? 'Submitting…' : 'Request account approval'}</button>
 
                             <p className="text-center text-[11px] leading-relaxed text-slate-500">
-                              By creating an account you agree to the{' '}
+                              By submitting a request you agree to the{' '}
                               <button type="button" onClick={() => setShowTerms(true)} className="cursor-pointer text-[#111] underline">Terms &amp; Privacy</button>.
                             </p>
                           </>
@@ -1089,34 +1044,45 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                       </form>
                     )}
 
-                    {authMode === 'reset' && (
-                      resetSent ? (
+                    {authMode === 'activate' && (
+                      activationComplete ? (
                         <div className="space-y-5">
                           <div className="rounded-2xl bg-emerald-50 p-4 text-center">
                             <Check className="mx-auto mb-2 h-8 w-8 text-emerald-500" />
-                            <p className="text-sm font-semibold text-slate-800">Check your inbox</p>
-                            <p className="mt-1 text-[12px] text-slate-600">
-                              If an account exists for <span className="font-semibold">{resetEmail}</span>, a reset link is on its way.
-                            </p>
+                            <p className="text-sm font-semibold text-slate-800">Account activated</p>
+                            <p className="mt-1 text-xs text-slate-600">You can now sign in using your work email.</p>
                           </div>
-                          <button type="button" onClick={() => switchMode('signin')} className={primaryBtnClass}>Back to sign in</button>
+                          <button type="button" onClick={() => switchMode('signin')} className={primaryBtnClass}>Continue to sign in</button>
                         </div>
                       ) : (
-                        <form onSubmit={handleReset} className="space-y-[18px]">
+                        <form onSubmit={handleActivate} className="space-y-[18px]">
                           <div className="space-y-2">
-                            <label htmlFor="resetEmail" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">Work email</label>
+                            <label htmlFor="activatePassword" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">Create password</label>
                             <input
-                              id="resetEmail"
-                              type="email"
-                              autoComplete="email"
-                              value={resetEmail}
-                              onChange={(e) => setResetEmail(e.target.value)}
-                              placeholder="you@chemist.go.ke"
+                              id="activatePassword"
+                              type="password"
+                              autoComplete="new-password"
+                              minLength={12}
+                              maxLength={256}
+                              value={activationPassword}
+                              onChange={(e) => setActivationPassword(e.target.value)}
+                              placeholder="At least 12 characters"
                               required
                               className={inputClass}
                             />
                           </div>
-                          <button type="submit" className={primaryBtnClass}>Send reset link</button>
+                          {!invitationToken && <FormError message="The invitation link is missing its token." />}
+                          {invitationToken && invitationExpiresAt > 0 && (
+                            <p role="timer" className={`text-xs font-semibold ${activationSecondsLeft ? 'text-amber-700' : 'text-rose-600'}`}>
+                              {activationSecondsLeft
+                                ? `Invitation expires in ${String(Math.floor(activationSecondsLeft / 60)).padStart(2, '0')}:${String(activationSecondsLeft % 60).padStart(2, '0')}`
+                                : 'Invitation expired. Ask the administrator to resend it.'}
+                            </p>
+                          )}
+                          {activationError && <FormError message={activationError} />}
+                          <button disabled={submitting || !invitationToken || (invitationExpiresAt > 0 && !activationSecondsLeft)} className={`${primaryBtnClass} disabled:opacity-60`}>
+                            {submitting ? 'Activating…' : 'Activate account'}
+                          </button>
                         </form>
                       )
                     )}

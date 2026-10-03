@@ -175,11 +175,10 @@ html.gc-theme-transition *[class*="transition"] {
 .animate-pulse-ring { animation: gc-pulse-ring 2.6s cubic-bezier(0.66, 0, 0, 1) infinite; }
 .animate-gradient-pan { background-size: 220% 220%; animation: gc-gradient-pan 7s ease infinite; }
 
-/* Right-to-left statutory marquee (mobile statement strip).
-   The track holds two identical halves so translateX(-100%) loops seamlessly. */
+/* Right-to-left marquee. Two identical halves loop at the halfway point. */
 @keyframes gc-marquee-scroll {
   from { transform: translateX(0); }
-  to { transform: translateX(-100%); }
+  to { transform: translateX(-50%); }
 }
 .gc-marquee-track {
   display: flex;

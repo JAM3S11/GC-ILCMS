@@ -15,7 +15,9 @@ import {
 } from 'lucide-react';
 import { Button, DashboardHeader, DashboardPage, StatusPill } from '../common/Dashboard';
 import { useTheme, type ThemeMode } from '../../theme/ThemeProvider';
-import type { User } from '../../types';
+import type { LaboratoryDepartment, User } from '../../types';
+import { apiRequest } from '../../lib/api';
+import { departmentLabel, departmentQualifier, departmentsForRole, isLabScopedRole } from '../../lib/departments';
 
 const STORAGE_PREFIX = 'gc-ilcms-user-settings:';
 
@@ -102,6 +104,8 @@ const getRoleLabel = (role: User['role']) => {
       return 'Records Clerk';
     case 'ADMINISTRATOR':
       return 'System Administrator';
+    case 'SUPER_ADMIN':
+      return 'Super Administrator';
     case 'ACCOUNTANT':
       return 'Accountant';
     case 'HR':
@@ -179,6 +183,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const { mode, setMode } = useTheme();
   const [settings, setSettings] = useState<UserSettings>(() => readUserSettings(currentUser.id));
   const [saved, setSaved] = useState(false);
+  const [requestedDepartment, setRequestedDepartment] = useState<LaboratoryDepartment | ''>('');
+  const [departmentReason, setDepartmentReason] = useState('');
+  const [departmentRequestMessage, setDepartmentRequestMessage] = useState('');
+  const [departmentRequestError, setDepartmentRequestError] = useState('');
+  const [departmentRequestSaving, setDepartmentRequestSaving] = useState(false);
   const savedTimer = useRef<number | null>(null);
 
   const markSaved = () => {
@@ -226,8 +235,29 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     markSaved();
   };
 
+  const submitDepartmentRequest = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!requestedDepartment) return;
+    setDepartmentRequestSaving(true);
+    setDepartmentRequestMessage('');
+    setDepartmentRequestError('');
+    try {
+      await apiRequest('/api/account/department-change-requests', {
+        method: 'POST',
+        body: JSON.stringify({ department: requestedDepartment, reason: departmentReason }),
+      });
+      setDepartmentRequestMessage('Your department change request was sent to the Super Admin for review.');
+      setDepartmentReason('');
+    } catch (cause) {
+      setDepartmentRequestError(cause instanceof Error ? cause.message : 'Could not submit the department change request.');
+    } finally {
+      setDepartmentRequestSaving(false);
+    }
+  };
+
   const initials = getInitials(currentUser.name);
-  const department = currentUser.department ? `${currentUser.department} Laboratory` : 'Central Operations';
+  const labQualifier = departmentQualifier(currentUser.department);
+  const department = labQualifier ? `${departmentLabel(labQualifier)} Laboratory` : 'Central Operations';
 
   return (
     <DashboardPage>
@@ -261,8 +291,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </div>
                 <div className="min-w-0">
                   <div className="text-sm font-bold text-slate-900 truncate dark:text-white">{currentUser.name}</div>
-                  <div className="mt-0.5 text-[11px] font-mono text-amber-600 dark:text-amber-400">
+                  <div className="mt-0.5 flex items-center gap-1.5 text-[11px] font-mono text-amber-600 dark:text-amber-400">
                     {getRoleLabel(currentUser.role)}
+                    {currentUser.role === 'HEAD_OF_DEPARTMENT' && (
+                      <span className="rounded bg-emerald-500/15 px-1 py-px text-[9px] font-bold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
+                        Head
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -271,11 +306,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <div className="flex items-center justify-between gap-3 text-xs">
                 <span className="text-slate-500 dark:text-slate-400">Email</span>
                 <span className="font-medium text-slate-900 text-right dark:text-white truncate">{currentUser.email}</span>
-              </div>
-              <div className="h-px bg-slate-100 dark:bg-slate-800" />
-              <div className="flex items-center justify-between gap-3 text-xs">
-                <span className="text-slate-500 dark:text-slate-400">Staff ID</span>
-                <span className="font-mono font-semibold text-slate-900 dark:text-white">{currentUser.staffId}</span>
               </div>
               <div className="h-px bg-slate-100 dark:bg-slate-800" />
               <div className="flex items-center justify-between gap-3 text-xs">
@@ -293,7 +323,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
             <div className="px-4 pb-4">
               <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-[11px] leading-relaxed text-slate-500 dark:bg-slate-950/60 dark:border-slate-800 dark:text-slate-400">
-                Profile identity is managed through the staff credential directory. Preferences on this page are scoped to this account and browser.
+                Your work email identifies your account. Preferences on this page are scoped to this account and browser.
               </div>
             </div>
           </section>
@@ -311,7 +341,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             <div className="p-4 space-y-3">
               <div className="flex items-center justify-between text-xs">
                 <span className="text-slate-500 dark:text-slate-400">Authentication</span>
-                <span className="font-semibold text-slate-900 dark:text-white">Staff credential</span>
+                <span className="font-semibold text-slate-900 dark:text-white">Email and password</span>
               </div>
               <div className="flex items-center justify-between text-xs">
                 <span className="text-slate-500 dark:text-slate-400">Session state</span>
@@ -449,8 +479,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   <ChevronRight className="w-4 h-4" />
                 </span>
                 <div>
-                  <div className="text-xs font-bold text-slate-900 dark:text-white">Need to update your identity details?</div>
-                  <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">Contact the system administrator or HR credential owner.</div>
+                  <div className="text-xs font-bold text-slate-900 dark:text-white">Need to update your profile?</div>
+                  <div className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">Contact the system administrator.</div>
                 </div>
               </div>
               <button
@@ -462,6 +492,32 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 End session
               </button>
             </div>
+            {isLabScopedRole(currentUser.role) && (
+              <form onSubmit={submitDepartmentRequest} className="border-t border-slate-200 p-4 sm:p-5 dark:border-slate-800">
+                <h3 className="text-xs font-bold text-slate-900 dark:text-white">Request a department change</h3>
+                <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Your request will appear in the Super Admin notification inbox and requires approval.</p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]">
+                  <label className="space-y-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                    New department
+                    <select required value={requestedDepartment} onChange={(event) => setRequestedDepartment(event.target.value as LaboratoryDepartment)} className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white">
+                      <option value="">Choose department</option>
+                      {departmentsForRole(currentUser.role).filter((item) => item !== currentUser.department).map((item) => (
+                        <option key={item} value={item}>{departmentLabel(item)}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="space-y-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                    Reason
+                    <input maxLength={500} value={departmentReason} onChange={(event) => setDepartmentReason(event.target.value)} className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white" placeholder="Optional" />
+                  </label>
+                  <button disabled={departmentRequestSaving || !requestedDepartment} className="h-9 self-end rounded-lg bg-amber-500 px-3 text-xs font-semibold text-slate-950 disabled:opacity-50">
+                    {departmentRequestSaving ? 'Sending…' : 'Submit request'}
+                  </button>
+                </div>
+                {departmentRequestMessage && <p role="status" className="mt-2 text-xs text-emerald-700 dark:text-emerald-300">{departmentRequestMessage}</p>}
+                {departmentRequestError && <p role="alert" className="mt-2 text-xs text-rose-700 dark:text-rose-300">{departmentRequestError}</p>}
+              </form>
+            )}
           </section>
         </div>
       </div>

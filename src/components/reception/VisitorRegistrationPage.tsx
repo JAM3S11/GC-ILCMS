@@ -16,14 +16,14 @@ import {
   UserCheck,
   UserPlus,
 } from 'lucide-react';
-import { LaboratoryDepartment, OfficerVisitor, VisitorType } from '../../types';
+import { LaboratoryDepartment, ReceptionVisitDraft, VisitorType } from '../../types';
 import { isValidPoBox } from '../../foodDrugIntake';
 import { Button, DashboardHeader, DashboardPage, StatusPill } from '../common/Dashboard';
 import { Select } from '../common/Select';
 import { DESTINATION_LABORATORIES, laboratoryLabel } from '../../data/laboratories';
 
 interface VisitorRegistrationPageProps {
-  onRegister: (visitor: OfficerVisitor) => void;
+  onRegister: (visitor: ReceptionVisitDraft) => Promise<boolean>;
   onCancel: () => void;
   currentUserName: string;
 }
@@ -43,7 +43,8 @@ type FieldKey =
   | 'station'
   | 'vehicleRegistration'
   | 'poBox'
-  | 'exhibitsPresented';
+  | 'exhibitsPresented'
+  | 'purposeOfVisit';
 
 const inputClass = (invalid?: boolean) =>
   `w-full rounded-lg border bg-white px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 transition-colors focus:outline-none focus:ring-4 dark:bg-slate-950 dark:text-white ${
@@ -106,12 +107,20 @@ export const VisitorRegistrationPage: React.FC<VisitorRegistrationPageProps> = (
   const [vehicleRegistration, setVehicleRegistration] = useState('');
   const [laboratory, setLaboratory] = useState<LaboratoryDepartment>(DESTINATION_LABORATORIES[0].value);
   const [poBox, setPoBox] = useState('');
+  const [purposeOfVisit, setPurposeOfVisit] = useState('Evidence submission');
+  const [documentsPresented, setDocumentsPresented] = useState('');
   const [exhibitsPresented, setExhibitsPresented] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const [touched, setTouched] = useState<Partial<Record<FieldKey, boolean>>>({});
   const [submitAttempted, setSubmitAttempted] = useState(false);
 
   const [arrival] = useState(() => new Date());
-  const date = arrival.toISOString().slice(0, 10);
+  const date = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Nairobi',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(arrival);
   const timeIn = arrival.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
 
   const isOfficer = visitorType === 'POLICE_OFFICER';
@@ -129,48 +138,43 @@ export const VisitorRegistrationPage: React.FC<VisitorRegistrationPageProps> = (
     else if (!PHONE_PATTERN.test(digits)) e.phone = 'Enter a valid mobile number, e.g. 0712 345 678.';
     if (!nationalId.trim()) e.nationalId = isOfficer ? 'National ID is required.' : 'National ID or passport number is required.';
     if (isOfficer && !exhibitsPresented.trim()) e.exhibitsPresented = 'Describe the exhibits / samples being submitted.';
-    if (!station.trim()) e.station = isOfficer ? 'Enter the police station.' : 'Enter the organisation or address.';
+    if (!purposeOfVisit.trim()) e.purposeOfVisit = 'Enter the purpose of this visit.';
+    if (!station.trim()) e.station = isOfficer ? 'Enter the police station.' : 'Enter the name of the organisation.';
     if (!isOfficer && !vehicleRegistration.trim()) e.vehicleRegistration = 'Vehicle registration is required for clients.';
-    if (laboratory === 'Food & Drugs' && !isValidPoBox(poBox)) e.poBox = 'Use the format P.O Box NNNNN-NNNNN.';
+    if ((laboratory === 'Food & Drugs' || laboratory === 'Water') && !isValidPoBox(poBox)) e.poBox = 'Use the format P.O Box NNNNN-NNNNN.';
     return e;
-  }, [officerName, badgeNumber, phone, nationalId, exhibitsPresented, station, vehicleRegistration, laboratory, poBox, isOfficer]);
+  }, [officerName, badgeNumber, phone, nationalId, exhibitsPresented, purposeOfVisit, station, vehicleRegistration, laboratory, poBox, isOfficer]);
 
   const showError = (key: FieldKey) => ((touched[key] || submitAttempted) ? errors[key] : undefined);
   const blur = (key: FieldKey) => () => setTouched((t) => ({ ...t, [key]: true }));
   const isValid = Object.keys(errors).length === 0;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitAttempted(true);
-    if (!isValid) return;
-    const now = new Date();
-    onRegister({
-      id: `V-${String(now.getTime()).slice(-5)}`,
-      date,
+    if (!isValid || submitting) return;
+    setSubmitting(true);
+    const saved = await onRegister({
       visitorType,
       officerName: officerName.trim(),
       badgeNumber: isOfficer ? badgeNumber : undefined,
       nationalId: nationalId.trim(),
       phone: phone.trim(),
       station: station.trim(),
-      poBox: laboratory === 'Food & Drugs' ? poBox.trim() : undefined,
+      poBox: laboratory === 'Food & Drugs' || laboratory === 'Water' ? poBox.trim() : undefined,
       // Officers arrive in service vehicles — plates are only captured for clients.
       vehicleRegistration: !isOfficer ? vehicleRegistration.trim() : undefined,
       laboratory,
-      documentsVerified: [],
+      purposeOfVisit: purposeOfVisit.trim(),
+      documentsPresented: documentsPresented.trim(),
       exhibitsPresented: exhibitsPresented.trim(),
-      purposeOfVisit: 'Evidence submission',
-      documentsPresented: '',
-      timeIn: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
-      receptionistName: currentUserName,
-      signatureCaptured: false,
-      status: 'Awaiting Laboratory Reception',
     });
+    if (!saved) setSubmitting(false);
   };
 
   const typeOptions: { value: VisitorType; label: string; description: string; icon: typeof Shield }[] = [
     { value: 'POLICE_OFFICER', label: 'Police officer', description: 'Submitting seized exhibits on behalf of a station', icon: Shield },
-    { value: 'GENERAL_CLIENT', label: 'Client', description: 'Member of the public, company or institution', icon: User },
+    { value: 'GENERAL_CLIENT', label: 'Organisation', description: 'Client from a company, institution or any body that is not a police station', icon: Building2 },
   ];
 
   return (
@@ -309,13 +313,13 @@ export const VisitorRegistrationPage: React.FC<VisitorRegistrationPageProps> = (
             description={
               isOfficer
                 ? 'The station the officer is submitting on behalf of.'
-                : 'Where the client is coming from and the vehicle parked on the premises.'
+                : 'The organisation the client represents and the vehicle parked on the premises.'
             }
           >
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
               <Field
-                label={isOfficer ? 'Police station' : 'Organisation / address'}
-                icon={isOfficer ? Building2 : MapPin}
+                label={isOfficer ? 'Police station' : 'Organisation name'}
+                icon={Building2}
                 required
                 error={showError('station')}
                 className={isOfficer ? 'sm:col-span-2' : ''}
@@ -324,7 +328,7 @@ export const VisitorRegistrationPage: React.FC<VisitorRegistrationPageProps> = (
                   value={station}
                   onChange={(e) => setStation(e.target.value)}
                   onBlur={blur('station')}
-                  placeholder={isOfficer ? 'e.g. Kilimani Police Station' : 'e.g. Acme Foods Ltd, Nairobi'}
+                  placeholder={isOfficer ? 'e.g. Kilimani Police Station' : 'e.g. Acme Foods Ltd'}
                   className={inputClass(!!showError('station'))}
                 />
               </Field>
@@ -361,12 +365,12 @@ export const VisitorRegistrationPage: React.FC<VisitorRegistrationPageProps> = (
                   aria-label="Destination laboratory"
                 />
               </Field>
-              {laboratory === 'Food & Drugs' && (
+              {(laboratory === 'Food & Drugs' || laboratory === 'Water') && (
                 <Field
                   label="P.O Box"
                   icon={MapPin}
                   required
-                  hint={<>Required for Foods, Drugs and Chemical Substance. Format: <span className="font-mono">P.O Box NNNNN-NNNNN</span></>}
+                  hint={<>Required for {laboratory === 'Water' ? 'Water & Environment' : 'Foods, Drugs and Chemical Substances'}. Format: <span className="font-mono">P.O Box NNNNN-NNNNN</span></>}
                   error={showError('poBox')}
                 >
                   <input
@@ -390,6 +394,25 @@ export const VisitorRegistrationPage: React.FC<VisitorRegistrationPageProps> = (
                   onBlur={blur('exhibitsPresented')}
                   placeholder="e.g. 1 sealed sachet of white powder (exh A-112)"
                   className={`${inputClass(!!showError('exhibitsPresented'))} min-h-[120px] resize-y`}
+                />
+              </Field>
+              <Field label="Purpose of visit" required error={showError('purposeOfVisit')} className="sm:col-span-2">
+                <input
+                  required
+                  maxLength={500}
+                  value={purposeOfVisit}
+                  onChange={(e) => setPurposeOfVisit(e.target.value)}
+                  onBlur={blur('purposeOfVisit')}
+                  className={inputClass(!!showError('purposeOfVisit'))}
+                />
+              </Field>
+              <Field label="Documents presented" className="sm:col-span-2">
+                <textarea
+                  maxLength={2000}
+                  value={documentsPresented}
+                  onChange={(e) => setDocumentsPresented(e.target.value)}
+                  placeholder="List forms, letters, or supporting documents presented"
+                  className={`${inputClass()} min-h-[80px] resize-y`}
                 />
               </Field>
             </div>
@@ -431,8 +454,8 @@ export const VisitorRegistrationPage: React.FC<VisitorRegistrationPageProps> = (
               <Button variant="ghost" onClick={onCancel}>
                 Cancel
               </Button>
-              <Button type="submit" variant="primary" icon={UserPlus}>
-                Register visitor
+              <Button type="submit" variant="primary" icon={UserPlus} disabled={submitting}>
+                {submitting ? 'Saving…' : 'Register visitor'}
               </Button>
             </div>
           </div>

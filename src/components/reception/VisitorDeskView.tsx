@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ArrowRight,
   Building2,
@@ -7,7 +7,6 @@ import {
   FlaskConical,
   LogIn,
   LogOut,
-  Send,
   Shield,
   User,
   UserCheck,
@@ -18,6 +17,8 @@ import {
 import { VisitorDeskViewProps } from './VisitorDeskViewProps';
 import { OfficerVisitor } from '../../types';
 import { VISITOR_STATUS } from './visitorStatus';
+import { NationalIdReveal } from './NationalIdReveal';
+import { LabNotifyButton } from './LabNotifyButton';
 import {
   Avatar,
   Button,
@@ -38,17 +39,24 @@ type RegisterFilter = 'all' | 'onsite' | 'awaiting' | 'departed';
 
 export const VisitorDeskView: React.FC<VisitorDeskViewProps> = ({
   visitors,
+  visitStats,
+  visitStatsError,
+  visitStatsLoading,
   onRegisterVisitor,
+  onSendLabNotification,
   currentUserName,
   onNavigate,
-  onSendNotification,
-  onSendLabNotification,
+  onRevealNationalId,
   onProceedToLab,
   onCheckOutVisitor,
+  isLoading,
+  hasMoreVisitors,
+  isLoadingMoreVisitors,
+  onLoadMoreVisitors,
 }) => {
   const [filterText, setFilterText] = useState('');
   const [registerFilter, setRegisterFilter] = useState<RegisterFilter>('all');
-  const [notificationSentMap, setNotificationSentMap] = useState<Record<string, boolean>>({});
+  const [dateFilter, setDateFilter] = useState('');
 
   const onPremises = visitors.filter((v) => v.status !== 'Departed');
   const inLabBay = visitors.filter((v) => v.status === 'Awaiting Laboratory Reception');
@@ -63,14 +71,25 @@ export const VisitorDeskView: React.FC<VisitorDeskViewProps> = ({
     departed: signedOut,
   };
 
+  // The register loads every day, newest first. A picked day may be older than
+  // what is loaded so far, so keep paging until it is reached.
+  const oldestLoadedDate = visitors.length ? visitors[visitors.length - 1].date : null;
+  const needsOlderVisits = !!dateFilter && hasMoreVisitors && !isLoadingMoreVisitors &&
+    (!oldestLoadedDate || oldestLoadedDate > dateFilter);
+  useEffect(() => {
+    if (needsOlderVisits) void onLoadMoreVisitors();
+  }, [needsOlderVisits, oldestLoadedDate]);
+
   const query = filterText.trim().toLowerCase();
   const registerRows = byFilter[registerFilter].filter(
     (v) =>
-      !query ||
+      (!dateFilter || v.date === dateFilter) &&
+      (!query ||
       v.id.toLowerCase().includes(query) ||
+      v.visitNumber.toLowerCase().includes(query) ||
       v.officerName.toLowerCase().includes(query) ||
       v.laboratory.toLowerCase().includes(query) ||
-      v.station.toLowerCase().includes(query)
+      v.station.toLowerCase().includes(query))
   );
 
   const labCounts = Object.entries(
@@ -79,12 +98,6 @@ export const VisitorDeskView: React.FC<VisitorDeskViewProps> = ({
       return acc;
     }, {})
   ).sort((a, b) => b[1] - a[1]);
-
-  const handleNotify = (vis: OfficerVisitor) => {
-    const fn = onSendLabNotification ?? onSendNotification;
-    if (fn) fn(vis);
-    setNotificationSentMap((m) => ({ ...m, [vis.id]: true }));
-  };
 
   const recentArrivals = visitors.slice(0, 4);
 
@@ -107,42 +120,71 @@ export const VisitorDeskView: React.FC<VisitorDeskViewProps> = ({
         }
       />
 
-      <KpiGrid label="Daily visitor movement">
+      {visitStatsError && (
+        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+          Visitor totals could not be refreshed: {visitStatsError}
+        </div>
+      )}
+
+      <KpiGrid label="All-time visitor totals">
         <KpiCard
-          label="Visitors today"
-          value={visitors.length}
+          label="Total visitors"
+          value={visitStats ? visitStats.totalVisitors : visitStatsLoading ? '…' : '—'}
           icon={Users}
           tone="amber"
-          hint="Entries recorded in the register"
+          hint="All entries recorded in the register"
           action={{ label: 'View register', onClick: () => setRegisterFilter('all') }}
         />
         <KpiCard
           label="Currently on site"
-          value={onPremises.length}
+          value={visitStats ? visitStats.currentlyOnSite : visitStatsLoading ? '…' : '—'}
           icon={Building2}
           tone="sky"
-          progress={visitors.length ? (onPremises.length / visitors.length) * 100 : 0}
-          hint="Not yet signed out"
+          progress={visitStats?.totalVisitors ? ((visitStats.currentlyOnSite / visitStats.totalVisitors) * 100) : 0}
+          hint="All visitors not yet signed out"
           action={{ label: 'Open departures', onClick: () => onNavigate?.('check-out') }}
         />
         <KpiCard
           label="Awaiting laboratory"
-          value={inLabBay.length}
+          value={visitStats ? visitStats.awaitingLab : visitStatsLoading ? '…' : '—'}
           icon={FlaskConical}
           tone="emerald"
-          hint={inLabBay.length === 0 ? 'Queue is clear' : 'Staged in the Lab Bay'}
+          hint="All visits staged in Lab Bay"
           action={{ label: 'Open Lab Bay', onClick: () => onNavigate?.('lab-bay') }}
         />
         <KpiCard
-          label="Departed today"
-          value={signedOut.length}
+          label="Total departed"
+          value={visitStats ? visitStats.totalDeparted : visitStatsLoading ? '…' : '—'}
           icon={LogOut}
           tone="violet"
-          progress={visitors.length ? (signedOut.length / visitors.length) * 100 : 0}
-          hint="Departure recorded"
+          progress={visitStats?.totalVisitors ? ((visitStats.totalDeparted / visitStats.totalVisitors) * 100) : 0}
+          hint="All departures recorded"
           action={{ label: 'View departures', onClick: () => onNavigate?.('check-out') }}
         />
       </KpiGrid>
+
+      <section
+        aria-label="Today's visitor activity"
+        className="overflow-hidden rounded-lg border border-slate-200 bg-white py-2 text-xs text-slate-600 shadow-sm dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300"
+      >
+        <div className="gc-marquee-track" aria-hidden="true">
+          {[0, 1].map((copy) => (
+            <div key={copy} className="flex shrink-0 items-center gap-8 whitespace-nowrap pr-8">
+              <span className="font-semibold uppercase tracking-wide text-slate-500">Today’s activity</span>
+              <span>Registered: <strong className="tabular-nums text-slate-900 dark:text-white">{visitStats ? visitStats.todayRegistered : '—'}</strong></span>
+              <span>Awaiting lab: <strong className="tabular-nums text-slate-900 dark:text-white">{visitStats ? visitStats.todayAwaitingLab : '—'}</strong></span>
+              <span>In laboratory: <strong className="tabular-nums text-slate-900 dark:text-white">{visitStats ? visitStats.todayInLaboratory : '—'}</strong></span>
+              <span>Completed: <strong className="tabular-nums text-slate-900 dark:text-white">{visitStats ? visitStats.todayCompleted : '—'}</strong></span>
+              <span>Departed: <strong className="tabular-nums text-slate-900 dark:text-white">{visitStats ? visitStats.todayDeparted : '—'}</strong></span>
+            </div>
+          ))}
+        </div>
+        <span className="sr-only">
+          Today: {visitStats?.todayRegistered ?? '—'} registered, {visitStats?.todayAwaitingLab ?? '—'} awaiting laboratory,
+          {visitStats?.todayInLaboratory ?? '—'} in laboratory, {visitStats?.todayCompleted ?? '—'} completed,
+          {visitStats?.todayDeparted ?? '—'} departed.
+        </span>
+      </section>
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
         {/* Visitor register */}
@@ -151,9 +193,28 @@ export const VisitorDeskView: React.FC<VisitorDeskViewProps> = ({
           icon={ClipboardList}
           tone="amber"
           title="Visitor register"
-          description={`${registerRows.length} of ${visitors.length} entries · Responsible officer: ${currentUserName}`}
+          description={`${registerRows.length} of ${visitors.length} entries${dateFilter ? ` · ${dateFilter}` : ''} · Responsible officer: ${currentUserName}`}
           flush
-          actions={<SearchInput value={filterText} onChange={setFilterText} placeholder="Search name, station, lab…" />}
+          actions={
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1">
+                <input
+                  type="date"
+                  aria-label="Filter register by date"
+                  value={dateFilter}
+                  max={new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Nairobi' })}
+                  onChange={(event) => setDateFilter(event.target.value)}
+                  className="h-8 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                />
+                {dateFilter && (
+                  <Button size="xs" variant="ghost" onClick={() => setDateFilter('')}>
+                    All dates
+                  </Button>
+                )}
+              </div>
+              <SearchInput value={filterText} onChange={setFilterText} placeholder="Search name, station, lab…" />
+            </div>
+          }
           footer={
             <div className="flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
@@ -174,7 +235,9 @@ export const VisitorDeskView: React.FC<VisitorDeskViewProps> = ({
               ]}
             />
           </div>
-          {registerRows.length === 0 ? (
+          {isLoading ? (
+            <EmptyState icon={Users} title="Loading visitor register" />
+          ) : registerRows.length === 0 ? (
             <EmptyState
               icon={Users}
               title="No visitors found"
@@ -204,7 +267,6 @@ export const VisitorDeskView: React.FC<VisitorDeskViewProps> = ({
                   {registerRows.map((vis) => {
                     const isOfficer = vis.visitorType === 'POLICE_OFFICER';
                     const isDeparted = vis.status === 'Departed';
-                    const sent = notificationSentMap[vis.id];
                     const status = VISITOR_STATUS[vis.status];
                     return (
                       <tr key={vis.id} className={tc.tr}>
@@ -217,8 +279,15 @@ export const VisitorDeskView: React.FC<VisitorDeskViewProps> = ({
                               </div>
                               <div className="flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-400">
                                 {isOfficer ? <Shield className="h-3 w-3" /> : <User className="h-3 w-3" />}
-                                {isOfficer ? 'Police officer' : 'Client'} · {vis.badgeNumber || vis.nationalId || vis.id}
+                                {isOfficer ? 'Police officer' : 'Client'} ·{' '}
+                                <NationalIdReveal
+                                  visitorId={vis.id}
+                                  maskedValue={vis.nationalId}
+                                  onReveal={onRevealNationalId}
+                                />
                               </div>
+                              {vis.badgeNumber && <div className="text-[10px] text-slate-400">Badge {vis.badgeNumber}</div>}
+                              <div className="text-[10px] text-slate-400">{vis.visitNumber}</div>
                             </div>
                           </div>
                         </td>
@@ -253,15 +322,6 @@ export const VisitorDeskView: React.FC<VisitorDeskViewProps> = ({
                           <div className="flex justify-end gap-1.5">
                             <Button
                               size="xs"
-                              variant={sent ? 'success' : 'secondary'}
-                              icon={sent ? Check : Send}
-                              onClick={() => handleNotify(vis)}
-                              title="Notify the destination laboratory that the visitor is ready"
-                            >
-                              {sent ? 'Notified' : 'Notify'}
-                            </Button>
-                            <Button
-                              size="xs"
                               variant="ghost"
                               icon={ArrowRight}
                               onClick={() => onProceedToLab(vis)}
@@ -269,12 +329,18 @@ export const VisitorDeskView: React.FC<VisitorDeskViewProps> = ({
                             >
                               Lab Bay
                             </Button>
-                            {!isDeparted && (
+                            {onSendLabNotification && vis.status !== 'Departed' && (
+                              <LabNotifyButton
+                                visit={vis}
+                                onSend={(visitor, resend) => onSendLabNotification(visitor, resend)}
+                              />
+                            )}
+                            {vis.status === 'Completed' && (
                               <Button
                                 size="xs"
                                 variant="danger"
                                 icon={LogOut}
-                                onClick={() => onCheckOutVisitor(vis.id)}
+                                onClick={() => void onCheckOutVisitor(vis.id)}
                                 title="Record the visitor's departure time"
                               >
                                 Check out
@@ -342,7 +408,9 @@ export const VisitorDeskView: React.FC<VisitorDeskViewProps> = ({
           </Panel>
 
           <Panel title="Recent arrivals" flush>
-            {recentArrivals.length === 0 ? (
+            {isLoading ? (
+              <EmptyState icon={Users} title="Loading arrivals" />
+            ) : recentArrivals.length === 0 ? (
               <EmptyState icon={Users} title="No arrivals yet" />
             ) : (
               <ul className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -363,7 +431,13 @@ export const VisitorDeskView: React.FC<VisitorDeskViewProps> = ({
           </Panel>
         </div>
       </div>
-
+      {hasMoreVisitors && (
+        <div className="flex justify-center">
+          <Button variant="secondary" disabled={isLoadingMoreVisitors} onClick={() => void onLoadMoreVisitors()}>
+            {isLoadingMoreVisitors ? 'Loading older records…' : 'Load older visitor records'}
+          </Button>
+        </div>
+      )}
     </DashboardPage>
   );
 };

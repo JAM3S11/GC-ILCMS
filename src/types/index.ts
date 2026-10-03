@@ -11,7 +11,8 @@ export type UserRole =
   | 'ANALYST'
   | 'INTERN'
   | 'ATTACHEE'
-  | 'QUALITY_MANAGER';
+  | 'QUALITY_MANAGER'
+  | 'SUPER_ADMIN';
 
 export type LaboratoryDepartment =
   | 'Narcotics'
@@ -21,18 +22,20 @@ export type LaboratoryDepartment =
   | 'Instruments'
   | 'Water'
   | 'Toxicology'
-  | 'Procurement';
+  | 'Procurement'
+  // Staff who are not attached to one laboratory division. Kept as a real
+  // value rather than a NULL department so "unit" is always answerable, while
+  // still reading as institution-wide. See src/lib/departments.ts.
+  | 'General Administration';
 
 export interface User {
   id: string;
   name: string;
   email: string;
-  staffId: string;
+
   role: UserRole;
   department?: LaboratoryDepartment;
   avatarUrl?: string;
-  requiresAuthApproval?: boolean;
-  password?: string;
 }
 
 export type CaseStatus =
@@ -54,9 +57,26 @@ export type CasePriority = 'CRITICAL' | 'HIGH' | 'ROUTINE' | 'EXPEDITED';
 
 export type VisitorType = 'POLICE_OFFICER' | 'GENERAL_CLIENT';
 
+export interface ReceptionVisitDraft {
+  visitorType: VisitorType;
+  officerName: string;
+  nationalId: string;
+  phone: string;
+  badgeNumber?: string;
+  station: string;
+  poBox?: string;
+  vehicleRegistration?: string;
+  laboratory: LaboratoryDepartment;
+  purposeOfVisit: string;
+  documentsPresented: string;
+  exhibitsPresented: string;
+}
+
 export interface OfficerVisitor {
   id: string;
+  visitNumber: string;
   date: string;
+  arrivedAt: string;
   visitorType: VisitorType;
   officerName: string;
   nationalId: string;
@@ -66,6 +86,8 @@ export interface OfficerVisitor {
   poBox?: string; // Postal address, captured for Food & Drugs submissions
   vehicleRegistration?: string;
   laboratory: LaboratoryDepartment;
+  labNotificationSentAt?: string | null;
+  labNotificationSeen?: boolean;
   timeIn: string;
   timeOut?: string;
   purposeOfVisit: string;
@@ -116,10 +138,11 @@ export interface SampleItem {
 export type FoodDrugSampleType = 'Aflatoxin' | 'Miscellaneous' | 'Mycotoxins';
 
 /**
- * Registration ends at the Receiver. The Head of Section then assigns an
- * officer, and "Reported By" is recorded only once the analysis is done.
+ * Registration ends at the Receiver. The Head of Section then approves the
+ * submitted documents, assigns an officer, and "Reported By" is recorded only
+ * once the analysis is done.
  */
-export type FoodDrugIntakeStatus = 'Awaiting Assignment' | 'Under Analysis' | 'Reported';
+export type FoodDrugIntakeStatus = 'Awaiting Approval' | 'Awaiting Assignment' | 'Under Analysis' | 'Reported';
 
 export interface FoodDrugIntake {
   id: string; // e.g. FDI-0001
@@ -132,11 +155,15 @@ export interface FoodDrugIntake {
   receiver: string; // staff who received the sample
   intakeDate: string;
   status: FoodDrugIntakeStatus;
+  approvedBy?: string; // Head of Section who approved the submitted documents
+  approvedDate?: string;
   analystAssigned?: string; // Food & Drugs officer (main process), set by the Head
   assignedBy?: string;
   assignedDate?: string;
   reportedBy?: string; // final step, after analysis is complete
   reportedDate?: string;
+  edited?: boolean; // an intake can be edited once, before analysis starts
+  editedDate?: string;
 }
 
 /**
@@ -147,21 +174,29 @@ export interface FoodDrugIntake {
 export type WaterSenderType = 'Individual' | 'Organisation';
 export type WaterTestType = 'Full Chemical Analysis' | 'Specific Chemical Analysis';
 export type WaterSourceCategory = 'Potable Water' | 'Effluent Water';
-export type WaterIntakeStatus = 'Awaiting Assignment' | 'Under Analysis' | 'Analysis Complete';
+export type WaterIntakeStatus = 'Awaiting Approval' | 'Awaiting Assignment' | 'Under Analysis' | 'Analysis Complete';
 
 export interface WaterIntake {
-  id: string; // e.g. WEI-0001
+  id: string; // PostgreSQL UUID
   labReference: string; // e.g. GC/MOI/WAT/VOL I/001/2026
-  caseId: string;
-  exhibitId: string; // links to the auto-generated ExhibitItem
+  caseId?: string;
+  exhibitId: string; // database-generated Water exhibit number
+  sealNumber?: string;
+  packaging?: string;
+  condition?: ExhibitItem['condition'];
+  storageLocation?: string;
+  receptionVisitId?: string;
   senderType: WaterSenderType;
   senderName: string; // individual's full name, or organisation / firm name
   senderAddress: string; // P.O Box format for individuals
   senderMobile?: string; // individuals
   contactPerson?: string; // organisations
   contactPersonMobile?: string; // organisations, optional
+  receivingOfficerId?: string;
   receivingOfficer: string;
   dateReceived: string;
+  supportingDocuments?: string;
+  remarks?: string;
   testType: WaterTestType;
   specificParameters?: string[]; // Specific Chemical Analysis only
   sourceCategory: WaterSourceCategory;
@@ -171,11 +206,16 @@ export interface WaterIntake {
   charges: number; // KES
   receiptNumber?: string;
   status: WaterIntakeStatus;
+  approvedBy?: string; // Head who approved the submitted documents
+  approvedDate?: string;
   analysisOfficer?: string; // set by the Head of Water & Environment
+  analysisOfficerId?: string;
   assignedBy?: string;
   assignedDate?: string;
   completedBy?: string;
   completedDate?: string;
+  edited?: boolean; // an intake can be edited once, before analysis starts
+  editedDate?: string;
 }
 
 export type CustodyAction =
@@ -365,14 +405,17 @@ export interface ForensicCase {
 export interface AppNotification {
   id: string;
   timestamp: string;
-  recipientRole?: UserRole;
-  recipientDepartment?: LaboratoryDepartment;
+  recipientRole?: UserRole | null;
+  recipientDepartment?: LaboratoryDepartment | null;
   title: string;
   message: string;
   type: 'info' | 'warning' | 'urgent' | 'success';
   read: boolean;
   linkAction?: string;
   relatedVisitorId?: string; // visitor record this alert refers to
+  relatedRecordType?: string;
+  relatedRecordId?: string;
+  persisted?: boolean;
 }
 
 export interface AuditEvent {

@@ -26,7 +26,9 @@ import { ForensicCase, OfficerVisitor, LaboratoryDepartment, ExhibitItem, Examin
 import { OfficerVerificationModal } from './OfficerVerificationModal';
 import { SubmissionIntakeModal } from './SubmissionIntakeModal';
 import { FoodDrugRegisterPanel } from './FoodDrugRegisterPanel';
-import { WaterRegisterPanel } from './WaterRegisterPanel';
+import { WaterLaboratoryView } from './WaterLaboratoryView';
+import { WaterIntakeEdit } from './WaterIntakeEditModal';
+import { FoodDrugIntakeEdit } from './FoodDrugIntakeEditModal';
 import {
   Avatar,
   Button,
@@ -53,16 +55,24 @@ interface LaboratoryWorkspaceProps {
   onVerifyOfficer: () => void;
   officerVerified: boolean;
   /** Signed-in officer, recorded as the receiver of new submissions. */
+  currentUserId?: string;
   currentUserName?: string;
   currentUserRole?: UserRole;
   /** Food & Drugs officers the Head of Section can assign samples to. */
-  foodDrugOfficers?: User[];
+  foodDrugOfficers?: Pick<User, 'id' | 'name'>[];
+  onApproveFoodDrugIntake?: (intakeId: string) => void;
   onAssignFoodDrugIntake?: (intakeId: string, analyst: string) => void;
   onReportFoodDrugIntake?: (intakeId: string, reportedBy: string) => void;
+  onEditFoodDrugIntake?: (intakeId: string, edit: FoodDrugIntakeEdit) => void;
+  onDeleteFoodDrugIntake?: (intakeId: string) => void;
   /** Water & Environment officers the Head can assign exhibits to. */
-  waterOfficers?: User[];
+  waterOfficers?: Pick<User, 'id' | 'name'>[];
+  waterIntakes?: WaterIntake[];
+  onApproveWaterIntake?: (intakeId: string) => void;
   onAssignWaterIntake?: (intakeId: string, officer: string) => void;
   onCompleteWaterIntake?: (intakeId: string) => void;
+  onEditWaterIntake?: (intakeId: string, edit: WaterIntakeEdit) => Promise<boolean>;
+  onDeleteWaterIntake?: (intakeId: string) => void;
   /** Opens the department's intake (a full page for Food & Drugs and Water). */
   onOpenIntake?: () => void;
   onRegisterSubmission?: (submissionData: {
@@ -132,17 +142,25 @@ export const LaboratoryWorkspace: React.FC<LaboratoryWorkspaceProps> = ({
   currentDepartment,
   activeCase,
   visitor,
+  currentUserId,
   onOpenCaseFile,
   onVerifyOfficer,
   officerVerified,
   currentUserName = 'Dr. Grace Wanjiku, PhD',
   currentUserRole = 'ANALYST',
   foodDrugOfficers = [],
+  onApproveFoodDrugIntake,
   onAssignFoodDrugIntake,
   onReportFoodDrugIntake,
+  onEditFoodDrugIntake,
+  onDeleteFoodDrugIntake,
   waterOfficers = [],
+  waterIntakes = activeCase.waterIntakes ?? [],
+  onApproveWaterIntake,
   onAssignWaterIntake,
   onCompleteWaterIntake,
+  onEditWaterIntake,
+  onDeleteWaterIntake,
   onOpenIntake,
   onRegisterSubmission,
 }) => {
@@ -169,6 +187,23 @@ export const LaboratoryWorkspace: React.FC<LaboratoryWorkspaceProps> = ({
     onRegisterSubmission?.(submissionData);
     setShowIntakeModal(false);
   };
+
+  // The Water lab runs entirely off its own register of real intake records.
+  if (currentDepartment === 'Water') {
+    return (
+      <WaterLaboratoryView
+        intakes={waterIntakes}
+        currentUser={{ id: currentUserId ?? '', name: currentUserName ?? '', role: currentUserRole ?? 'ANALYST' }}
+        officers={waterOfficers}
+        onOpenIntake={onOpenIntake}
+        onApprove={(id) => onApproveWaterIntake?.(id)}
+        onAssign={(id, officer) => onAssignWaterIntake?.(id, officer)}
+        onComplete={(id) => onCompleteWaterIntake?.(id)}
+        onEdit={onEditWaterIntake}
+        onDelete={onDeleteWaterIntake}
+      />
+    );
+  }
 
   /* ---------------- Case progress ---------------- */
   const caseProgress = [
@@ -458,18 +493,11 @@ export const LaboratoryWorkspace: React.FC<LaboratoryWorkspaceProps> = ({
           intakes={activeCase.foodDrugIntakes ?? []}
           currentUser={{ name: currentUserName, role: currentUserRole }}
           officers={foodDrugOfficers}
+          onApprove={(id) => onApproveFoodDrugIntake?.(id)}
           onAssign={(id, analyst) => onAssignFoodDrugIntake?.(id, analyst)}
           onReport={(id, reportedBy) => onReportFoodDrugIntake?.(id, reportedBy)}
-        />
-      )}
-
-      {currentDepartment === 'Water' && (
-        <WaterRegisterPanel
-          intakes={activeCase.waterIntakes ?? []}
-          currentUser={{ name: currentUserName, role: currentUserRole }}
-          officers={waterOfficers}
-          onAssign={(id, officer) => onAssignWaterIntake?.(id, officer)}
-          onComplete={(id) => onCompleteWaterIntake?.(id)}
+          onEdit={onEditFoodDrugIntake}
+          onDelete={onDeleteFoodDrugIntake}
         />
       )}
 

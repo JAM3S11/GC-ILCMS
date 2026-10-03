@@ -10,6 +10,7 @@ import {
   ClipboardCheck,
   ClipboardList,
   Clock,
+  Droplets,
   FileCheck,
   FileText,
   FlaskConical,
@@ -25,7 +26,7 @@ import {
   Users,
   Wallet,
 } from 'lucide-react';
-import { User as UserType, UserRole, ForensicCase, OfficerVisitor } from '../../types';
+import { User as UserType, UserRole, ForensicCase, OfficerVisitor, LaboratoryDepartment, WaterIntake } from '../../types';
 import {
   Avatar,
   Button,
@@ -43,11 +44,15 @@ import {
   TONE,
   tableClasses as tc,
 } from '../common/Dashboard';
+import { departmentLabel } from '../../lib/departments';
 
 interface RoleDashboardProps {
   currentUser: UserType;
   activeCase: ForensicCase;
   visitors: OfficerVisitor[];
+  waterIntakes: WaterIntake[];
+  waterIntakesLoading: boolean;
+  waterIntakesError: string;
   officerVerified: boolean;
   onNavigate: (view: string) => void;
   onOpenVerifyOfficer: () => void;
@@ -72,6 +77,7 @@ const PERSONA_BY_ROLE: Record<UserRole, Persona> = {
   ATTACHEE: 'bench',
   HEAD_OF_DEPARTMENT: 'division',
   QUALITY_MANAGER: 'quality',
+  SUPER_ADMIN: 'executive',
   CEO: 'executive',
   VICE_CEO: 'executive',
   ADMINISTRATOR: 'executive',
@@ -95,6 +101,7 @@ const ROLE_LABEL: Record<UserRole, string> = {
   INTERN: 'Intern',
   ATTACHEE: 'Attachée',
   QUALITY_MANAGER: 'Quality Manager',
+  SUPER_ADMIN: 'Super Administrator',
 };
 
 type QueueFilter = 'all' | 'priority' | 'analysis' | 'draft' | 'review';
@@ -259,6 +266,9 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
   currentUser,
   activeCase,
   visitors,
+  waterIntakes,
+  waterIntakesLoading,
+  waterIntakesError,
   officerVerified,
   onNavigate,
   onOpenVerifyOfficer,
@@ -384,17 +394,20 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
   const awaitingLab = visitors.filter((v) => v.status === 'Awaiting Laboratory Reception');
   const waitingVisitor = visitors[0];
   const myDivisionLoad = DIVISION_LOAD.find((d) => d.name === department)?.value ?? 0;
+  // Display name for the user's laboratory; `department` stays the internal key
+  // for lookups above so only user-facing text changes wording.
+  const departmentName = departmentLabel(department);
 
   /* ---------------- Persona framing ---------------- */
   const header: Record<Persona, { crumb: string; title: string; description: string }> = {
     bench: {
       crumb: 'Bench',
       title: 'My workbench',
-      description: `${greeting}, ${firstName}. Your assigned cases, instruments and draft certificates in ${department}.`,
+      description: `${greeting}, ${firstName}. Your assigned cases, instruments and draft certificates in ${departmentName}.`,
     },
     division: {
       crumb: 'Division',
-      title: `${department} division`,
+      title: `${departmentName} division`,
       description: `${greeting}, ${firstName}. Caseload, allocations and reports awaiting your sign-off.`,
     },
     quality: {
@@ -420,6 +433,18 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
   };
   const h = header[persona];
 
+  if (department === 'Water' && currentUser.role !== 'SUPER_ADMIN') {
+    return (
+      <WaterLabDashboard
+        currentUser={currentUser}
+        intakes={waterIntakes}
+        isLoading={waterIntakesLoading}
+        error={waterIntakesError}
+        onNavigate={onNavigate}
+      />
+    );
+  }
+
   const kpis: Record<Persona, React.ReactNode> = {
     bench: (
       <>
@@ -434,7 +459,7 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
     division: (
       <>
         <KpiCard label="Division caseload" value={myDivisionLoad} icon={Layers} tone="amber"
-          progress={(myDivisionLoad / DIVISION_LOAD[0].value) * 100} hint={`${department} · active cases`} />
+          progress={(myDivisionLoad / DIVISION_LOAD[0].value) * 100} hint={`${departmentName} · active cases`} />
         <KpiCard label="Awaiting allocation" value={3} icon={Inbox} tone="sky" hint="Assign to an analyst"
           action={{ label: 'Open laboratory', onClick: () => onNavigate('laboratory') }} />
         <KpiCard label="Drafts to approve" value={draftCount} icon={FileCheck} tone="violet" hint="Oldest: 1 day"
@@ -545,7 +570,7 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
 
   const queueTitle: Record<Persona, string> = {
     bench: 'My work queue',
-    division: `${department} work queue`,
+    division: `${departmentName} work queue`,
     quality: 'Review queue',
     executive: 'Priority cases',
     registry: 'Registered cases',
@@ -558,7 +583,12 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
         breadcrumb={[h.crumb, 'Overview']}
         title={h.title}
         description={h.description}
-        meta={<StatusPill tone="emerald" pulse>Live</StatusPill>}
+        meta={
+          <div className="flex items-center gap-2">
+            <StatusPill tone="emerald" pulse>Live</StatusPill>
+            {currentUser.role === 'HEAD_OF_DEPARTMENT' && <StatusPill tone="emerald">Head of Department</StatusPill>}
+          </div>
+        }
         actions={headerActions}
       />
 
@@ -575,7 +605,7 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
               </div>
               <p className="mt-0.5 text-[13px] text-slate-600 dark:text-slate-300">
                 {waitingVisitor.officerName} ({waitingVisitor.station}
-                {waitingVisitor.badgeNumber ? ` · ${waitingVisitor.badgeNumber}` : ''}) is at the {department} receiving bay with exhibits.
+                {waitingVisitor.badgeNumber ? ` · ${waitingVisitor.badgeNumber}` : ''}) is at the {departmentName} receiving bay with exhibits.
               </p>
             </div>
           </div>
@@ -654,7 +684,7 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
                           <div className="max-w-[240px] truncate font-medium text-slate-800 dark:text-slate-100" title={c.sample}>
                             {c.sample}
                           </div>
-                          <div className="flex max-w-[240px] items-center gap-1 truncate text-[11px] text-slate-500 dark:text-slate-400" title={`${c.agency} · ${c.department}`}>
+                          <div className="flex max-w-[240px] items-center gap-1 truncate text-[11px] text-slate-500 dark:text-slate-400" title={`${c.agency} · ${departmentLabel(c.department as LaboratoryDepartment)}`}>
                             <Building2 className="h-3 w-3 shrink-0" />
                             <span className="truncate">{c.agency} · {c.exhibits} exhibit{c.exhibits === 1 ? '' : 's'}</span>
                           </div>
@@ -800,6 +830,206 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
           </p>
         </Panel>
       )}
+    </DashboardPage>
+  );
+};
+
+interface WaterLabDashboardProps {
+  currentUser: UserType;
+  intakes: WaterIntake[];
+  isLoading: boolean;
+  error: string;
+  onNavigate: (view: string) => void;
+}
+
+const WaterLabDashboard: React.FC<WaterLabDashboardProps> = ({
+  currentUser,
+  intakes,
+  isLoading,
+  error,
+  onNavigate,
+}) => {
+  const awaitingApproval = intakes.filter((intake) => intake.status === 'Awaiting Approval').length;
+  const awaiting = intakes.filter((intake) => intake.status === 'Awaiting Assignment').length;
+  const inAnalysis = intakes.filter((intake) => intake.status === 'Under Analysis').length;
+  const completed = intakes.filter((intake) => intake.status === 'Analysis Complete').length;
+  const firstName = currentUser.name.replace(/^(Dr\.|Prof\.|Mr\.|Mrs\.|Ms\.)\s*/, '').split(' ')[0];
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const currentWeekStart = new Date(today);
+  currentWeekStart.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+  const weeklyIntakes = Array.from({ length: 8 }, (_, index) => {
+    const start = new Date(currentWeekStart);
+    start.setDate(start.getDate() - (7 - index) * 7);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 7);
+    const value = intakes.filter((intake) => {
+      const date = new Date(`${intake.dateReceived}T00:00:00`);
+      return !Number.isNaN(date.getTime()) && date >= start && date < end;
+    }).length;
+    return {
+      week: start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+      value,
+    };
+  });
+  const maxWeeklyIntakes = Math.max(1, ...weeklyIntakes.map((week) => week.value));
+  const recentIntakes = intakes.slice(0, 8);
+  const statusRows: { label: string; value: number; tone: Tone }[] = [
+    { label: 'Awaiting approval', value: awaitingApproval, tone: 'rose' },
+    { label: 'Awaiting assignment', value: awaiting, tone: 'amber' },
+    { label: 'Under analysis', value: inAnalysis, tone: 'sky' },
+    { label: 'Analysis complete', value: completed, tone: 'emerald' },
+  ];
+
+  return (
+    <DashboardPage>
+      <DashboardHeader
+        breadcrumb={['Water & Environment', 'Overview']}
+        title="Water & Environment dashboard"
+        description={`${greeting}, ${firstName}. Live exhibit activity from the Water Lab database.`}
+        meta={
+          <div className="flex items-center gap-2">
+            <StatusPill tone="emerald" pulse>Live</StatusPill>
+            {currentUser.role === 'HEAD_OF_DEPARTMENT' && <StatusPill tone="emerald">Head of Department</StatusPill>}
+          </div>
+        }
+        actions={<Button icon={Users} onClick={() => onNavigate('lab-bay')}>Open Lab Bay</Button>}
+      />
+
+      {error && (
+        <div role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+          Water Lab data could not be refreshed: {error}
+        </div>
+      )}
+
+      {!isLoading && awaitingApproval > 0 && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-500/30 bg-rose-500/5 px-4 py-3 text-sm text-rose-800 dark:text-rose-200">
+          <span>
+            <span className="font-semibold">{awaitingApproval}</span> exhibit{awaitingApproval === 1 ? '' : 's'} awaiting your approval of the submitted documents.
+          </span>
+          <Button size="sm" onClick={() => onNavigate('laboratory')}>Review documents</Button>
+        </div>
+      )}
+
+      {!isLoading && awaiting > 0 && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+          <span>
+            <span className="font-semibold">{awaiting}</span> exhibit{awaiting === 1 ? '' : 's'} waiting for an Analysis Officer.
+          </span>
+          <Button size="sm" onClick={() => onNavigate('laboratory')}>Assign in register</Button>
+        </div>
+      )}
+
+      <KpiGrid label="Water Lab metrics">
+        <KpiCard label="Total exhibits" value={isLoading ? 'Loading' : intakes.length} icon={Droplets} tone="sky" hint="Registered in Water & Environment" />
+        <KpiCard label="Awaiting approval" value={isLoading ? 'Loading' : awaitingApproval} icon={ClipboardList} tone="rose" hint="Documents to review" />
+        <KpiCard label="Awaiting assignment" value={isLoading ? 'Loading' : awaiting} icon={Inbox} tone="amber" hint="Waiting for an Analysis Officer" />
+        <KpiCard label="Under analysis" value={isLoading ? 'Loading' : inAnalysis} icon={FlaskConical} tone="violet" hint="Assigned and in progress" />
+        <KpiCard label="Analysis complete" value={isLoading ? 'Loading' : completed} icon={FileCheck} tone="emerald" hint="Completed exhibits" />
+      </KpiGrid>
+
+      <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
+        <Panel
+          className="xl:col-span-8"
+          icon={TrendingUp}
+          tone="sky"
+          title="Weekly exhibit intake"
+          description={`${weeklyIntakes.reduce((n, w) => n + w.value, 0)} exhibits received in the last 8 weeks`}
+        >
+          {intakes.length === 0 && isLoading ? (
+            <p className="py-8 text-center text-sm text-slate-500 dark:text-slate-400">Loading Water Lab records…</p>
+          ) : (
+            <>
+              <div className="grid h-56 grid-cols-8 gap-3 border-b border-slate-200 pt-4 dark:border-slate-800" role="img" aria-label="Water Lab exhibit intake counts by week">
+                {weeklyIntakes.map((week) => (
+                  <div key={week.week} className="flex h-full min-w-0 flex-col items-center justify-end gap-1.5">
+                    <span className="text-[11px] tabular-nums text-slate-500 dark:text-slate-400">{week.value}</span>
+                    <div className="flex min-h-0 w-full flex-1 items-end justify-center">
+                      <div
+                        className="w-full max-w-10 rounded-t-md bg-sky-500/75 transition-all"
+                        style={{ height: `${Math.max(week.value > 0 ? 8 : 2, (week.value / maxWeeklyIntakes) * 100)}%` }}
+                        title={`${week.value} exhibit${week.value === 1 ? '' : 's'}`}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="grid grid-cols-8 gap-3 pt-2">
+                {weeklyIntakes.map((week) => (
+                  <span key={week.week} className="truncate text-center text-[10px] text-slate-400">{week.week}</span>
+                ))}
+              </div>
+            </>
+          )}
+          <p className="mt-3 border-t border-slate-100 pt-3 text-[11px] text-slate-400 dark:border-slate-800">
+            Automatically refreshed from database records every 15 seconds.
+          </p>
+        </Panel>
+
+        <Panel className="xl:col-span-4" icon={Layers} tone="emerald" title="Exhibit pipeline" description={`${intakes.length} Water Lab exhibits`}>
+          <div className="space-y-3.5">
+            {statusRows.map((row) => (
+              <MeterRow key={row.label} label={row.label} value={row.value} total={Math.max(1, intakes.length)} tone={row.tone} />
+            ))}
+          </div>
+        </Panel>
+      </div>
+
+      <Panel icon={ClipboardList} tone="sky" title="Latest Water Lab exhibits" description="Most recent records retrieved from the database" actions={<Button size="sm" onClick={() => onNavigate('lab-bay')}>View all</Button>} flush>
+        {recentIntakes.length === 0 ? (
+          <EmptyState
+            icon={Droplets}
+            title={isLoading ? 'Loading Water Lab records' : 'No Water exhibits registered'}
+            description={isLoading ? 'The dashboard will show records as soon as they are fetched.' : 'New Water & Environment intake records will appear here.'}
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className={`${tc.table} min-w-[700px]`}>
+              <thead className={tc.thead}>
+                <tr>
+                  <th className={tc.th}>Lab reference</th>
+                  <th className={tc.th}>Sender</th>
+                  <th className={tc.th}>Test</th>
+                  <th className={tc.th}>Source</th>
+                  <th className={tc.th}>Received</th>
+                  <th className={tc.th}>Analysis officer</th>
+                  <th className={tc.th}>Status</th>
+                </tr>
+              </thead>
+              <tbody className={tc.tbody}>
+                {recentIntakes.map((intake) => (
+                  <tr key={intake.id} className={tc.tr}>
+                    <td className={`${tc.td} font-mono font-semibold text-slate-900 dark:text-white`}>{intake.labReference}</td>
+                    <td className={tc.td}>{intake.senderName}</td>
+                    <td className={tc.td}>{intake.testType}</td>
+                    <td className={tc.td}>{intake.sourceCategory}</td>
+                    <td className={`${tc.td} whitespace-nowrap tabular-nums`}>{intake.dateReceived}</td>
+                    <td className={tc.td}>{intake.analysisOfficer || <span className="text-slate-400">Not assigned</span>}</td>
+                    <td className={tc.td}>
+                      <StatusPill
+                        tone={
+                          intake.status === 'Awaiting Approval'
+                            ? 'rose'
+                            : intake.status === 'Awaiting Assignment'
+                              ? 'amber'
+                              : intake.status === 'Under Analysis'
+                                ? 'sky'
+                                : 'emerald'
+                        }
+                      >
+                        {intake.status}
+                      </StatusPill>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Panel>
     </DashboardPage>
   );
 };
