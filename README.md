@@ -41,7 +41,7 @@ npm install
 Copy-Item .env.example .env
 # Create the empty database (after installing PostgreSQL):
 psql -U postgres -c "CREATE DATABASE gcilcms;"
-# Edit .env and set DATABASE_URL, APP_URL, and the SMTP settings.
+# Edit .env and set DATABASE_URL, APP_URLS, and the SMTP settings.
 # Set MIGRATION_DATABASE_URL if schema/bootstrap access uses a separate DB role.
 npm run migrate
 # Set SUPER_ADMIN_NAME, SUPER_ADMIN_EMAIL, and a strong SUPER_ADMIN_PASSWORD
@@ -52,6 +52,8 @@ npm run dev
 ```
 
 The Express server and Vite development UI run together on port `8000`. Configure working SMTP credentials before approving requests or creating users so the one-time invitation email can be delivered. For Gmail, use a Google App Password from an account with 2-Step Verification enabled—not the account's regular password. The app removes spaces from the App Password automatically. Set `SMTP_USER` to that Gmail account and make `MAIL_FROM` that account or a verified Gmail "Send mail as" address.
+
+`APP_URLS` is a comma-separated allowlist of the addresses this app is browsed on, in order of preference. Activation and password-reset links are built from whichever entry matches the `Host` of the request that triggered the email, so an administrator working on one address sends links for that address and no `.env` edit is needed when the whole list stays current. Only hosts named in `APP_URLS` can ever appear in an emailed link, which keeps a forged `Host` header from poisoning those links. Keep the list accurate: a stale entry sends staff to a link that cannot resolve.
 
 The initial super-admin signs in with the email and password used during bootstrap. Staff registrations stay pending until the super-admin approves them. Approval or direct user creation sends a single-use activation link that expires after 15 minutes; users choose their password through that link. If SMTP delivery fails, the approval/account is still saved and the administrator can resend the invitation from Staff accounts after fixing the SMTP configuration. Passwords and invitation/session tokens are never stored in plaintext.
 

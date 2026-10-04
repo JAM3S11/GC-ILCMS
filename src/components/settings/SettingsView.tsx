@@ -17,6 +17,7 @@ import { Button, DashboardHeader, DashboardPage, StatusPill } from '../common/Da
 import { useTheme, type ThemeMode } from '../../theme/ThemeProvider';
 import type { LaboratoryDepartment, User } from '../../types';
 import { apiRequest } from '../../lib/api';
+import { Select } from '../common/Select';
 import { departmentLabel, departmentQualifier, departmentsForRole, isLabScopedRole } from '../../lib/departments';
 
 const STORAGE_PREFIX = 'gc-ilcms-user-settings:';
@@ -499,12 +500,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]">
                   <label className="space-y-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
                     New department
-                    <select required value={requestedDepartment} onChange={(event) => setRequestedDepartment(event.target.value as LaboratoryDepartment)} className="h-9 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white">
-                      <option value="">Choose department</option>
-                      {departmentsForRole(currentUser.role).filter((item) => item !== currentUser.department).map((item) => (
-                        <option key={item} value={item}>{departmentLabel(item)}</option>
-                      ))}
-                    </select>
+                    <Select
+                      size="sm"
+                      placeholder="Choose department"
+                      value={requestedDepartment}
+                      onChange={(value) => setRequestedDepartment(value as LaboratoryDepartment)}
+                      options={departmentsForRole(currentUser.role)
+                        .filter((item) => item !== currentUser.department)
+                        .map((item) => ({ value: item, label: departmentLabel(item) }))}
+                    />
                   </label>
                   <label className="space-y-1 text-[11px] font-semibold text-slate-600 dark:text-slate-300">
                     Reason

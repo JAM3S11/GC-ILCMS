@@ -11,6 +11,8 @@ interface ReceptionClientDetailsProps {
   onNationalId?: (nationalId: string) => void;
   /** Hide the P.O Box row for laboratories that don't capture it. */
   showPoBox?: boolean;
+  /** Keep the P.O Box read only even when reception did not record one. */
+  readOnlyPoBox?: boolean;
   /**
    * Current P.O Box value and its setter. When reception left the P.O Box
    * empty, this one field is editable so the laboratory can fill it in.
@@ -54,12 +56,13 @@ export const ReceptionClientDetails: React.FC<ReceptionClientDetailsProps> = ({
   visitor,
   onNationalId,
   showPoBox = true,
+  readOnlyPoBox = false,
   poBox,
   onPoBoxChange,
   poBoxInvalid = false,
 }) => {
   // Decided from the reception record, so the field doesn't lock once typed into.
-  const poBoxEditable = !!onPoBoxChange && !visitor?.poBox?.trim();
+  const poBoxEditable = !readOnlyPoBox && !!onPoBoxChange && !!visitor && !visitor.poBox?.trim();
   const [nationalId, setNationalId] = useState('');
   const [error, setError] = useState('');
   const origin = visitor ? clientOrigin(visitor) : { label: 'Police station / organisation', icon: Building2, value: '' };

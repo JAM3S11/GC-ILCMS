@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Portal } from '../common/Portal';
 import {
   ShieldCheck,
   UserCheck,
@@ -80,6 +81,7 @@ export const OfficerVerificationModal: React.FC<OfficerVerificationModalProps> =
   };
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
       <div className="bg-white border border-slate-200 rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-5 my-auto dark:bg-slate-900 dark:border-slate-800">
         {/* Modal Header */}
@@ -346,5 +348,6 @@ export const OfficerVerificationModal: React.FC<OfficerVerificationModalProps> =
         </form>
       </div>
     </div>
+    </Portal>
   );
 };

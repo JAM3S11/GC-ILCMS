@@ -448,3 +448,63 @@ section[id] {
 .gc-keyline {
   border-bottom: 1px solid rgba(51, 65, 85, 0.55);
 }
+
+/* ---- Certificate printing: the Head's Print / Save as PDF. A separate full-size copy of the
+        certificate (.certificate-print-root, mounted in <body>) is the only thing printed; the rest of
+        the app is removed from the page so no blank pages or clipped content can come from the layout.
+        The document keeps its colours and backgrounds exactly as designed. ---- */
+.certificate-print-root {
+  display: none;
+}
+.certificate-page {
+  page: certificate;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+@page certificate {
+  size: A4 portrait;
+  margin: 0;
+}
+@media print {
+  html:has(body[data-print-target="certificate"]),
+  body[data-print-target="certificate"] {
+    height: auto !important;
+    min-height: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+  body[data-print-target="certificate"] > *:not(.certificate-print-root) {
+    display: none !important;
+  }
+  body[data-print-target="certificate"] .certificate-print-root {
+    display: block !important;
+  }
+  body[data-print-target="certificate"] .certificate-frame {
+    height: auto !important;
+  }
+  body[data-print-target="certificate"] .certificate-scale {
+    transform: none !important;
+    width: 210mm !important;
+  }
+  /* A hair under the full 297 mm so rounding can never push a sheet onto an extra, blank page. The
+     second sheet starts a new page; nothing breaks after the last one. */
+  body[data-print-target="certificate"] .certificate-page {
+    width: 210mm !important;
+    height: 296mm !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    break-inside: avoid;
+    break-after: auto;
+    overflow: hidden;
+  }
+  body[data-print-target="certificate"] .certificate-page + .certificate-page {
+    break-before: page;
+  }
+  body[data-print-target="certificate"] .certificate-print-root {
+    margin: 0;
+    padding: 0;
+    height: auto;
+  }
+}

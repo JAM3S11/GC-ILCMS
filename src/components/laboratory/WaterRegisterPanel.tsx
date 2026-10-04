@@ -1,33 +1,57 @@
-import React, { useState } from 'react';
-import { CheckCircle2, Droplets, FlaskConical, Pencil, Trash2, UserCheck } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import {
+  ArrowRightLeft,
+  CheckCircle2,
+  ChevronRight,
+  Droplets,
+  FlaskConical,
+  FolderOpen,
+  Pencil,
+  Trash2,
+  UserCheck,
+} from 'lucide-react';
 import { User, WaterIntake, WaterIntakeStatus } from '../../types';
 import { formatKes } from '../../waterIntake';
-import { Avatar, Button, EmptyState, Panel, SegmentedControl, StatusPill, Tone } from '../common/Dashboard';
+import {
+  Avatar,
+  Button,
+  EmptyState,
+  Panel,
+  SearchInput,
+  StatusPill,
+  Tone,
+  tableClasses as tc,
+} from '../common/Dashboard';
 import { Select } from '../common/Select';
-import { WaterIntakeEdit, WaterIntakeEditModal } from './WaterIntakeEditModal';
+import { canEditWaterIntake, waterEditAccess } from '../../lib/waterIntakeAccess';
 
 /**
  * Water & Environment exhibit register. Picks up where intake stops: only the
  * Head of Water & Environment approves the submitted documents and then assigns
  * the Analysis Officer, and every officer in the department sees who each
  * exhibit is assigned to.
+ *
+ * Laid out as a data table: one scannable row per exhibit with its next action
+ * in the last column, and the full detail and management tools one click away
+ * in an expandable row.
  */
 
 interface WaterRegisterPanelProps {
   intakes: WaterIntake[];
-  currentUser: Pick<User, 'id' | 'name' | 'role'>;
+  currentUser: Pick<User, 'id' | 'name' | 'role'> & { department?: User['department'] };
   /** Water & Environment officers the Head can assign an exhibit to. */
   officers: Pick<User, 'id' | 'name'>[];
-  onApprove: (intakeId: string) => void;
   onAssign: (intakeId: string, officerId: string) => void;
-  onComplete: (intakeId: string) => void;
-  /** Saves the one allowed edit; resolves true when it was applied. */
-  onEdit?: (intakeId: string, edit: WaterIntakeEdit) => Promise<boolean>;
+  /** Opens the exhibit's case file; only the assigned officer can open it. */
+  onOpenCaseFile?: (intake: WaterIntake) => void;
+  /** Opens the exhibit intake form with this exhibit's details ready to change. */
+  onEdit?: (intake: WaterIntake) => void;
   /** Head of Department only. */
   onDelete?: (intakeId: string) => void;
 }
 
-type Filter = 'mine' | 'all' | 'awaiting' | 'approvals';
+/** Where the exhibit is in the process. Ownership ("mine", a specific officer) is a separate filter. */
+type Stage = 'all' | 'awaiting' | 'analysis' | 'complete';
 
 const STATUS_TONE: Record<WaterIntakeStatus, Tone> = {
   'Awaiting Approval': 'rose',
@@ -36,31 +60,90 @@ const STATUS_TONE: Record<WaterIntakeStatus, Tone> = {
   'Analysis Complete': 'emerald',
 };
 
+const COLUMNS = 6;
+
+const testLabel = (intake: WaterIntake) =>
+  intake.testType === 'Specific Chemical Analysis' && intake.specificParameters?.length
+    ? `Specific — ${intake.specificParameters.join(', ')}`
+    : intake.testType;
+
 export const WaterRegisterPanel: React.FC<WaterRegisterPanelProps> = ({
   intakes,
   currentUser,
   officers,
-  onApprove,
   onAssign,
-  onComplete,
+  onOpenCaseFile,
   onEdit,
   onDelete,
 }) => {
   const isHead = currentUser.role === 'HEAD_OF_DEPARTMENT';
+  const awaiting = intakes.filter((i) => i.status === 'Awaiting Assignment' || i.status === 'Awaiting Approval');
+  const underAnalysis = intakes.filter((i) => i.status === 'Under Analysis');
   const mine = intakes.filter((i) => i.analysisOfficerId === currentUser.id);
-  const awaitingApproval = intakes.filter((i) => i.status === 'Awaiting Approval');
-  const awaiting = intakes.filter((i) => i.status === 'Awaiting Assignment');
-  // Officers land on their own assignments; the Head lands on the full register.
-  const [filter, setFilter] = useState<Filter>(!isHead && mine.length > 0 ? 'mine' : 'all');
+  // Analysis Officers that currently have at least one exhibit, for the by-officer view.
+  const assignedOfficers = useMemo(() => {
+    const seen = new Map<string, string>();
+    intakes.forEach((i) => {
+      if (i.analysisOfficerId && i.analysisOfficer) seen.set(i.analysisOfficerId, i.analysisOfficer);
+    });
+    return [...seen.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [intakes]);
+  const complete = intakes.filter((i) => i.status === 'Analysis Complete');
+  const [stage, setStage] = useState<Stage>('all');
+  const [mineOnly, setMineOnly] = useState(false);
+  const [officerFilter, setOfficerFilter] = useState('');
+  const [query, setQuery] = useState('');
 
-  const rows =
-    filter === 'mine'
-      ? mine
-      : filter === 'awaiting'
-        ? awaiting
-        : filter === 'approvals'
-          ? awaitingApproval
-          : intakes;
+  const inStage: Record<Stage, WaterIntake[]> = {
+    all: intakes,
+    awaiting,
+    analysis: underAnalysis,
+    complete,
+  };
+  const filtersActive = stage !== 'all' || mineOnly || officerFilter !== '' || query.trim() !== '';
+  const clearFilters = () => {
+    setStage('all');
+    setMineOnly(false);
+    setOfficerFilter('');
+    setQuery('');
+  };
+
+  const rows = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return inStage[stage]
+      .filter((i) => !mineOnly || i.analysisOfficerId === currentUser.id)
+      .filter((i) => !officerFilter || i.analysisOfficerId === officerFilter)
+      .filter(
+        (i) =>
+          !q ||
+          i.labReference.toLowerCase().includes(q) ||
+          i.exhibitId.toLowerCase().includes(q) ||
+          i.senderName.toLowerCase().includes(q) ||
+          i.sourceType.toLowerCase().includes(q) ||
+          i.locationFrom.toLowerCase().includes(q) ||
+          (i.analysisOfficer ?? '').toLowerCase().includes(q),
+      );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage, mineOnly, officerFilter, query, intakes, currentUser.id]);
+
+  const emptyTitle = query.trim()
+    ? 'No exhibits match your search'
+    : mineOnly || officerFilter
+      ? 'No exhibits match these filters'
+      : stage === 'awaiting'
+        ? 'Nothing awaiting assignment'
+        : stage === 'analysis'
+          ? 'Nothing under analysis'
+          : stage === 'complete'
+            ? 'No completed exhibits yet'
+            : 'No exhibits registered yet';
+
+  const tabs: { id: Stage; label: string; count: number }[] = [
+    { id: 'all', label: 'All', count: intakes.length },
+    { id: 'awaiting', label: 'Awaiting assignment', count: awaiting.length },
+    { id: 'analysis', label: 'Under analysis', count: underAnalysis.length },
+    { id: 'complete', label: 'Completed', count: complete.length },
+  ];
 
   return (
     <Panel
@@ -68,218 +151,392 @@ export const WaterRegisterPanel: React.FC<WaterRegisterPanelProps> = ({
       tone="sky"
       title="Water & Environment exhibits"
       description={
-        isHead
-          ? `${awaitingApproval.length} awaiting your approval · ${awaiting.length} awaiting assignment`
-          : `${mine.length} assigned to you · ${intakes.length} in the department`
+        `${intakes.length} in the department · ${awaiting.length} awaiting assignment`
       }
       flush
+      actions={<SearchInput value={query} onChange={setQuery} placeholder="Search reference, sender, source…" />}
+      footer={
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span>
+            Showing {rows.length} of {intakes.length} exhibits
+          </span>
+          <span>Select a row to see its details and management options.</span>
+        </div>
+      }
     >
-      <div className="border-b border-slate-200 px-4 py-2.5 dark:border-slate-800">
-        <SegmentedControl
-          ariaLabel="Register view"
-          value={filter}
-          onChange={setFilter}
+      {/* Stage tabs: where the exhibit is in the process */}
+      <div role="tablist" aria-label="Exhibit stage" className="flex gap-6 overflow-x-auto border-b border-slate-200 px-4 dark:border-slate-800">
+        {tabs.map((tab) => {
+          const active = stage === tab.id;
+          return (
+            <button
+              key={tab.id}
+              role="tab"
+              type="button"
+              aria-selected={active}
+              onClick={() => setStage(tab.id)}
+              className={`-mb-px flex shrink-0 items-center gap-1.5 border-b-2 py-3 text-[13px] transition-colors ${
+                active
+                  ? 'border-amber-500 font-semibold text-slate-900 dark:text-white'
+                  : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
+              }`}
+            >
+              {tab.label}
+              <span className={`rounded-full px-1.5 text-[11px] tabular-nums ${active ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
+                {tab.count}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Ownership filters: whose exhibits */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-2.5 dark:border-slate-800">
+        <button
+          type="button"
+          aria-pressed={mineOnly}
+          onClick={() => setMineOnly((value) => !value)}
+          className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors ${
+            mineOnly
+              ? 'border-sky-500 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+              : 'border-slate-300 text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800/40'
+          }`}
+        >
+          Assigned to me
+          <span className="tabular-nums text-slate-400">{mine.length}</span>
+        </button>
+        <Select
+          size="xs"
+          className="w-56"
+          aria-label="Analysis officer"
+          value={officerFilter}
+          onChange={setOfficerFilter}
+          placeholder="All analysis officers"
           options={[
-            ...(isHead ? [] : [{ value: 'mine' as const, label: 'Assigned to me', count: mine.length }]),
-            { value: 'all', label: 'All exhibits', count: intakes.length },
-            ...(isHead ? [{ value: 'approvals' as const, label: 'Awaiting approval', count: awaitingApproval.length }] : []),
-            { value: 'awaiting', label: 'Awaiting assignment', count: awaiting.length },
+            { value: '', label: 'All analysis officers' },
+            ...assignedOfficers.map((o) => ({
+              value: o.id,
+              label: `${o.name} (${intakes.filter((i) => i.analysisOfficerId === o.id).length})`,
+            })),
           ]}
         />
+        {filtersActive && (
+          <button type="button" onClick={clearFilters} className="ml-auto text-xs font-medium text-amber-700 hover:underline dark:text-amber-400">
+            Clear filters
+          </button>
+        )}
       </div>
 
       {rows.length === 0 ? (
         <EmptyState
           icon={FlaskConical}
-          title={
-            filter === 'mine'
-              ? 'No exhibits assigned to you yet'
-              : filter === 'awaiting'
-                ? 'Nothing awaiting assignment'
-                : filter === 'approvals'
-                  ? 'Nothing awaiting document approval'
-                  : 'No exhibits registered yet'
+          title={emptyTitle}
+          action={
+            filtersActive ? (
+              <Button size="sm" onClick={clearFilters}>
+                Clear filters
+              </Button>
+            ) : undefined
           }
         />
       ) : (
-        <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-          {rows.map((intake) => (
-            <RegisterRow
-              key={intake.id}
-              intake={intake}
-              currentUser={currentUser}
-              officers={officers}
-              onApprove={onApprove}
-              onAssign={onAssign}
-              onComplete={onComplete}
-              onEdit={onEdit}
-              onDelete={onDelete}
-            />
-          ))}
-        </ul>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[920px] border-separate border-spacing-0 text-left text-[13px]">
+            <caption className="sr-only">Water &amp; Environment exhibit register</caption>
+            <thead>
+              <tr>
+                <th scope="col" className="sticky top-0 w-8 border-b border-slate-200 bg-white px-0 py-3 dark:border-slate-800 dark:bg-slate-900">
+                  <span className="sr-only">Expand</span>
+                </th>
+                <th scope="col" className="sticky top-0 border-b border-slate-200 bg-white px-4 py-3 text-[11px] font-medium uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:bg-slate-900">Exhibit</th>
+                <th scope="col" className="sticky top-0 border-b border-slate-200 bg-white px-4 py-3 text-[11px] font-medium uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:bg-slate-900">Sender</th>
+                <th scope="col" className="sticky top-0 border-b border-slate-200 bg-white px-4 py-3 text-[11px] font-medium uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:bg-slate-900">Test</th>
+                <th scope="col" className="sticky top-0 border-b border-slate-200 bg-white px-4 py-3 text-[11px] font-medium uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:bg-slate-900">Status</th>
+                <th scope="col" className="sticky top-0 border-b border-slate-200 bg-white px-4 py-3 text-[11px] font-medium uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:bg-slate-900">Analysis officer</th>
+                <th scope="col" className="sticky top-0 border-b border-slate-200 bg-white px-4 py-3 text-[11px] font-medium uppercase tracking-wide text-slate-400 dark:border-slate-800 dark:bg-slate-900 text-right">Next action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((intake) => (
+                <RegisterRow
+                  key={intake.id}
+                  intake={intake}
+                  currentUser={currentUser}
+                  officers={officers}
+                  onAssign={onAssign}
+                  onOpenCaseFile={onOpenCaseFile}
+                  onEdit={onEdit}
+                  onDelete={onDelete}
+                />
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </Panel>
   );
 };
 
-const RegisterField: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
+const Detail: React.FC<{ label: string; children: React.ReactNode; mono?: boolean }> = ({ label, children, mono }) => (
   <div className="min-w-0">
-    <dt className="text-[10px] font-medium uppercase tracking-wider text-slate-400">{label}</dt>
-    <dd className="mt-0.5 break-words text-slate-700 dark:text-slate-200">{children}</dd>
+    <dt className="text-[10px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">{label}</dt>
+    <dd className={`mt-0.5 break-words text-[13px] text-slate-800 dark:text-slate-100 ${mono ? 'font-mono' : ''}`}>{children}</dd>
   </div>
 );
+
+/** The one thing this person can do next with an exhibit; used by both the table and the board. */
+const ExhibitNextAction: React.FC<
+  Pick<WaterRegisterPanelProps, 'currentUser' | 'officers' | 'onAssign' | 'onOpenCaseFile'> & { intake: WaterIntake }
+> = ({ intake, currentUser, officers, onAssign, onOpenCaseFile }) => {
+  const [officer, setOfficer] = useState('');
+  const isHead = currentUser.role === 'HEAD_OF_DEPARTMENT';
+  const isMine = intake.analysisOfficerId === currentUser.id;
+  // The Head and Senior Chemists supervise every exhibit, so they can open any case file.
+  const canOpenCase = !!onOpenCaseFile && (isMine || isHead || currentUser.role === 'SENIOR_CHEMIST');
+
+  if (intake.status === 'Awaiting Assignment' || intake.status === 'Awaiting Approval') {
+    return isHead ? (
+      <div className="flex items-center justify-end gap-2">
+        <Select
+          size="xs"
+          className="w-44"
+          aria-label={`Assign Analysis Officer to ${intake.labReference}`}
+          value={officer}
+          onChange={setOfficer}
+          placeholder="Assign officer…"
+          options={officers.map((o) => ({ value: o.id, label: o.name }))}
+        />
+        <Button size="xs" variant="primary" icon={UserCheck} disabled={!officer} onClick={() => onAssign(intake.id, officer)}>
+          Assign
+        </Button>
+      </div>
+    ) : (
+      <span className="text-[11px] text-slate-500 dark:text-slate-400">Waiting for Head to assign</span>
+    );
+  }
+  if (canOpenCase) {
+    // The case file is where the officer records findings and closes the analysis.
+    return (
+      <Button
+        size="xs"
+        variant={isMine && intake.status === 'Under Analysis' ? 'primary' : 'secondary'}
+        icon={FolderOpen}
+        onClick={() => onOpenCaseFile?.(intake)}
+      >
+        Case file
+      </Button>
+    );
+  }
+  if (intake.status === 'Under Analysis') {
+    return <span className="text-[11px] text-slate-500 dark:text-slate-400">With the Analysis Officer</span>;
+  }
+  if (intake.status === 'Analysis Complete') {
+    return <span className="text-[11px] text-slate-500 dark:text-slate-400">Completed {intake.completedDate}</span>;
+  }
+  return <span className="text-[11px] text-slate-400">—</span>;
+};
 
 const RegisterRow: React.FC<Omit<WaterRegisterPanelProps, 'intakes'> & { intake: WaterIntake }> = ({
   intake,
   currentUser,
   officers,
-  onApprove,
   onAssign,
-  onComplete,
+  onOpenCaseFile,
   onEdit,
   onDelete,
 }) => {
-  const [officer, setOfficer] = useState('');
-  const [editing, setEditing] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [transferOfficer, setTransferOfficer] = useState('');
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const isHead = currentUser.role === 'HEAD_OF_DEPARTMENT';
   const isMine = intake.analysisOfficerId === currentUser.id;
-  const canEdit =
-    !!onEdit && !intake.edited && (intake.status === 'Awaiting Approval' || intake.status === 'Awaiting Assignment');
+  // The Head and Senior Chemists supervise every exhibit, so they can open any case file.
+  const canOpenCase = !!onOpenCaseFile && (isMine || isHead || currentUser.role === 'SENIOR_CHEMIST');
+  // What this person may change is decided in one place and enforced again by the server.
+  const access = waterEditAccess(currentUser, intake);
+  const canEdit = !!onEdit && canEditWaterIntake(access);
   const canDelete = !!onDelete && isHead;
-  const test =
-    intake.testType === 'Specific Chemical Analysis' && intake.specificParameters?.length
-      ? `Specific — ${intake.specificParameters.join(', ')}`
-      : intake.testType;
+  const canTransfer = isHead && intake.status === 'Under Analysis';
   const source = `${intake.sourceCategory} · ${intake.sourceType}, ${intake.locationFrom}${
     intake.dischargeTo ? ` → ${intake.dischargeTo}` : ''
   }`;
 
+  const nextAction = (
+    <ExhibitNextAction
+      intake={intake}
+      currentUser={currentUser}
+      officers={officers}
+      onAssign={onAssign}
+      onOpenCaseFile={onOpenCaseFile}
+    />
+  );
+
   return (
-    <li className={`space-y-3 px-5 py-4 text-xs ${isMine ? 'bg-sky-500/5' : ''}`}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2.5">
-          <span className="font-mono text-sm font-semibold text-slate-900 dark:text-white">{intake.labReference}</span>
-          <span className="text-slate-400">{intake.dateReceived}</span>
-        </div>
-        <StatusPill tone={STATUS_TONE[intake.status]}>{intake.status}</StatusPill>
-      </div>
-
-      <dl className="grid grid-cols-1 gap-x-6 gap-y-3 sm:grid-cols-2 xl:grid-cols-4">
-        <RegisterField label="Sender">
-          {intake.senderName} <span className="text-slate-400">({intake.senderType})</span>
-        </RegisterField>
-        <RegisterField label="Test">{test}</RegisterField>
-        <RegisterField label="Source">{source}</RegisterField>
-        <RegisterField label="Received by">
-          {intake.receivingOfficer} · <span className="font-mono">{formatKes(intake.charges)}</span>
-        </RegisterField>
-      </dl>
-
-      {intake.analysisOfficer && (
-        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950/50">
-          <Avatar name={intake.analysisOfficer} size="sm" tone={isMine ? 'sky' : 'slate'} />
-          <div className="min-w-0 flex-1">
-            <div className="text-[10px] uppercase tracking-wider text-slate-400">Analysis Officer</div>
-            <div className="font-medium text-slate-900 dark:text-white">
-              {intake.analysisOfficer}
-              {isMine && <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:text-sky-300">You</span>}
+    <>
+      <tr
+        className={`group cursor-pointer transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40 ${isMine ? 'bg-sky-500/[0.04]' : ''}`}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <td className="w-8 border-b border-slate-100 py-4 pl-3 pr-0 align-middle dark:border-slate-800/70">
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-label={`${open ? 'Hide' : 'Show'} details for ${intake.labReference}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              setOpen((value) => !value);
+            }}
+            className="flex h-6 w-6 cursor-pointer items-center justify-center rounded text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+          >
+            <ChevronRight className={`h-4 w-4 transition-transform ${open ? 'rotate-90' : ''}`} />
+          </button>
+        </td>
+        <td className="border-b border-slate-100 px-4 py-4 align-middle dark:border-slate-800/70">
+          <div className="font-mono text-[13px] font-semibold text-slate-900 dark:text-white">{intake.labReference}</div>
+          <div className="mt-0.5 text-[11px] text-slate-400">
+            {intake.exhibitId} · received {intake.dateReceived}
+          </div>
+        </td>
+        <td className="border-b border-slate-100 px-4 py-4 align-middle dark:border-slate-800/70">
+          <div className="max-w-[200px] truncate font-medium text-slate-900 dark:text-white" title={intake.senderName}>
+            {intake.senderName}
+          </div>
+          <div className="text-[11px] text-slate-500 dark:text-slate-400">{intake.senderType}</div>
+        </td>
+        <td className="border-b border-slate-100 px-4 py-4 align-middle dark:border-slate-800/70">
+          <div className="max-w-[220px]">{testLabel(intake)}</div>
+          <div className="font-mono text-[11px] text-slate-500 dark:text-slate-400">{formatKes(intake.charges)}</div>
+        </td>
+        <td className="border-b border-slate-100 px-4 py-4 align-middle dark:border-slate-800/70">
+          <StatusPill tone={STATUS_TONE[intake.status]}>{intake.status}</StatusPill>
+          {intake.edited && <div className="mt-1 text-[10px] text-slate-500 dark:text-slate-400">Edited</div>}
+        </td>
+        <td className="border-b border-slate-100 px-4 py-4 align-middle dark:border-slate-800/70">
+          {intake.analysisOfficer ? (
+            <div className="flex items-center gap-2">
+              <Avatar name={intake.analysisOfficer} size="sm" tone={isMine ? 'sky' : 'slate'} />
+              <div className="min-w-0">
+                <div className="max-w-[150px] truncate font-medium text-slate-900 dark:text-white" title={intake.analysisOfficer}>
+                  {intake.analysisOfficer}
+                  {isMine && (
+                    <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-sky-700 dark:text-sky-300">
+                      You
+                    </span>
+                  )}
+                </div>
+                <div className="text-[11px] text-slate-500 dark:text-slate-400">{intake.assignedDate}</div>
+              </div>
             </div>
-          </div>
-          <div className="text-[11px] text-slate-400 sm:text-right">
-            Assigned by {intake.assignedBy} · {intake.assignedDate}
-          </div>
-        </div>
-      )}
+          ) : (
+            <span className="text-[11px] text-slate-500 dark:text-slate-400">Unassigned</span>
+          )}
+        </td>
+        <td className="border-b border-slate-100 px-4 py-4 align-middle dark:border-slate-800/70 text-right" onClick={(event) => event.stopPropagation()}>
+          {nextAction}
+        </td>
+      </tr>
 
-      {intake.approvedBy && intake.status !== 'Awaiting Approval' && (
-        <div className="flex items-center gap-2 text-[11px] text-emerald-600 dark:text-emerald-400">
-          <CheckCircle2 className="h-3.5 w-3.5" />
-          Documents approved by {intake.approvedBy} · {intake.approvedDate}
-        </div>
-      )}
+      {open && (
+        <tr className="bg-slate-50/70 dark:bg-slate-950/30">
+          <td colSpan={COLUMNS + 1} className="border-b border-slate-100 px-5 py-4 dark:border-slate-800/70">
+            <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-2 xl:grid-cols-4">
+              <Detail label="Source and location">{source}</Detail>
+              <Detail label="Received by">{intake.receivingOfficer}</Detail>
+              <Detail label="Receipt number" mono>{intake.receiptNumber ?? '—'}</Detail>
+              <Detail label="Documents approved">
+                {intake.approvedBy ? `${intake.approvedBy}${intake.approvedDate ? ` · ${intake.approvedDate}` : ''}` : 'Not yet approved'}
+              </Detail>
+              {intake.assignedBy && (
+                <Detail label="Assigned by">
+                  {intake.assignedBy}
+                  {intake.assignedDate ? ` · ${intake.assignedDate}` : ''}
+                </Detail>
+              )}
+              {intake.completedBy && (
+                <Detail label="Completed by">
+                  {intake.completedBy}
+                  {intake.completedDate ? ` · ${intake.completedDate}` : ''}
+                </Detail>
+              )}
+            </dl>
 
-      {intake.status === 'Awaiting Approval' &&
-        (isHead ? (
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-[11px] text-slate-400">Review the submitted documents before assigning an Analysis Officer.</p>
-            <Button size="sm" variant="primary" icon={CheckCircle2} onClick={() => onApprove(intake.id)}>
-              Approve documents
-            </Button>
-          </div>
-        ) : (
-          <p className="text-[11px] text-slate-400">Waiting for the Head of Water & Environment to approve the submitted documents.</p>
-        ))}
-
-      {intake.status === 'Awaiting Assignment' &&
-        (isHead ? (
-          <div className="flex gap-2">
-            <Select
-              size="xs"
-              className="min-w-0 flex-1"
-              aria-label={`Assign Analysis Officer to ${intake.labReference}`}
-              value={officer}
-              onChange={setOfficer}
-              placeholder="Assign Analysis Officer…"
-              options={officers.map((o) => ({ value: o.id, label: o.name }))}
-            />
-            <Button size="sm" variant="primary" icon={UserCheck} disabled={!officer} onClick={() => onAssign(intake.id, officer)}>
-              Assign
-            </Button>
-          </div>
-        ) : (
-          <p className="text-[11px] text-slate-400">Waiting for the Head of Water & Environment to assign an Analysis Officer.</p>
-        ))}
-
-      {intake.status === 'Under Analysis' && (isHead || isMine) && (
-        <div className="flex justify-end">
-          <Button size="sm" onClick={() => onComplete(intake.id)}>
-            Mark analysis complete
-          </Button>
-        </div>
-      )}
-
-      {intake.status === 'Analysis Complete' && (
-        <p className="text-[11px] text-slate-400">
-          Completed {intake.completedDate} by {intake.completedBy}.
-        </p>
-      )}
-
-      {(canEdit || canDelete || intake.edited) && (
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
-          <span className="text-[11px] text-slate-400">
-            {intake.edited ? `Edited once on ${intake.editedDate} — locked` : 'Can be edited once before analysis starts'}
-          </span>
-          <div className="flex items-center gap-2">
-            {canEdit && (
-              <Button size="xs" icon={Pencil} onClick={() => setEditing(true)}>
-                Edit
-              </Button>
+            {(canTransfer || canEdit || canDelete || intake.edited || (canOpenCase && !isMine && (intake.status === 'Awaiting Approval' || intake.status === 'Awaiting Assignment'))) && (
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-3 dark:border-slate-800">
+                <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {access.fillInOnly
+                    ? 'Analysis has started — you can fill in details that were left out'
+                    : access.intake && access.sender
+                      ? 'Opens the intake form with the exhibit and client details ready to change'
+                      : access.intake
+                        ? 'You received this exhibit, so you can edit its intake'
+                        : access.sender
+                          ? 'You can correct the client details'
+                          : intake.edited
+                            ? `Edited on ${intake.editedDate}`
+                            : ''}
+                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  {canTransfer && (
+                    <>
+                      <Select
+                        size="xs"
+                        className="w-52"
+                        aria-label={`Transfer ${intake.labReference} to another Analysis Officer`}
+                        value={transferOfficer}
+                        onChange={setTransferOfficer}
+                        placeholder="Transfer to another officer…"
+                        options={officers
+                          .filter((option) => option.id !== intake.analysisOfficerId)
+                          .map((option) => ({ value: option.id, label: option.name }))}
+                      />
+                      <Button
+                        size="xs"
+                        icon={ArrowRightLeft}
+                        disabled={!transferOfficer}
+                        onClick={() => {
+                          onAssign(intake.id, transferOfficer);
+                          setTransferOfficer('');
+                        }}
+                      >
+                        Transfer
+                      </Button>
+                    </>
+                  )}
+                  {canOpenCase && (intake.status === 'Awaiting Approval' || intake.status === 'Awaiting Assignment') && (
+                    <Button size="xs" icon={FolderOpen} onClick={() => onOpenCaseFile?.(intake)}>
+                      Open case file
+                    </Button>
+                  )}
+                  {canEdit && (
+                    <Button size="xs" icon={Pencil} onClick={() => onEdit?.(intake)}>
+                      {access.fillInOnly ? 'Fill in missing details' : 'Edit intake'}
+                    </Button>
+                  )}
+                  {canDelete &&
+                    (confirmingDelete ? (
+                      <>
+                        <span className="text-[11px] text-rose-600 dark:text-rose-400">Delete this intake?</span>
+                        <Button size="xs" variant="danger" icon={Trash2} onClick={() => onDelete?.(intake.id)}>
+                          Confirm delete
+                        </Button>
+                        <Button size="xs" variant="ghost" onClick={() => setConfirmingDelete(false)}>
+                          Cancel
+                        </Button>
+                      </>
+                    ) : (
+                      <Button size="xs" variant="ghost" icon={Trash2} onClick={() => setConfirmingDelete(true)}>
+                        Delete
+                      </Button>
+                    ))}
+                </div>
+              </div>
             )}
-            {canDelete &&
-              (confirmingDelete ? (
-                <>
-                  <span className="text-[11px] text-rose-600 dark:text-rose-400">Delete this intake?</span>
-                  <Button size="xs" variant="danger" icon={Trash2} onClick={() => onDelete?.(intake.id)}>
-                    Confirm delete
-                  </Button>
-                  <Button size="xs" variant="ghost" onClick={() => setConfirmingDelete(false)}>
-                    Cancel
-                  </Button>
-                </>
-              ) : (
-                <Button size="xs" variant="ghost" icon={Trash2} onClick={() => setConfirmingDelete(true)}>
-                  Delete
-                </Button>
-              ))}
-          </div>
-        </div>
+
+          </td>
+        </tr>
       )}
 
-      {editing && onEdit && (
-        <WaterIntakeEditModal intake={intake} officers={officers} onSave={onEdit} onClose={() => setEditing(false)} />
-      )}
-    </li>
+    </>
   );
 };

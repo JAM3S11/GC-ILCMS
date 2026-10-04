@@ -11,6 +11,7 @@ import {
   Clock,
   FileText,
   FlaskConical,
+  FolderOpen,
   Inbox,
   List,
   LogIn,
@@ -26,7 +27,17 @@ import { LaboratoryDepartment, OfficerVisitor, AppNotification } from '../../typ
 import { VISITOR_STATUS } from './visitorStatus';
 import { departmentLabel } from '../../lib/departments';
 import { NationalIdReveal } from './NationalIdReveal';
+import { Select } from '../common/Select';
 import { LabNotifyButton } from './LabNotifyButton';
+import {
+  NotificationFilter,
+  NotificationGroup,
+  NotificationRow,
+  NotificationTabs,
+  filterNotifications,
+  groupByDay,
+  needsAttention,
+} from '../notifications/NotificationFeed';
 import {
   Avatar,
   Button,
@@ -38,9 +49,11 @@ import {
   KpiGrid,
   MeterRow,
   Panel,
+  SearchInput,
   SegmentedControl,
   StatusPill,
   Tone,
+  TONE,
   tableClasses as tc,
 } from '../common/Dashboard';
 
@@ -59,7 +72,8 @@ interface LabBayViewProps {
   isLoadingMoreVisitors: boolean;
   onLoadMoreVisitors: () => Promise<void>;
   currentUserName: string;
-  onOpenIntake?: (visitor: OfficerVisitor) => void;
+  /** Opens this visit's Water exhibit in the intake form to change its details; reception and the Water Head. */
+  onEditClientDetails?: (visitor: OfficerVisitor) => void;
   onSendLabNotification?: (visitor: OfficerVisitor, resend: boolean) => Promise<void>;
 }
 
@@ -116,14 +130,33 @@ const notifTone: Record<AppNotification['type'], Tone> = {
  * LAB BAY
  * ========================================================================== */
 
+const HANDOVER_STAGES: {
+  id: Exclude<VisitorProcessFilter, 'all'>;
+  label: string;
+  hint: string;
+  icon: React.ComponentType<{ className?: string }>;
+  tone: Tone;
+}[] = [
+  { id: 'awaiting', label: 'Awaiting laboratory', hint: 'Arrived, not yet received', icon: Clock, tone: 'sky' },
+  { id: 'active', label: 'In laboratory', hint: 'Being served', icon: FlaskConical, tone: 'amber' },
+  { id: 'verified', label: 'Ready for check-out', hint: 'Service complete', icon: CheckCircle2, tone: 'emerald' },
+  { id: 'served', label: 'Checked out', hint: 'Has left the premises', icon: LogOut, tone: 'slate' },
+];
+
+const JOURNEY = ['Arrived', 'Received by lab', 'Service complete', 'Checked out'] as const;
+const JOURNEY_STEP: Record<OfficerVisitor['status'], number> = {
+  'Awaiting Laboratory Reception': 0,
+  'In Laboratory': 1,
+  Completed: 2,
+  Departed: 3,
+};
+
 export const LabBayView: React.FC<LabBayViewProps> = ({
   visitors,
   initialSelectedVisitorId,
   onCheckOut,
   onLabReceive,
-  onServiceComplete,
   canReceiveVisits,
-  canCompleteVisits,
   canCheckOutVisits,
   isLoading,
   onRevealNationalId,
@@ -131,375 +164,276 @@ export const LabBayView: React.FC<LabBayViewProps> = ({
   isLoadingMoreVisitors,
   onLoadMoreVisitors,
   currentUserName,
-  onOpenIntake,
+  onEditClientDetails,
   onSendLabNotification,
 }) => {
-  const staged = visitors.filter((v) => v.status === 'Awaiting Laboratory Reception');
-  const inLab = visitors.filter((v) => v.status === 'In Laboratory');
-  const verifiedDocs = visitors.filter((v) => v.documentsVerified && v.documentsVerified.length > 0);
-  const labBreakdown = Object.entries(
-    inLab.reduce<Record<string, number>>((acc, v) => {
-      acc[v.laboratory] = (acc[v.laboratory] || 0) + 1;
-      return acc;
-    }, {})
-  );
-  const bayCapacity = [
-    { name: 'Narcotics Lab · Bay 4', used: Math.min(inLab.filter((v) => v.laboratory === 'Narcotics').length, 4), total: 4, tone: 'amber' as Tone },
-    { name: 'Toxicology Lab · Bay 2', used: Math.min(inLab.filter((v) => v.laboratory === 'Toxicology').length, 3), total: 3, tone: 'cyan' as Tone },
-  ];
-
-  const [visitorFilter, setVisitorFilter] = useState<VisitorProcessFilter>('all');
-  const [queueFilter, setQueueFilter] = useState<QueueFilter>('all');
+  const [stageFilter, setStageFilter] = useState<VisitorProcessFilter>('all');
+  const [labFilter, setLabFilter] = useState<QueueFilter>('all');
+  const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   useEffect(() => {
     if (initialSelectedVisitorId) setSelectedId(initialSelectedVisitorId);
   }, [initialSelectedVisitorId]);
 
-  const filteredVisitors = getFilteredVisitors(visitorFilter, visitors);
-  const selectedDossier = filteredVisitors.find((v) => v.id === selectedId) ?? filteredVisitors[0];
-  const queueVisitors = queueFilter === 'all' ? visitors : visitors.filter((v) => v.laboratory === queueFilter);
-  const queueLaboratories = Array.from(new Set(visitors.map((v) => v.laboratory)));
+  const laboratories = Array.from(new Set(visitors.map((v) => v.laboratory)));
+  const count = (stage: Exclude<VisitorProcessFilter, 'all'>) => getFilteredVisitors(stage, visitors).length;
 
-  const selectVisitor = (vis: OfficerVisitor) => {
-    setSelectedId(vis.id);
-    if (!getFilteredVisitors(visitorFilter, visitors).some((v) => v.id === vis.id)) setVisitorFilter('all');
-  };
+  const q = query.trim().toLowerCase();
+  const list = getFilteredVisitors(stageFilter, visitors)
+    .filter((v) => labFilter === 'all' || v.laboratory === labFilter)
+    .filter(
+      (v) =>
+        !q ||
+        v.officerName.toLowerCase().includes(q) ||
+        v.visitNumber.toLowerCase().includes(q) ||
+        (v.station ?? '').toLowerCase().includes(q) ||
+        (v.exhibitsPresented ?? '').toLowerCase().includes(q),
+    );
+  const selected = list.find((v) => v.id === selectedId) ?? list[0];
+  const status = selected ? VISITOR_STATUS[selected.status] : null;
+
+  // The one thing this person can do for the selected client right now.
+  const nextStep = (() => {
+    if (!selected) return null;
+    if (selected.status === 'Awaiting Laboratory Reception') {
+      return canReceiveVisits
+        ? { label: 'Accept at laboratory', icon: CheckCircle2, variant: 'primary' as const, run: () => void onLabReceive(selected.id) }
+        : { note: 'Waiting for the laboratory to accept this client.' };
+    }
+    if (selected.status === 'In Laboratory') {
+      return { note: 'The client is with the laboratory. Exhibits are handled in the Exhibit Laboratory.' };
+    }
+    if (selected.status === 'Completed') {
+      return canCheckOutVisits
+        ? { label: 'Check out', icon: LogOut, variant: 'primary' as const, run: () => void onCheckOut(selected.id) }
+        : { note: 'Reception checks the client out.' };
+    }
+    return { note: 'This visit is closed.' };
+  })();
 
   return (
     <DashboardPage>
       <DashboardHeader
-        breadcrumb={['Reception', 'Lab Bay']}
-        title="Lab Bay"
-        description="Monitor exhibits staged at the receiving bay and hand visitors over to laboratory reception."
-        meta={<StatusPill tone="emerald" pulse>Receiving bay open</StatusPill>}
-        actions={
-          <SegmentedControl
-            ariaLabel="Filter by process stage"
-            value={visitorFilter}
-            onChange={setVisitorFilter}
-            options={(Object.keys(processLabels) as VisitorProcessFilter[]).map((f) => ({
-              value: f,
-              label: processLabels[f],
-              count: getFilteredVisitors(f, visitors).length,
-            }))}
-          />
-        }
+        breadcrumb={['Operations', 'Reception & Client Handover']}
+        title="Reception & Client Handover"
+        description="Follow each client from arrival at reception, through the laboratory, to check-out."
+        meta={<StatusPill tone="emerald" pulse>Live</StatusPill>}
       />
 
-      <KpiGrid label="Lab Bay summary">
-        <KpiCard
-          label="Awaiting triage"
-          value={staged.length}
-          icon={Clock}
-          tone="sky"
-          hint={staged.length === 0 ? 'Zero pending bay backlog' : `${staged.length} awaiting reception`}
-        />
-        <KpiCard
-          label="In laboratory"
-          value={inLab.length}
-          icon={FlaskConical}
-          tone="amber"
-          hint={labBreakdown.length ? labBreakdown.map(([l, c]) => `${l} (${c})`).join(' · ') : 'No active analysis'}
-        />
-        <KpiCard
-          label="Documents verified"
-          value={verifiedDocs.length}
-          icon={CheckCircle2}
-          tone="emerald"
-          progress={visitors.length ? (verifiedDocs.length / visitors.length) * 100 : 0}
-          hint="Chain of custody authenticated"
-        />
-        <KpiCard label="Avg turnaround" value="2.4" unit="hrs" icon={Activity} tone="cyan" progress={60} hint="Target under 4 hours" />
-      </KpiGrid>
-
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
-        {/* Intake dossier */}
-        <Panel
-          className="xl:col-span-8"
-          icon={FileText}
-          tone="amber"
-          title="Intake dossier"
-          description={selectedDossier ? `Visit ${selectedDossier.visitNumber}` : 'No record selected'}
-          actions={
-            selectedDossier && (
-              <StatusPill tone={VISITOR_STATUS[selectedDossier.status].tone} pulse={selectedDossier.status !== 'Departed'}>
-                {VISITOR_STATUS[selectedDossier.status].label}
-              </StatusPill>
-            )
-          }
-          flush
-          footer={
-            selectedDossier && (
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap gap-2">
-                  {canReceiveVisits && selectedDossier.status === 'Awaiting Laboratory Reception' && (
-                    <Button size="sm" variant="primary" icon={CheckCircle2} onClick={() => void onLabReceive(selectedDossier.id)}>
-                      Accept at laboratory
-                    </Button>
-                  )}
-                  {canCompleteVisits && selectedDossier.status === 'In Laboratory' && (
-                    <Button size="sm" variant="success" icon={CheckCheck} onClick={() => void onServiceComplete(selectedDossier.id)}>
-                      Mark service complete
-                    </Button>
-                  )}
-                  {onOpenIntake && selectedDossier.status === 'In Laboratory' &&
-                    ['Food & Drugs', 'Water'].includes(selectedDossier.laboratory) && (
-                      <Button size="sm" variant="primary" icon={FileText} onClick={() => onOpenIntake(selectedDossier)}>
-                        Open {selectedDossier.laboratory === 'Food & Drugs' ? 'Food & Drugs' : 'Water'} intake
-                      </Button>
-                    )}
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {onSendLabNotification && selectedDossier.status === 'Awaiting Laboratory Reception' && (
-                    <LabNotifyButton
-                      visit={selectedDossier}
-                      size="sm"
-                      notifyLabel={`Notify ${selectedDossier.laboratory}`}
-                      onSend={(visitor, resend) => onSendLabNotification(visitor, resend)}
-                    />
-                  )}
-                  <Button size="sm" variant="ghost" icon={Printer}>
-                    Print tag
-                  </Button>
-                  {canCheckOutVisits && selectedDossier.status === 'Completed' && (
-                    <Button size="sm" variant="danger" icon={LogOut} onClick={() => void onCheckOut(selectedDossier.id)}>
-                      Check out
-                    </Button>
-                  )}
-                </div>
+      {/* The handover pipeline: click a stage to filter the list. */}
+      <section aria-label="Handover stages" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {HANDOVER_STAGES.map((stage) => {
+          const active = stageFilter === stage.id;
+          return (
+            <button
+              key={stage.id}
+              type="button"
+              aria-pressed={active}
+              onClick={() => setStageFilter(active ? 'all' : stage.id)}
+              className={`rounded-xl border bg-white p-4 text-left shadow-sm transition-all dark:bg-slate-900 ${
+                active
+                  ? 'border-amber-500 ring-2 ring-amber-500/20'
+                  : 'border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:hover:border-slate-700'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-slate-500 dark:text-slate-400">{stage.label}</span>
+                <span className={`flex h-7 w-7 items-center justify-center rounded-lg ring-1 ring-inset ${TONE[stage.tone].chip}`}>
+                  <stage.icon className="h-3.5 w-3.5" />
+                </span>
               </div>
-            )
-          }
-        >
+              <div className="mt-2 text-3xl font-semibold tabular-nums text-slate-900 dark:text-white">{count(stage.id)}</div>
+              <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{stage.hint}</div>
+            </button>
+          );
+        })}
+      </section>
+
+      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
+        {/* Client list */}
+        <section aria-label="Clients" className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="space-y-2 border-b border-slate-200 p-3 dark:border-slate-800">
+            <SearchInput value={query} onChange={setQuery} placeholder="Search name, visit no. or station" className="w-full" />
+            <div className="flex items-center gap-2">
+              {laboratories.length > 1 && (
+                <Select
+                  size="xs"
+                  className="min-w-0 flex-1"
+                  aria-label="Filter by laboratory"
+                  value={labFilter}
+                  onChange={(value) => setLabFilter(value as QueueFilter)}
+                  options={[
+                    { value: 'all' as QueueFilter, label: 'All laboratories' },
+                    ...laboratories.map((lab) => ({ value: lab as QueueFilter, label: departmentLabel(lab) })),
+                  ]}
+                />
+              )}
+              <span className="ml-auto whitespace-nowrap text-[11px] tabular-nums text-slate-500 dark:text-slate-400">
+                {list.length} {list.length === 1 ? 'client' : 'clients'}
+                {stageFilter !== 'all' && (
+                  <button type="button" onClick={() => setStageFilter('all')} className="ml-2 font-medium text-amber-700 hover:underline dark:text-amber-400">
+                    Clear
+                  </button>
+                )}
+              </span>
+            </div>
+          </div>
+
           {isLoading ? (
-            <EmptyState icon={Inbox} title="Loading visitor records" />
-          ) : !selectedDossier ? (
-            <EmptyState icon={Inbox} title="No visitor at this stage" description="Choose a different stage filter above." />
+            <EmptyState icon={Inbox} title="Loading clients" />
+          ) : list.length === 0 ? (
+            <EmptyState icon={Users} title="No clients here" description={q ? `Nothing matches “${query.trim()}”.` : 'No clients at this stage.'} />
+          ) : (
+            <ul className="max-h-[560px] divide-y divide-slate-100 overflow-y-auto dark:divide-slate-800">
+              {list.map((vis) => {
+                const s = VISITOR_STATUS[vis.status];
+                const isSelected = selected?.id === vis.id;
+                return (
+                  <li key={vis.id}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedId(vis.id)}
+                      aria-current={isSelected ? 'true' : undefined}
+                      className={`flex w-full items-start gap-3 px-4 py-3 text-left transition-colors ${
+                        isSelected ? 'bg-amber-500/5 shadow-[inset_3px_0_0_var(--gc-amber-500)]' : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
+                      }`}
+                    >
+                      <Avatar name={vis.officerName} size="sm" tone={s.tone} />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate text-[13px] font-medium text-slate-900 dark:text-white">{vis.officerName}</span>
+                          <span className="shrink-0 text-[11px] tabular-nums text-slate-400">{vis.timeIn}</span>
+                        </div>
+                        <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">
+                          {departmentLabel(vis.laboratory)} · {vis.station || 'No station'}
+                        </div>
+                        <div className="mt-1.5 flex items-center justify-between gap-2">
+                          <StatusPill tone={s.tone}>{s.label}</StatusPill>
+                          <span className="font-mono text-[10px] text-slate-400">{vis.visitNumber}</span>
+                        </div>
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {hasMoreVisitors && (
+            <div className="border-t border-slate-100 p-3 text-center dark:border-slate-800">
+              <Button size="sm" variant="ghost" disabled={isLoadingMoreVisitors} onClick={() => void onLoadMoreVisitors()}>
+                {isLoadingMoreVisitors ? 'Loading older records…' : 'Load older records'}
+              </Button>
+            </div>
+          )}
+        </section>
+
+        {/* Selected client */}
+        <section aria-label="Client details" className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 lg:sticky lg:top-4">
+          {!selected || !status || !nextStep ? (
+            <EmptyState icon={Inbox} title="Select a client" description="Choose someone from the list to see their details and next step." />
           ) : (
             <>
-              <div className="flex flex-wrap items-center gap-3.5 border-b border-slate-200 p-4 dark:border-slate-800">
-                <Avatar name={selectedDossier.officerName} size="lg" tone="sky" />
-                <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-3.5 border-b border-slate-200 p-5 dark:border-slate-800">
+                <Avatar name={selected.officerName} size="lg" tone={status.tone} />
+                <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-base font-semibold text-slate-900 dark:text-white">{selectedDossier.officerName}</h3>
-                    {selectedDossier.visitorType === 'POLICE_OFFICER' && (
-                      <StatusPill tone="sky" dot={false}>
-                        <Shield className="h-3 w-3" /> Police
-                      </StatusPill>
+                    <h2 className="text-base font-semibold text-slate-900 dark:text-white">{selected.officerName}</h2>
+                    <StatusPill tone={status.tone} pulse={selected.status !== 'Departed'}>{status.label}</StatusPill>
+                    {selected.visitorType === 'POLICE_OFFICER' && (
+                      <StatusPill tone="sky" dot={false}><Shield className="h-3 w-3" /> Police</StatusPill>
                     )}
                   </div>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    {selectedDossier.station} · {selectedDossier.laboratory} Laboratory
+                  <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                    <span className="font-mono">{selected.visitNumber}</span> · {selected.station || 'No station'} · {departmentLabel(selected.laboratory)}
                   </p>
                 </div>
               </div>
 
-              <dl className="grid grid-cols-2 gap-x-4 gap-y-4 border-b border-slate-200 p-4 sm:grid-cols-3 dark:border-slate-800">
-                <DetailItem label="Intake date / time">
-                  {selectedDossier.date || '—'} · {selectedDossier.timeIn}
-                </DetailItem>
-                <DetailItem label="National ID">
-                  <NationalIdReveal
-                    visitorId={selectedDossier.id}
-                    maskedValue={selectedDossier.nationalId || '—'}
-                    onReveal={onRevealNationalId}
-                  />
-                </DetailItem>
-                <DetailItem label="Official contact">{selectedDossier.phone || '—'}</DetailItem>
-                <DetailItem label="Originating station">{selectedDossier.station || '—'}</DetailItem>
-                <DetailItem label="Service badge">
-                  <span className="text-amber-600 dark:text-amber-400">{selectedDossier.badgeNumber || '—'}</span>
-                </DetailItem>
-                <DetailItem label="Escort vehicle">{selectedDossier.vehicleRegistration || '—'}</DetailItem>
-              </dl>
-
-              <div className="space-y-3 p-4">
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-950/50">
-                    <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      <FileText className="h-3.5 w-3.5" /> Documents presented
-                    </div>
-                    <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-200">
-                      {selectedDossier.documentsPresented || 'No documents recorded.'}
-                    </p>
-                  </div>
-                  <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-950/50">
-                    <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
-                      <ClipboardList className="h-3.5 w-3.5" /> Exhibits / samples summary
-                    </div>
-                    <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-200">
-                      {selectedDossier.exhibitsPresented || 'No exhibit details recorded.'}
-                    </p>
-                  </div>
-                  <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-950/50 md:col-span-2">
-                    <div className="mb-1 text-[11px] font-medium text-slate-500 dark:text-slate-400">Purpose of visit</div>
-                    <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-200">{selectedDossier.purposeOfVisit}</p>
-                  </div>
+              {onEditClientDetails && selected.laboratory === 'Water' && selected.status !== 'Departed' && (
+                <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50/70 px-5 py-2.5 text-xs dark:border-slate-800 dark:bg-slate-950/40">
+                  <span className="text-slate-500 dark:text-slate-400">Something wrong with the client or exhibit details?</span>
+                  <Button size="xs" variant="secondary" icon={FileText} onClick={() => onEditClientDetails(selected)}>
+                    Edit details
+                  </Button>
                 </div>
-              </div>
-            </>
-          )}
-        </Panel>
+              )}
 
-        {/* Queue + capacity */}
-        <div className="space-y-5 xl:col-span-4">
-          <Panel
-            icon={List}
-            tone="cyan"
-            title="Reception queue"
-            description={`${queueVisitors.length} client${queueVisitors.length === 1 ? '' : 's'}`}
-            flush
-          >
-            <div className="border-b border-slate-200 px-4 py-2.5 dark:border-slate-800">
-              <SegmentedControl
-                ariaLabel="Filter queue by laboratory"
-                value={queueFilter}
-                onChange={setQueueFilter}
-                options={[
-                  { value: 'all' as QueueFilter, label: 'All', count: visitors.length },
-                  ...queueLaboratories.map((lab) => ({
-                    value: lab as QueueFilter,
-                    label: lab,
-                    count: visitors.filter((v) => v.laboratory === lab).length,
-                  })),
-                ]}
-              />
-            </div>
-            {queueVisitors.length === 0 ? (
-              <EmptyState icon={Inbox} title="Queue is empty" />
-            ) : (
-              <ul className="max-h-[420px] divide-y divide-slate-100 overflow-y-auto dark:divide-slate-800">
-                {queueVisitors.map((vis) => {
-                  const active = selectedDossier?.id === vis.id;
-                  const status = VISITOR_STATUS[vis.status];
+              {/* Journey */}
+              <ol aria-label="Visit progress" className="grid grid-cols-4 gap-1 border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+                {JOURNEY.map((step, index) => {
+                  const current = JOURNEY_STEP[selected.status];
+                  const done = index < current || (index === current && selected.status === 'Departed');
+                  const isCurrent = index === current && selected.status !== 'Departed';
                   return (
-                    <li key={vis.id}>
-                      <button
-                        type="button"
-                        onClick={() => selectVisitor(vis)}
-                        className={`flex w-full cursor-pointer items-start gap-3 px-4 py-3 text-left transition-colors ${
-                          active ? 'bg-amber-500/5 shadow-[inset_3px_0_0_var(--gc-amber-500)]' : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
-                        }`}
-                      >
-                        <Avatar name={vis.officerName} size="sm" tone={status.tone} />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="truncate text-[13px] font-medium text-slate-900 dark:text-white">{vis.officerName}</span>
-                            <span className="whitespace-nowrap text-[11px] tabular-nums text-slate-400">{vis.timeIn}</span>
-                          </div>
-                          <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">
-                            {vis.laboratory} · {vis.station}
-                          </div>
-                          <div className="mt-1.5">
-                            <StatusPill tone={status.tone}>{status.label}</StatusPill>
-                          </div>
-                        </div>
-                      </button>
+                    <li key={step} className="min-w-0">
+                      <div className={`h-1 rounded-full ${done ? 'bg-emerald-500' : isCurrent ? 'bg-amber-500' : 'bg-slate-200 dark:bg-slate-800'}`} />
+                      <div className={`mt-1.5 truncate text-[11px] ${done || isCurrent ? 'font-medium text-slate-900 dark:text-white' : 'text-slate-400'}`}>{step}</div>
                     </li>
                   );
                 })}
-              </ul>
-            )}
-          </Panel>
+              </ol>
 
-          <Panel title="Bay capacity" description="Benches currently occupied" actions={<StatusPill tone="emerald">Nominal</StatusPill>}>
-            <div className="space-y-3.5">
-              {bayCapacity.map((bay) => (
-                <MeterRow key={bay.name} label={bay.name} value={bay.used} total={bay.total} tone={bay.tone} suffix={` / ${bay.total} in use`} />
-              ))}
-            </div>
-          </Panel>
-        </div>
+              {/* Next step */}
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-slate-50/70 px-5 py-3.5 dark:border-slate-800 dark:bg-slate-950/40">
+                <div>
+                  <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Next step</div>
+                  {'note' in nextStep && <p className="mt-0.5 text-[13px] text-slate-600 dark:text-slate-300">{nextStep.note}</p>}
+                  {'label' in nextStep && <p className="mt-0.5 text-[13px] font-medium text-slate-900 dark:text-white">{nextStep.label}</p>}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {onSendLabNotification && selected.status === 'Awaiting Laboratory Reception' && (
+                    <LabNotifyButton
+                      visit={selected}
+                      size="sm"
+                      notifyLabel={`Notify ${departmentLabel(selected.laboratory)}`}
+                      onSend={(visitor, resend) => onSendLabNotification(visitor, resend)}
+                    />
+                  )}
+                  {'label' in nextStep && (
+                    <Button variant={nextStep.variant} icon={nextStep.icon} onClick={nextStep.run}>
+                      {nextStep.label}
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              <dl className="grid grid-cols-2 gap-x-4 gap-y-4 border-b border-slate-200 p-5 sm:grid-cols-3 dark:border-slate-800">
+                <DetailItem label="Arrived">{selected.date || '—'} · {selected.timeIn}</DetailItem>
+                <DetailItem label="National ID">
+                  <NationalIdReveal visitorId={selected.id} maskedValue={selected.nationalId || '—'} onReveal={onRevealNationalId} />
+                </DetailItem>
+                <DetailItem label="Phone">{selected.phone || '—'}</DetailItem>
+                <DetailItem label="Station">{selected.station || '—'}</DetailItem>
+                <DetailItem label="Service badge">{selected.badgeNumber || '—'}</DetailItem>
+                <DetailItem label="Vehicle">{selected.vehicleRegistration || '—'}</DetailItem>
+              </dl>
+
+              <div className="grid gap-3 p-5 md:grid-cols-2">
+                <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-950/50">
+                  <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                    <FileText className="h-3.5 w-3.5" /> Documents presented
+                  </div>
+                  <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-200">{selected.documentsPresented || 'No documents recorded.'}</p>
+                </div>
+                <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-950/50">
+                  <div className="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-slate-400">
+                    <ClipboardList className="h-3.5 w-3.5" /> Exhibits brought
+                  </div>
+                  <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-200">{selected.exhibitsPresented || 'No exhibit details recorded.'}</p>
+                </div>
+                <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-950/50 md:col-span-2">
+                  <div className="mb-1 text-[11px] font-medium text-slate-500 dark:text-slate-400">Purpose of visit</div>
+                  <p className="text-xs leading-relaxed text-slate-700 dark:text-slate-200">{selected.purposeOfVisit || '—'}</p>
+                </div>
+              </div>
+
+              <div className="border-t border-slate-100 bg-slate-50/60 px-5 py-2.5 text-[11px] text-slate-500 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">
+                Viewing as {currentUserName}
+              </div>
+            </>
+          )}
+        </section>
       </div>
-
-      {/* Visitors at this stage */}
-      <Panel
-        icon={Users}
-        tone="emerald"
-        title={`Visitors · ${processLabels[visitorFilter]}`}
-        description="Select a row to open the intake dossier"
-        flush
-        footer={
-          <span className="flex items-center gap-1.5">
-            <Package className="h-3.5 w-3.5 text-amber-500" />
-            Staged by <strong className="font-medium text-slate-700 dark:text-slate-200">{currentUserName}</strong> under Section 8
-            (Evidence Admission). All exhibits sealed before lab reception.
-          </span>
-        }
-      >
-        {filteredVisitors.length === 0 ? (
-          <EmptyState icon={Users} title="No visitors match this stage" />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className={`${tc.table} min-w-[760px]`}>
-              <thead className={tc.thead}>
-                <tr>
-                  <th className={tc.th}>Visitor</th>
-                  <th className={tc.th}>Reference</th>
-                  <th className={tc.th}>Laboratory</th>
-                  <th className={tc.th}>Exhibits</th>
-                  <th className={tc.th}>Arrived</th>
-                  <th className={tc.th}>Status</th>
-                  {onSendLabNotification && <th className={`${tc.th} text-right`}>Lab notification</th>}
-                </tr>
-              </thead>
-              <tbody className={tc.tbody}>
-                {filteredVisitors.map((vis) => (
-                  <tr
-                    key={vis.id}
-                    onClick={() => selectVisitor(vis)}
-                    className={`${tc.tr} cursor-pointer ${selectedDossier?.id === vis.id ? 'bg-amber-500/5' : ''}`}
-                  >
-                    <td className={tc.td}>
-                      <div className="flex items-center gap-2.5">
-                        <Avatar name={vis.officerName} size="sm" />
-                        <div className="min-w-0">
-                          <div className="truncate font-medium text-slate-900 dark:text-white">{vis.officerName}</div>
-                          <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">{vis.station}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className={`${tc.td} font-mono text-xs`}>{vis.visitNumber}</td>
-                    <td className={tc.td}>{vis.laboratory}</td>
-                    <td className={tc.td}>
-                      <div className="max-w-[240px] truncate" title={vis.exhibitsPresented}>
-                        {vis.exhibitsPresented || '—'}
-                      </div>
-                    </td>
-                    <td className={`${tc.td} whitespace-nowrap`}>
-                      {vis.date || '—'} · {vis.timeIn}
-                    </td>
-                    <td className={tc.td}>
-                      <StatusPill tone={VISITOR_STATUS[vis.status].tone}>{VISITOR_STATUS[vis.status].label}</StatusPill>
-                    </td>
-                    {onSendLabNotification && (
-                      <td className={`${tc.td} text-right`}>
-                        {vis.status === 'Departed' ? (
-                          <span className="text-[11px] text-slate-400">Visit closed</span>
-                        ) : (
-                          <LabNotifyButton
-                            visit={vis}
-                            notifyLabel="Notify lab"
-                            stopPropagation
-                            onSend={(visitor, resend) => onSendLabNotification(visitor, resend)}
-                          />
-                        )}
-                      </td>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Panel>
-      {hasMoreVisitors && (
-        <div className="flex justify-center">
-          <Button variant="secondary" disabled={isLoadingMoreVisitors} onClick={() => void onLoadMoreVisitors()}>
-            {isLoadingMoreVisitors ? 'Loading older records…' : 'Load older visitor records'}
-          </Button>
-        </div>
-      )}
     </DashboardPage>
   );
 };
@@ -508,193 +442,188 @@ export const LabBayView: React.FC<LabBayViewProps> = ({
  * CHECK OUT
  * ========================================================================== */
 
+const CHECKOUT_CONFIRMATIONS = [
+  'Laboratory service is complete',
+  'Exhibit receipt handed to the officer',
+  'Visitor badge returned to the desk',
+];
+
 export const CheckOutView: React.FC<CheckOutViewProps> = ({
   visitors, onCheckOut, canCheckOutVisits, hasMoreVisitors, isLoadingMoreVisitors, onLoadMoreVisitors,
 }) => {
-  const checkOutEligible = visitors.filter((v) => v.status === 'Completed');
-  const awaitingReceipt = visitors.filter((v) => v.status === 'Awaiting Laboratory Reception');
+  const ready = visitors.filter((v) => v.status === 'Completed');
   const departed = visitors.filter((v) => v.status === 'Departed');
-  const exhibitsAccountedFor = departed.filter((v) => v.exhibitsPresented.trim().length > 0);
-  const visitDurations = departed
-    .map((visitor) => getDurationInMinutes(visitor.timeIn, visitor.timeOut))
-    .filter((duration): duration is number => duration !== null);
-  const averageVisitDuration =
-    visitDurations.length > 0 ? Math.round(visitDurations.reduce((sum, d) => sum + d, 0) / visitDurations.length) : null;
-  const [queueTab, setQueueTab] = useState<'pending' | 'scheduled'>('pending');
-  const queueItems = queueTab === 'pending' ? checkOutEligible : awaitingReceipt;
-  const isPending = queueTab === 'pending';
+  const stillWaiting = visitors.filter((v) => v.status === 'Awaiting Laboratory Reception' || v.status === 'In Laboratory').length;
 
-  const checklist = [
-    'Laboratory confirms service is complete',
-    'Exhibit receipt handed to the officer',
-    'Visitor badge returned to the desk',
-    'Departure time recorded in the register',
-  ];
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [confirmed, setConfirmed] = useState<Set<string>>(new Set());
+  const [working, setWorking] = useState(false);
+
+  const selected = ready.find((v) => v.id === selectedId) ?? ready[0];
+  const allConfirmed = confirmed.size === CHECKOUT_CONFIRMATIONS.length;
+
+  // A new client starts with a clean set of confirmations.
+  useEffect(() => { setConfirmed(new Set()); }, [selected?.id]);
+
+  const toggle = (item: string) =>
+    setConfirmed((previous) => {
+      const next = new Set(previous);
+      if (!next.delete(item)) next.add(item);
+      return next;
+    });
+
+  const complete = async () => {
+    if (!selected) return;
+    setWorking(true);
+    try {
+      await onCheckOut(selected.id);
+    } finally {
+      setWorking(false);
+    }
+  };
 
   return (
     <DashboardPage>
       <DashboardHeader
-        breadcrumb={['Reception', 'Check Out']}
-        title="Check Out"
-        description="Record officer and client departures and close their visitor register entries."
+        breadcrumb={['Operations', 'Check Out']}
+        title="Check out"
+        description="Confirm the handover, then sign the client out of the visitor register."
         meta={
-          <StatusPill tone={checkOutEligible.length ? 'amber' : 'emerald'} pulse={checkOutEligible.length > 0}>
-            {checkOutEligible.length ? `${checkOutEligible.length} ready to leave` : 'All clear'}
+          <StatusPill tone={ready.length ? 'amber' : 'emerald'} pulse={ready.length > 0}>
+            {ready.length ? `${ready.length} ready to leave` : 'All clear'}
           </StatusPill>
         }
       />
 
-      <KpiGrid label="Checkout operations summary">
-        <KpiCard label="Ready for departure" value={checkOutEligible.length} icon={Clock} tone="amber" hint="Laboratory service completed" />
-        <KpiCard
-          label="Departed today"
-          value={departed.length}
-          icon={CheckCircle2}
-          tone="emerald"
-          progress={visitors.length ? (departed.length / visitors.length) * 100 : 0}
-          hint={`${departed.length} of ${visitors.length} visitors signed out`}
-        />
-        <KpiCard label="Exhibits accounted for" value={exhibitsAccountedFor.length} icon={Package} tone="cyan" hint="Exhibit details retained with register" />
-        <KpiCard
-          label="Avg visit duration"
-          value={averageVisitDuration === null ? '—' : formatDuration(averageVisitDuration)}
-          icon={Activity}
-          tone="violet"
-          hint={averageVisitDuration === null ? 'Awaiting completed visits' : 'From entry and departure times'}
-        />
-      </KpiGrid>
-
-      <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
-        <Panel
-          className="xl:col-span-8"
-          icon={List}
-          tone="amber"
-          title="Check-out queue"
-          description={isPending ? 'Visitors cleared to leave the facility' : 'Visitors still awaiting laboratory receipt'}
-          flush
-          actions={
-            <SegmentedControl
-              ariaLabel="Queue view"
-              value={queueTab}
-              onChange={setQueueTab}
-              options={[
-                { value: 'pending', label: 'Ready', count: checkOutEligible.length },
-                { value: 'scheduled', label: 'Scheduled', count: awaitingReceipt.length },
-              ]}
-            />
-          }
-        >
-          {queueItems.length === 0 ? (
+      <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)]">
+        {/* Step 1: who is leaving */}
+        <section aria-label="Ready to check out" className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+            <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Ready to check out</h2>
+            <span className="text-xs tabular-nums text-slate-500 dark:text-slate-400">{ready.length}</span>
+          </div>
+          {ready.length === 0 ? (
             <EmptyState
               icon={CheckCheck}
-              title={isPending ? 'No visitors ready for departure' : 'Nothing scheduled'}
-              description={isPending ? 'Visitors appear here once the laboratory has finished with them.' : 'No visitors are waiting for laboratory receipt.'}
+              title="No one is ready to leave"
+              description={stillWaiting > 0 ? `${stillWaiting} ${stillWaiting === 1 ? 'client is' : 'clients are'} still with reception or the laboratory.` : 'Clients appear here when the laboratory has finished with them.'}
             />
           ) : (
-            <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-              {queueItems.map((v) => (
-                <li key={v.id} className="flex flex-wrap items-center gap-3 px-4 py-3.5 sm:flex-nowrap">
-                  <Avatar name={v.officerName} tone={isPending ? 'amber' : 'sky'} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="truncate text-[13px] font-medium text-slate-900 dark:text-white">{v.officerName}</span>
-                      <StatusPill tone={VISITOR_STATUS[v.status].tone}>{VISITOR_STATUS[v.status].label}</StatusPill>
-                    </div>
-                    <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">
-                      {v.badgeNumber || v.visitNumber} · {v.station} · {v.laboratory}
-                    </div>
-                    <div className="truncate text-[11px] text-slate-400" title={v.exhibitsPresented}>
-                      {v.exhibitsPresented || 'No exhibit details recorded'}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className="flex items-center gap-1 whitespace-nowrap text-xs text-slate-500 dark:text-slate-400">
-                      <LogIn className="h-3 w-3 text-emerald-500" /> {v.timeIn}
-                    </span>
-                    {isPending && canCheckOutVisits && (
-                      <Button size="sm" variant="danger" icon={LogOut} onClick={() => void onCheckOut(v.id)}>
-                        Record departure
-                      </Button>
-                    )}
-                  </div>
-                </li>
-              ))}
+            <ul className="max-h-[420px] divide-y divide-slate-100 overflow-y-auto dark:divide-slate-800">
+              {ready.map((v) => {
+                const isSelected = selected?.id === v.id;
+                return (
+                  <li key={v.id}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedId(v.id)}
+                      aria-current={isSelected ? 'true' : undefined}
+                      className={`flex w-full items-center gap-3 px-4 py-3 text-left transition-colors ${
+                        isSelected ? 'bg-amber-500/5 shadow-[inset_3px_0_0_var(--gc-amber-500)]' : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
+                      }`}
+                    >
+                      <Avatar name={v.officerName} size="sm" tone="amber" />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[13px] font-medium text-slate-900 dark:text-white">{v.officerName}</div>
+                        <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">
+                          {v.station || 'No station'} · in at {v.timeIn}
+                        </div>
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
-        </Panel>
+        </section>
 
-        <Panel className="xl:col-span-4" icon={ClipboardCheck} tone="emerald" title="Departure checklist" description="Confirm before signing a visitor out">
-          <ul className="space-y-2.5">
-            {checklist.map((item) => (
-              <li key={item} className="flex items-start gap-2.5 text-[13px] text-slate-600 dark:text-slate-300">
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
-                {item}
-              </li>
-            ))}
-          </ul>
-          <div className="mt-4 space-y-3 border-t border-slate-100 pt-4 dark:border-slate-800">
-            <MeterRow label="Signed out" value={departed.length} total={visitors.length} tone="emerald" />
-            <MeterRow label="Still on site" value={visitors.length - departed.length} total={visitors.length} tone="amber" />
-          </div>
-        </Panel>
+        {/* Step 2: confirm and complete */}
+        <section aria-label="Check-out summary" className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          {!selected ? (
+            <EmptyState icon={LogOut} title="Nothing to check out" description="Select a client once they are ready to leave." />
+          ) : (
+            <>
+              <div className="flex items-center gap-3.5 border-b border-slate-200 p-5 dark:border-slate-800">
+                <Avatar name={selected.officerName} size="lg" tone="amber" />
+                <div className="min-w-0">
+                  <h2 className="text-base font-semibold text-slate-900 dark:text-white">{selected.officerName}</h2>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    <span className="font-mono">{selected.visitNumber}</span> · {selected.station || 'No station'} · {departmentLabel(selected.laboratory)}
+                  </p>
+                </div>
+              </div>
+
+              <dl className="grid grid-cols-2 gap-4 border-b border-slate-200 p-5 sm:grid-cols-3 dark:border-slate-800">
+                <DetailItem label="Arrived">{selected.date || '—'} · {selected.timeIn}</DetailItem>
+                <DetailItem label="Service badge">{selected.badgeNumber || '—'}</DetailItem>
+                <DetailItem label="Exhibits brought">{selected.exhibitsPresented || '—'}</DetailItem>
+              </dl>
+
+              <fieldset className="border-b border-slate-200 p-5 dark:border-slate-800">
+                <legend className="text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Confirm before check-out</legend>
+                <ul className="mt-3 space-y-2">
+                  {CHECKOUT_CONFIRMATIONS.map((item) => (
+                    <li key={item}>
+                      <label className="flex cursor-pointer items-center gap-2.5 text-[13px] text-slate-700 dark:text-slate-200">
+                        <input
+                          type="checkbox"
+                          checked={confirmed.has(item)}
+                          onChange={() => toggle(item)}
+                          className="h-4 w-4 rounded border-slate-300 text-amber-500 focus:ring-amber-500"
+                        />
+                        {item}
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              </fieldset>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50/70 px-5 py-4 dark:bg-slate-950/40">
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {canCheckOutVisits
+                    ? allConfirmed ? 'Everything is confirmed.' : 'Tick each item to continue.'
+                    : 'Only reception staff can complete a check-out.'}
+                </p>
+                {canCheckOutVisits && (
+                  <Button variant="primary" icon={LogOut} disabled={!allConfirmed || working} onClick={() => void complete()}>
+                    {working ? 'Checking out…' : 'Complete check-out'}
+                  </Button>
+                )}
+              </div>
+            </>
+          )}
+        </section>
       </div>
 
-      <Panel
-        icon={ClipboardList}
-        tone="emerald"
-        title="Departures register"
-        description={`${departed.length} ${departed.length === 1 ? 'visitor' : 'visitors'} signed out today`}
-        flush
-        footer={
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="flex items-center gap-1.5">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              Register updated from recorded departures
-            </span>
-            <span>Status: current</span>
-          </div>
-        }
-      >
+      {/* Recent departures */}
+      <section aria-label="Recent departures" className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+          <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Recent departures</h2>
+          <span className="text-xs tabular-nums text-slate-500 dark:text-slate-400">{departed.length} signed out</span>
+        </div>
         {departed.length === 0 ? (
-          <EmptyState icon={LogOut} title="No departures yet" description="Departures recorded today will be listed here." />
+          <EmptyState icon={LogOut} title="No departures yet" description="Clients you check out will be listed here." />
         ) : (
-          <div className="overflow-x-auto">
-            <table className={`${tc.table} min-w-[720px]`}>
-              <thead className={tc.thead}>
-                <tr>
-                  <th className={tc.th}>Visitor</th>
-                  <th className={tc.th}>Station / source</th>
-                  <th className={tc.th}>Exhibits / purpose</th>
-                  <th className={tc.th}>Time in</th>
-                  <th className={tc.th}>Time out</th>
-                  <th className={`${tc.th} text-right`}>Status</th>
-                </tr>
-              </thead>
-              <tbody className={tc.tbody}>
-                {departed.map((v) => (
-                  <tr key={v.id} className={tc.tr}>
-                    <td className={tc.td}>
-                      <div className="font-medium text-slate-900 dark:text-white">{v.officerName}</div>
-                      <div className="text-[11px] text-slate-500 dark:text-slate-400">{v.badgeNumber || v.visitNumber}</div>
-                    </td>
-                    <td className={tc.td}>{v.station || 'Not recorded'}</td>
-                    <td className={tc.td}>
-                      <div className="max-w-[260px] truncate" title={v.exhibitsPresented}>
-                        {v.exhibitsPresented || v.purposeOfVisit || 'No details recorded'}
-                      </div>
-                    </td>
-                    <td className={`${tc.td} whitespace-nowrap`}>{v.timeIn}</td>
-                    <td className={`${tc.td} whitespace-nowrap font-medium text-slate-900 dark:text-white`}>{v.timeOut || '—'}</td>
-                    <td className={`${tc.td} text-right`}>
-                      <StatusPill tone="emerald">Signed out</StatusPill>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+            {departed.slice(0, 10).map((v) => {
+              const minutes = getDurationInMinutes(v.timeIn, v.timeOut);
+              return (
+                <li key={v.id} className="flex items-center gap-3 px-4 py-3">
+                  <Avatar name={v.officerName} size="sm" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[13px] font-medium text-slate-900 dark:text-white">{v.officerName}</div>
+                    <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">{v.station || 'No station'}</div>
+                  </div>
+                  <div className="text-right text-[11px] tabular-nums text-slate-500 dark:text-slate-400">
+                    {v.timeIn} → {v.timeOut || '—'}
+                    {minutes !== null && <div className="text-slate-400">{formatDuration(minutes)} on site</div>}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
         )}
-      </Panel>
+      </section>
       {hasMoreVisitors && (
         <div className="flex justify-center">
           <Button variant="secondary" disabled={isLoadingMoreVisitors} onClick={() => void onLoadMoreVisitors()}>
@@ -711,9 +640,11 @@ export const CheckOutView: React.FC<CheckOutViewProps> = ({
  * ========================================================================== */
 
 export const NotificationsView: React.FC<NotificationsViewProps> = ({ notifications, onMarkAllAsRead, onSelect, unreadCount, description, onAdminAction }) => {
-  const [tab, setTab] = useState<'all' | 'unread'>('all');
+  const [tab, setTab] = useState<NotificationFilter>('all');
   const [workingId, setWorkingId] = useState<string | null>(null);
-  const rows = tab === 'unread' ? notifications.filter((n) => !n.read) : notifications;
+  const rows = filterNotifications(notifications, tab);
+  const groups = groupByDay(rows);
+  const attentionCount = notifications.filter((n) => !n.read && needsAttention(n)).length;
 
   const runAdminAction = async (notification: AppNotification, action: 'approve' | 'reject' | 'reset-password') => {
     if (!onAdminAction) return;
@@ -726,72 +657,50 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({ notificati
   };
 
   return (
-    <DashboardPage>
-      <DashboardHeader
-        breadcrumb={['Workspace', 'Notifications']}
-        title="Notifications"
-        description={description ?? 'Lab alerts, exhibit admissions and departmental dispatches.'}
-        meta={unreadCount > 0 ? <StatusPill tone="amber" pulse>{unreadCount} unread</StatusPill> : undefined}
-        actions={
-          unreadCount > 0 && (
-            <Button icon={CheckCheck} onClick={onMarkAllAsRead}>
-              Mark all read
-            </Button>
-          )
-        }
+    <DashboardPage className="max-w-5xl">
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">Notifications</h1>
+          <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">
+            {unreadCount === 0
+              ? 'You’re all caught up.'
+              : `You have ${unreadCount} unread ${unreadCount === 1 ? 'notification' : 'notifications'}${attentionCount ? ` · ${attentionCount} need your attention` : ''}`}
+          </p>
+          {description && <p className="mt-1 max-w-2xl text-xs text-slate-500 dark:text-slate-400">{description}</p>}
+        </div>
+        {unreadCount > 0 && (
+          <button type="button" onClick={onMarkAllAsRead} className="shrink-0 text-sm font-semibold text-amber-700 hover:text-amber-600 dark:text-amber-400">
+            Mark all as read
+          </button>
+        )}
+      </header>
+
+      <NotificationTabs
+        value={tab}
+        onChange={setTab}
+        counts={{ all: notifications.length, unread: unreadCount, alerts: notifications.filter(needsAttention).length }}
       />
 
-      <Panel
-        icon={Bell}
-        tone="rose"
-        title="Inbox"
-        flush
-        actions={
-          <SegmentedControl
-            value={tab}
-            onChange={setTab}
-            options={[
-              { value: 'all', label: 'All', count: notifications.length },
-              { value: 'unread', label: 'Unread', count: unreadCount },
-            ]}
+      {groups.length === 0 ? (
+        <div className="mt-5 rounded-2xl border border-slate-100 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <EmptyState
+            icon={BellOff}
+            title={tab === 'all' ? 'No notifications yet' : 'Nothing here'}
+            description={tab === 'alerts' ? 'Alerts that need action will appear here.' : 'New alerts will appear here.'}
           />
-        }
-      >
-        {rows.length === 0 ? (
-          <EmptyState icon={BellOff} title="You're all caught up" description="New alerts will appear here." />
-        ) : (
-          <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-            {rows.map((n) => (
-              <li key={n.id} className={`px-4 py-3.5 ${n.read ? '' : 'bg-amber-500/[0.03]'}`}>
-                <button
-                  type="button"
-                  onClick={() => onSelect(n)}
-                  className="flex w-full cursor-pointer items-start gap-3 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40"
-                >
-                  <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${n.read ? 'bg-transparent' : 'bg-amber-500'}`} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className={`text-[13px] text-slate-900 dark:text-white ${n.read ? 'font-medium' : 'font-semibold'}`}>{n.title}</span>
-                      <StatusPill tone={notifTone[n.type]} dot={false}>
-                        {n.type}
-                      </StatusPill>
-                    </div>
-                    <p className="mt-0.5 text-xs leading-relaxed text-slate-600 dark:text-slate-400">{n.message}</p>
-                    {n.linkAction?.startsWith('ADMIN_') && (
-                      <span className="mt-1.5 inline-block text-[11px] font-semibold text-amber-700 dark:text-amber-400">
-                        {n.linkAction === 'ADMIN_DEPARTMENT_REQUESTS' ? 'Review department request' : n.linkAction === 'ADMIN_USERS' ? 'Open user accounts' : 'Review approval requests'} →
-                      </span>
-                    )}
-                    {n.recipientDepartment && (
-                      <span className="mt-1.5 inline-block text-[11px] text-slate-400">To: {departmentLabel(n.recipientDepartment)}</span>
-                    )}
-                  </div>
-                  <span className="whitespace-nowrap text-[11px] text-slate-400">{n.timestamp}</span>
-                </button>
-                {n.persisted && n.relatedRecordId && onAdminAction && (
-                  ((n.relatedRecordType === 'account_request' || n.relatedRecordType === 'department_change_request') ||
-                    (n.relatedRecordType === 'user' && n.title === 'Password reset requested')) && (
-                    <div className="ml-5 mt-2 flex flex-wrap gap-2" aria-label="Request actions">
+        </div>
+      ) : (
+        groups.map((group) => (
+          <NotificationGroup key={group.label} label={group.label}>
+            {group.items.map((n) => {
+              const isAdminRecord =
+                n.persisted && n.relatedRecordId && onAdminAction &&
+                (n.relatedRecordType === 'account_request' || n.relatedRecordType === 'department_change_request' ||
+                  (n.relatedRecordType === 'user' && n.title === 'Password reset requested'));
+              return (
+                <NotificationRow key={n.id} n={n} onSelect={() => onSelect(n)}>
+                  {isAdminRecord && (
+                    <div className="flex flex-wrap gap-2" aria-label="Request actions">
                       {n.relatedRecordType === 'user' ? (
                         <button
                           type="button"
@@ -823,13 +732,13 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({ notificati
                         </>
                       )}
                     </div>
-                  )
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </Panel>
+                  )}
+                </NotificationRow>
+              );
+            })}
+          </NotificationGroup>
+        ))
+      )}
     </DashboardPage>
   );
 };

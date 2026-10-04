@@ -27,7 +27,6 @@ import { OfficerVerificationModal } from './OfficerVerificationModal';
 import { SubmissionIntakeModal } from './SubmissionIntakeModal';
 import { FoodDrugRegisterPanel } from './FoodDrugRegisterPanel';
 import { WaterLaboratoryView } from './WaterLaboratoryView';
-import { WaterIntakeEdit } from './WaterIntakeEditModal';
 import { FoodDrugIntakeEdit } from './FoodDrugIntakeEditModal';
 import {
   Avatar,
@@ -68,10 +67,9 @@ interface LaboratoryWorkspaceProps {
   /** Water & Environment officers the Head can assign exhibits to. */
   waterOfficers?: Pick<User, 'id' | 'name'>[];
   waterIntakes?: WaterIntake[];
-  onApproveWaterIntake?: (intakeId: string) => void;
   onAssignWaterIntake?: (intakeId: string, officer: string) => void;
-  onCompleteWaterIntake?: (intakeId: string) => void;
-  onEditWaterIntake?: (intakeId: string, edit: WaterIntakeEdit) => Promise<boolean>;
+  onOpenWaterCaseFile?: (intake: WaterIntake) => void;
+  onEditWaterIntake?: (intake: WaterIntake) => void;
   onDeleteWaterIntake?: (intakeId: string) => void;
   /** Opens the department's intake (a full page for Food & Drugs and Water). */
   onOpenIntake?: () => void;
@@ -156,9 +154,8 @@ export const LaboratoryWorkspace: React.FC<LaboratoryWorkspaceProps> = ({
   onDeleteFoodDrugIntake,
   waterOfficers = [],
   waterIntakes = activeCase.waterIntakes ?? [],
-  onApproveWaterIntake,
   onAssignWaterIntake,
-  onCompleteWaterIntake,
+  onOpenWaterCaseFile,
   onEditWaterIntake,
   onDeleteWaterIntake,
   onOpenIntake,
@@ -196,9 +193,8 @@ export const LaboratoryWorkspace: React.FC<LaboratoryWorkspaceProps> = ({
         currentUser={{ id: currentUserId ?? '', name: currentUserName ?? '', role: currentUserRole ?? 'ANALYST' }}
         officers={waterOfficers}
         onOpenIntake={onOpenIntake}
-        onApprove={(id) => onApproveWaterIntake?.(id)}
         onAssign={(id, officer) => onAssignWaterIntake?.(id, officer)}
-        onComplete={(id) => onCompleteWaterIntake?.(id)}
+        onOpenCaseFile={onOpenWaterCaseFile}
         onEdit={onEditWaterIntake}
         onDelete={onDeleteWaterIntake}
       />

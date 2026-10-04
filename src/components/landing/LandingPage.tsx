@@ -99,7 +99,7 @@ const AUTH_COPY: Record<AuthMode, { title: string; subtitle: string; switchPromp
 };
 
 const FormError: React.FC<{ message: string }> = ({ message }) => (
-  <p role="alert" className="flex items-center gap-1.5 text-[12px] text-rose-600">
+  <p role="alert" className="flex items-center gap-1.5 text-[length:calc(12px*var(--lp-scale))] text-rose-600">
     <AlertCircle className="h-3.5 w-3.5 shrink-0" />
     {message}
   </p>
@@ -168,10 +168,10 @@ const GUILLOCHE_PATTERN =
   '%3C/svg%3E")';
 
 const inputClass =
-  'h-11 w-full rounded-[9px] border border-[#d8d8df] bg-white px-[14px] text-[16px] text-[#111] sm:h-9 sm:text-[13px] outline-none transition-colors placeholder:text-[#9b9ba5] focus:border-[#f26522] focus:shadow-[0_0_0_2px_rgba(242,101,34,0.15)]';
+  'h-11 w-full rounded-[9px] border border-[#d8d8df] bg-white px-[14px] text-[length:calc(16px*var(--lp-scale))] text-[#111] sm:h-9 sm:text-[length:calc(13px*var(--lp-scale))] outline-none transition-colors placeholder:text-[#9b9ba5] focus:border-[#f26522] focus:shadow-[0_0_0_2px_rgba(242,101,34,0.15)]';
 
 const primaryBtnClass =
-  'h-11 w-full cursor-pointer rounded-[8px] bg-[#f26522] text-[15px] font-bold sm:h-[38px] sm:text-[13px] text-white transition-colors hover:bg-[#d9541a] active:scale-[0.99]';
+  'h-11 w-full cursor-pointer rounded-[8px] bg-[#f26522] text-[length:calc(15px*var(--lp-scale))] font-bold sm:h-[38px] sm:text-[length:calc(13px*var(--lp-scale))] text-white transition-colors hover:bg-[#d9541a] active:scale-[0.99]';
 
 interface LandingPageProps {
   onLogin: (user: User) => void;
@@ -240,7 +240,7 @@ const TermsDialog: React.FC<TermsDialogProps> = ({ open, onClose }) => {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-xl font-bold tracking-[-0.02em] text-[#101014]">Terms & Privacy</h3>
-                <p className="mt-1 text-[13px] text-[#8b8b98]">What you're agreeing to when you sign in to GC-ILCMS</p>
+                <p className="mt-1 text-[length:calc(13px*var(--lp-scale))] text-[#8b8b98]">What you're agreeing to when you sign in to GC-ILCMS</p>
               </div>
               <button
                 type="button"
@@ -255,21 +255,21 @@ const TermsDialog: React.FC<TermsDialogProps> = ({ open, onClose }) => {
               </button>
             </div>
 
-            <div className="mt-5 max-h-[45vh] space-y-4 overflow-y-auto pr-1">
+            <div className="mt-5 max-h-[50vh] space-y-4 overflow-y-auto pr-1">
               {sections.map((section) => (
                 <div key={section.title}>
-                  <h4 className="text-[13px] font-bold text-[#111]">{section.title}</h4>
-                  <p className="mt-1 text-[12px] leading-relaxed text-[#555562]">{section.body}</p>
+                  <h4 className="text-[length:calc(13px*var(--lp-scale))] font-bold text-[#111]">{section.title}</h4>
+                  <p className="mt-1 text-[length:calc(12px*var(--lp-scale))] leading-relaxed text-[#555562]">{section.body}</p>
                 </div>
               ))}
             </div>
 
             <div className="mt-6 flex items-center justify-between gap-3 border-t border-[#eeeeef] pt-4">
-              <p className="text-[10px] font-mono uppercase tracking-[0.16em] text-slate-400">Govt. Chemist · GC-ILCMS</p>
+              <p className="text-[length:calc(10px*var(--lp-scale))] font-mono uppercase tracking-[0.16em] text-slate-400">Govt. Chemist · GC-ILCMS</p>
               <button
                 type="button"
                 onClick={onClose}
-                className="h-[38px] cursor-pointer rounded-[8px] bg-[#f26522] px-5 text-[13px] font-bold text-white transition-colors hover:bg-[#d9541a]"
+                className="h-[38px] cursor-pointer rounded-[8px] bg-[#f26522] px-5 text-[length:calc(13px*var(--lp-scale))] font-bold text-white transition-colors hover:bg-[#d9541a]"
               >
                 I Understand
               </button>
@@ -281,8 +281,86 @@ const TermsDialog: React.FC<TermsDialogProps> = ({ open, onClose }) => {
   );
 };
 
+/**
+ * Text scale for the landing page. From 110% browser zoom upwards the viewport (in CSS pixels) shrinks,
+ * and the narrower it gets, the smaller the fixed-size text is made: the page stays readable and complete
+ * at 150%, 200% or 300% zoom instead of growing out of its boxes. Below 110% it is 0.9 (the design size);
+ * phones and tablets (touch screens) keep the sizes that were set for them, which also keeps form
+ * fields at the 16px that stops iOS from zooming in.
+ */
+const MIN_TEXT_SCALE = 0.5;
+const DESIGN_TEXT_SCALE = 0.9;
+const DESIGN_WIDTH = 1440;
+const DESIGN_HEIGHT = 900;
+
+/** Phones and tablets: touch is the main input. Desktop browsers (zoomed or not) use a mouse. */
+const isTouchScreen = () => typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
+
+/** Sizes only start shrinking once the browser is zoomed to this level or more. */
+const ZOOM_THRESHOLD = 1.1;
+/** From this zoom the sign-in card moves to the centre and the overview drops below it. */
+const CENTRED_ZOOM = 1.25;
+/** The overview text is a little smaller than the rest of the page. */
+const OVERVIEW_TEXT_FACTOR = 0.88;
+/**
+ * From 110% (until the 125% centred layout) the overview text is held close to how big it looks at
+ * 100%: its size is divided by the zoom, then this share of the 100% look is kept (1 = exactly the same).
+ */
+const ZOOMED_OVERVIEW_LOOK = 0.97;
+
+/**
+ * The browser's zoom level, e.g. 1 at 100% and 1.5 at 150%. The window's outer width is not affected by
+ * zoom but the page's inner width (in CSS pixels) is, so their ratio is the zoom. Rounded to 5% steps so
+ * window borders don't register as zoom.
+ */
+const browserZoom = () => {
+  const { outerWidth, innerWidth } = window;
+  if (!outerWidth || !innerWidth) return 1;
+  return Math.round((outerWidth / innerWidth) * 20) / 20;
+};
+
+const readTextScale = () => {
+  if (typeof window === 'undefined') return DESIGN_TEXT_SCALE;
+  if (isTouchScreen()) return 1;
+  // At 100% zoom the page keeps its normal design size, whatever the window size.
+  if (browserZoom() < ZOOM_THRESHOLD) return DESIGN_TEXT_SCALE;
+  const ratio = Math.min(1, window.innerWidth / DESIGN_WIDTH, window.innerHeight / DESIGN_HEIGHT);
+  return Math.max(MIN_TEXT_SCALE, Number((DESIGN_TEXT_SCALE * ratio).toFixed(3)));
+};
+
+/** Desktop browsers zoomed to 125% or more (or windows narrower than a laptop) centre the sign-in card. */
+const readCentred = () =>
+  typeof window !== 'undefined' && !isTouchScreen() && (browserZoom() >= CENTRED_ZOOM || window.innerWidth < 1024);
+
+const useLandingLayout = () => {
+  const [scale, setScale] = useState(readTextScale);
+  const [centred, setCentred] = useState(readCentred);
+  const [zoom, setZoom] = useState(() => (typeof window === 'undefined' ? 1 : browserZoom()));
+  useEffect(() => {
+    const update = () => {
+      setScale(readTextScale());
+      setCentred(readCentred());
+      setZoom(browserZoom());
+    };
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+  // Spacing, field heights and icons are in rem, so the root font size carries the same scale while
+  // this page is open; the rest of the app gets its normal 16px back when the page closes.
+  useEffect(() => {
+    const root = document.documentElement;
+    const previous = root.style.fontSize;
+    root.style.fontSize = `${(16 * scale).toFixed(2)}px`;
+    return () => {
+      root.style.fontSize = previous;
+    };
+  }, [scale]);
+  return { scale, centred, zoom };
+};
+
 export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
   const shouldReduceMotion = useReducedMotion();
+  const { scale: textScale, centred, zoom } = useLandingLayout();
   // Read the token once at mount. Re-deriving it on every render races the
   // effect below that strips the query string from the address bar, which drops
   // the token mid-flow and leaves the form unusable.
@@ -332,7 +410,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
   const [activationSecondsLeft, setActivationSecondsLeft] = useState(() =>
     invitationExpiresAt ? Math.max(0, Math.ceil((invitationExpiresAt - Date.now()) / 1000)) : 0);
   // Mobile only: the carousel plays first, then the sign-in modal opens.
-  const [showMobileAuth, setShowMobileAuth] = useState(false);
+  // A zoomed desktop window shows the sign-in card straight away, centred; phones play the intro first.
+  const [showMobileAuth, setShowMobileAuth] = useState(() => !isTouchScreen());
   const [introSecondsLeft, setIntroSecondsLeft] = useState(INTRO_SECONDS);
 
   useEffect(() => {
@@ -505,56 +584,18 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
     show: { opacity: 1, y: 0, transition: { duration: 0.5, ease: EASE_OUT } },
   };
 
-  return (
-    <div
-      className="relative isolate min-h-[100dvh] w-full lg:h-[100dvh] lg:overflow-hidden"
-      style={{ background: PANEL_BACKGROUND, colorScheme: 'light' }}
-    >
-      {/* National colours stripe */}
-      <div aria-hidden="true" className="absolute inset-x-0 top-0 z-20 flex h-1.5">
-        <span className="flex-1 bg-black" />
-        <span className="w-[3px] bg-white" />
-        <span className="flex-1 bg-[#bb0000]" />
-        <span className="w-[3px] bg-white" />
-        <span className="flex-1 bg-[#006600]" />
-      </div>
-
-      {/* Security-paper line pattern */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 -z-10"
-        style={{ backgroundImage: GUILLOCHE_PATTERN, backgroundSize: '120px 40px' }}
-      />
-      {/* Guilloché rosette */}
-      <svg
-        aria-hidden="true"
-        viewBox="-100 -100 200 200"
-        className="pointer-events-none absolute -bottom-40 -left-40 -z-10 h-[28rem] w-[28rem] text-white opacity-[0.07]"
-      >
-        {Array.from({ length: 36 }, (_, i) => (
-          <ellipse key={i} cx="0" cy="0" rx="96" ry="34" fill="none" stroke="currentColor" strokeWidth="0.5" transform={`rotate(${i * 5})`} />
-        ))}
-      </svg>
-
-      <div className="grid min-h-[100dvh] w-full grid-cols-1 lg:h-[100dvh] lg:grid-cols-2 lg:items-stretch">
-        {/* Institutional branding panel */}
-        <div className="relative flex min-h-[100dvh] flex-col justify-between text-white lg:h-[100dvh] lg:overflow-hidden">
-
-          <motion.div
-            variants={panelVariants}
-            initial="hidden"
-            animate="show"
-            className="relative z-10 flex min-h-[100dvh] flex-col justify-between px-4 py-5 sm:px-10 sm:py-7 lg:h-full xl:px-12"
-          >
+  // Page parts, laid out side by side normally, or (zoomed to 125%+) with the sign-in card centred
+  // and the overview below it.
+  const brandHeader = (
             <motion.div variants={itemVariants} className="flex flex-col items-center gap-2.5 text-center sm:flex-row sm:flex-wrap sm:items-start sm:justify-between sm:text-left">
                 <div className="flex items-center gap-3">
                   <LogoPlaceholder size="sm" variant="on-teal" id="gc-auth-brand" showText={false} />
                   <div className="text-white">
-                    <p className="text-[15px] font-bold leading-tight tracking-tight">Government Chemist</p>
-                    <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-white/80">GC-ILCMS</p>
+                    <p className="text-[length:calc(15px*var(--lp-scale))] font-bold leading-tight tracking-tight">Government Chemist</p>
+                    <p className="font-mono text-[length:calc(10px*var(--lp-scale))] uppercase tracking-[0.2em] text-white/80">GC-ILCMS</p>
                   </div>
                 </div>
-                <div className="inline-flex shrink-0 items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1.5 font-mono text-[9px] font-semibold uppercase tracking-[0.16em] text-white sm:text-[10px] sm:tracking-[0.2em]">
+                <div className="inline-flex shrink-0 items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1.5 font-mono text-[length:calc(9px*var(--lp-scale))] font-semibold uppercase tracking-[0.16em] text-white sm:text-[length:calc(10px*var(--lp-scale))] sm:tracking-[0.2em]">
                   <span className="relative flex h-1.5 w-1.5">
                     <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-300 animate-pulse-ring" />
                     <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-300" />
@@ -562,22 +603,25 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                   Secure staff access
                 </div>
               </motion.div>
+  );
 
+  const brandStory = (
+    <>
             {/* Centred story block: heading + lifecycle carousel */}
             <div className="flex min-h-0 flex-1 flex-col justify-center py-4 sm:py-8 [@media(min-width:1024px)_and_(max-height:820px)]:py-5">
-              <motion.div variants={itemVariants} className="mx-auto w-full max-w-2xl space-y-3 px-2 text-center sm:px-8 [@media(min-width:1024px)_and_(max-height:820px)]:space-y-2">
+              <motion.div variants={itemVariants} className="mx-auto w-full max-w-[calc(42rem*var(--lp-grow,1))] space-y-3 px-2 text-center sm:px-8 [@media(min-width:1024px)_and_(max-height:820px)]:space-y-2">
                 <h1
-                  className="mx-auto max-w-xl text-[clamp(1.8rem,1.45rem+2.4vw,3.2rem)] font-semibold leading-[1.08] tracking-[-0.01em] text-white"
+                  className="mx-auto max-w-[calc(36rem*var(--lp-grow,1))] text-[length:calc(clamp(1.8rem,1.45rem+2.4vw,3.2rem)*var(--lp-scale))] font-semibold leading-[1.08] tracking-[-0.01em] text-white"
                   style={{ fontFamily: SERIF_STACK }}
                 >
                   Government Chemist <span className="text-[#f26522]">LIMS</span>
                 </h1>
-                <p className="mx-auto max-w-md text-[14px] leading-relaxed text-white/85 sm:text-[15px]">
+                <p className="mx-auto max-w-[calc(28rem*var(--lp-grow,1))] text-[length:calc(14px*var(--lp-scale))] leading-relaxed text-white/85 sm:text-[length:calc(15px*var(--lp-scale))]">
                   Register cases, track exhibits and route work to laboratory units.
                 </p>
               </motion.div>
 
-              <motion.div variants={itemVariants} className="mx-auto mt-5 w-full max-w-lg [@media(min-width:1024px)_and_(max-height:820px)]:mt-4">
+              <motion.div variants={itemVariants} className="mx-auto mt-5 w-full max-w-[calc(32rem*var(--lp-grow,1))] [@media(min-width:1024px)_and_(max-height:820px)]:mt-4">
                 <div
                   role="region"
                   aria-roledescription="carousel"
@@ -594,7 +638,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                   className="relative overflow-hidden rounded-2xl border border-white/20 bg-white/[0.07] px-3.5 pb-4 pt-3.5 shadow-[0_24px_50px_-32px_rgba(2,6,23,0.7)] outline-none focus-visible:ring-2 focus-visible:ring-white/60 sm:px-6 sm:pb-5 sm:pt-4"
                 >
                   <div className="flex items-center justify-between gap-4">
-                    <span className="min-w-0 truncate font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-white/75 sm:text-[11px] sm:tracking-[0.18em]">
+                    <span className="min-w-0 truncate font-mono text-[length:calc(10px*var(--lp-scale))] font-bold uppercase tracking-[0.12em] text-white/75 sm:text-[length:calc(11px*var(--lp-scale))] sm:tracking-[0.18em]">
                       <span className="tabular-nums text-white">{String(activeStep + 1).padStart(2, '0')}</span>
                       {' / '}{String(LIFECYCLE_STEPS.length).padStart(2, '0')}
                       <span className="mx-2 text-white/40">·</span>
@@ -630,24 +674,24 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                       role="group"
                       aria-roledescription="slide"
                       aria-label={`${activeStep + 1} of ${LIFECYCLE_STEPS.length}: ${step.title}`}
-                      className="flex min-h-[132px] flex-col items-center justify-center py-4 text-center sm:min-h-[150px] sm:items-start sm:py-5 sm:text-left [@media(max-width:1023px)_and_(max-height:700px)]:min-h-[110px] [@media(max-width:1023px)_and_(max-height:700px)]:py-2.5 [@media(min-width:1024px)_and_(max-height:820px)]:min-h-[120px] [@media(min-width:1024px)_and_(max-height:820px)]:py-3"
+                      className="flex min-h-33 flex-col items-center justify-center py-4 text-center sm:min-h-37.5 sm:items-start sm:py-5 sm:text-left [@media(max-width:1023px)_and_(max-height:700px)]:min-h-27.5 [@media(max-width:1023px)_and_(max-height:700px)]:py-2.5 [@media(min-width:1024px)_and_(max-height:820px)]:min-h-30 [@media(min-width:1024px)_and_(max-height:820px)]:py-3"
                     >
                       <span className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/20 bg-white/10 text-white [&>svg]:h-5 [&>svg]:w-5">
                         {step.icon}
                       </span>
                       <h2
-                        className="mt-3 text-[18px] font-semibold leading-tight text-white sm:text-[20px]"
+                        className="mt-3 text-[length:calc(18px*var(--lp-scale))] font-semibold leading-tight text-white sm:text-[length:calc(20px*var(--lp-scale))]"
                         style={{ fontFamily: SERIF_STACK }}
                       >
                         {step.title}
                       </h2>
-                      <p className="mt-2 max-w-sm text-[13px] leading-relaxed text-white/80 max-sm:mx-auto">{step.body}</p>
+                      <p className="mt-2 max-w-[calc(24rem*var(--lp-grow,1))] text-[length:calc(13px*var(--lp-scale))] leading-relaxed text-white/80 max-sm:mx-auto">{step.body}</p>
                     </motion.div>
                   </AnimatePresence>
 
                   {/* Process stepper */}
                   <div className="relative border-t border-white/15 pt-3 sm:pt-4">
-                    <div aria-hidden="true" className="absolute left-[10%] right-[10%] top-[30px] h-px bg-white/25">
+                    <div aria-hidden="true" className="absolute left-[10%] right-[10%] top-6 h-px bg-white/25 sm:top-7.5">
                       <motion.div
                         className="h-full bg-white"
                         initial={false}
@@ -669,7 +713,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                             className="group flex cursor-pointer flex-col items-center gap-1.5 sm:gap-2"
                           >
                             <span
-                              className={`flex h-6 w-6 items-center justify-center rounded-full font-mono text-[10px] font-bold transition-colors sm:h-7 sm:w-7 sm:text-[11px] ${
+                              className={`flex h-6 w-6 items-center justify-center rounded-full font-mono text-[length:calc(10px*var(--lp-scale))] font-bold transition-colors sm:h-7 sm:w-7 sm:text-[length:calc(11px*var(--lp-scale))] ${
                                 done
                                   ? 'bg-white text-[#0b3a42]'
                                   : current
@@ -680,7 +724,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                               {done ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : index + 1}
                             </span>
                             <span
-                              className={`block font-mono text-[9px] uppercase tracking-[0.02em] transition-colors sm:text-[10px] sm:tracking-[0.1em] ${
+                              className={`block font-mono text-[length:calc(9px*var(--lp-scale))] uppercase tracking-[0.02em] transition-colors sm:text-[length:calc(10px*var(--lp-scale))] sm:tracking-[0.1em] ${
                                 current ? 'font-bold text-white' : 'text-white/70 group-hover:text-white'
                               }`}
                             >
@@ -705,7 +749,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                 </div>
               </motion.div>
             </div>
+    </>
+  );
 
+  const trustLine = (
             <motion.ul
               variants={itemVariants}
               aria-label="Accreditation and service standards"
@@ -714,29 +761,32 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
               {TRUST_LINE.map((item) => (
                 <li
                   key={item.label}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-white/25 bg-white/[0.06] px-2.5 py-1.5 text-[11px] font-medium text-white/90 sm:gap-2 sm:px-3.5 sm:text-[12px]"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-white/25 bg-white/[0.06] px-2.5 py-1.5 text-[length:calc(11px*var(--lp-scale))] font-medium text-white/90 sm:gap-2 sm:px-3.5 sm:text-[length:calc(12px*var(--lp-scale))]"
                 >
                   <span className="text-white">{item.icon}</span>
                   {item.label}
                 </li>
               ))}
             </motion.ul>
-          </motion.div>
-        </div>
+  );
 
-        {/* Form panel: floating card over the page background */}
-        <div className={`${showMobileAuth ? 'flex animate-fade-in' : 'hidden'} fixed inset-0 z-30 items-center justify-center overflow-y-auto bg-[#0b3a42]/45 p-4 backdrop-blur-md sm:p-6 lg:static lg:z-auto lg:block lg:bg-transparent lg:backdrop-blur-none lg:h-[100dvh] lg:py-6 lg:pl-0 lg:pr-6`}>
-        <div data-demo-accounts-panel className={`relative flex w-full max-w-[560px] max-h-[calc(100dvh-2rem)] flex-col ${authMode === 'signin' ? 'overflow-hidden' : 'overflow-y-auto'} rounded-3xl bg-slate-50 shadow-[0_20px_50px_-20px_rgba(2,6,23,0.5)] sm:max-h-[calc(100dvh-2.5rem)] lg:max-h-none lg:max-w-none lg:h-full lg:overflow-y-auto lg:shadow-none`}>
+  const formCard = (
+        <motion.div
+          layoutId="lp-form-card"
+          transition={{ layout: { duration: shouldReduceMotion ? 0 : 0.8, ease: EASE_OUT } }}
+          data-demo-accounts-panel
+          className={`relative flex w-full max-w-[560px] max-h-[calc(100dvh-2rem)] flex-col ${authMode === 'register' ? 'overflow-y-auto' : 'overflow-y-hidden'} rounded-3xl bg-slate-50 shadow-[0_20px_50px_-20px_rgba(2,6,23,0.5)] sm:max-h-[calc(100dvh-3rem)] ${centred ? '' : 'lg:max-h-none lg:max-w-none lg:h-full lg:shadow-none'}`}
+        >
           <div className="flex flex-wrap items-center justify-between gap-3 px-4 pt-5 sm:px-8 sm:pt-6">
             <button
               type="button"
               onClick={showMobileOverview}
-              className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-[8px] pr-2 text-[13px] font-semibold text-[#0d4a52] transition-colors hover:text-[#f26522] lg:hidden"
+              className={`${centred ? 'hidden' : 'inline-flex'} h-8 cursor-pointer items-center gap-1 rounded-[8px] pr-2 text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#0d4a52] transition-colors hover:text-[#f26522] lg:hidden`}
             >
               <ChevronLeft className="h-4 w-4" />
               Overview
             </button>
-            <p className="ml-auto text-[12px] text-[#6b6b78]">
+            <p className="ml-auto text-[length:calc(12px*var(--lp-scale))] text-[#6b6b78]">
               {copy.switchPrompt}{' '}
               <button
                 type="button"
@@ -761,12 +811,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                   animate={{ opacity: 1, y: 0 }}
                   exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: 4 }}
                   transition={{ duration: shouldReduceMotion ? 0 : 0.18, ease: EASE_OUT }}
-                  className="text-[22px] font-bold leading-tight tracking-[-0.03em] text-[#101014] sm:text-[26px]"
+                  className="text-[length:calc(22px*var(--lp-scale))] font-bold leading-tight tracking-[-0.03em] text-[#101014] sm:text-[length:calc(26px*var(--lp-scale))]"
                 >
                   {copy.title}
                 </motion.h2>
               </AnimatePresence>
-              <p className="mt-2 text-[13px] text-[#6b6b78]">{copy.subtitle}</p>
+              <p className="mt-2 text-[length:calc(13px*var(--lp-scale))] text-[#6b6b78]">{copy.subtitle}</p>
 
               <div className="relative mt-7">
                 <AnimatePresence mode="popLayout" initial={false}>
@@ -782,7 +832,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                       <div className="space-y-6">
                         <form onSubmit={handleSignIn} className="space-y-[18px]">
                           <div className="space-y-2">
-                            <label htmlFor="loginEmail" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">Work email</label>
+                            <label htmlFor="loginEmail" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Work email</label>
                             <input
                               id="loginEmail"
                               type="email"
@@ -796,7 +846,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                           </div>
 
                           <div className="space-y-2">
-                            <label htmlFor="signinPass" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">Password</label>
+                            <label htmlFor="signinPass" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Password</label>
                             <div className="relative">
                               <input
                                 id="signinPass"
@@ -829,7 +879,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                           <button
                             type="button"
                             onClick={() => { setForgotEmail(loginEmail); setAuthMode('forgot'); }}
-                            className="cursor-pointer text-[12px] font-semibold text-[#f26522] underline-offset-2 hover:underline"
+                            className="cursor-pointer text-[length:calc(12px*var(--lp-scale))] font-semibold text-[#f26522] underline-offset-2 hover:underline"
                           >
                             Forgot your password?
                           </button>
@@ -842,7 +892,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                       <div className="space-y-6">
                         <form onSubmit={handleForgotPassword} className="space-y-[18px]">
                           <div className="space-y-2">
-                            <label htmlFor="forgotEmail" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">Work email</label>
+                            <label htmlFor="forgotEmail" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Work email</label>
                             <input
                               id="forgotEmail"
                               type="email"
@@ -894,7 +944,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                             <button
                               type="button"
                               onClick={() => setAuthMode('signin')}
-                              className="mt-3 cursor-pointer text-[12px] font-semibold text-[#f26522] underline-offset-2 hover:underline"
+                              className="mt-3 cursor-pointer text-[length:calc(12px*var(--lp-scale))] font-semibold text-[#f26522] underline-offset-2 hover:underline"
                             >
                               Go to sign in
                             </button>
@@ -902,7 +952,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                         ) : (
                           <form onSubmit={handleResetPassword} className="space-y-[18px]">
                             <div className="space-y-2">
-                              <label htmlFor="resetPassword" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">New password</label>
+                              <label htmlFor="resetPassword" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">New password</label>
                               <div className="relative">
                                 <input
                                   id="resetPassword"
@@ -924,11 +974,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                                   {showResetPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                                 </button>
                               </div>
-                              <p className="text-[11px] text-slate-500">Use at least 12 characters.</p>
+                              <p className="text-[length:calc(11px*var(--lp-scale))] text-slate-500">Use at least 12 characters.</p>
                             </div>
 
                             <div className="space-y-2">
-                              <label htmlFor="resetConfirm" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">Confirm new password</label>
+                              <label htmlFor="resetConfirm" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Confirm new password</label>
                               <input
                                 id="resetConfirm"
                                 type={showResetPass ? 'text' : 'password'}
@@ -963,10 +1013,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                           </div>
                         ) : (
                           <>
-                            <p className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-slate-400">Your details</p>
+                            <p className="text-[length:calc(10px*var(--lp-scale))] font-mono font-bold uppercase tracking-[0.2em] text-slate-400">Your details</p>
 
                             <div className="space-y-2">
-                              <label htmlFor="regFullName" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">Full name</label>
+                              <label htmlFor="regFullName" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Full name</label>
                               <input
                                 id="regFullName"
                                 type="text"
@@ -981,7 +1031,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
 
                             <div className="grid grid-cols-1 gap-[18px] md:grid-cols-[1fr_140px]">
                               <div className="space-y-2">
-                                <label htmlFor="regEmail" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">Work email</label>
+                                <label htmlFor="regEmail" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Work email</label>
                                 <input
                                   id="regEmail"
                                   type="email"
@@ -995,10 +1045,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                               </div>
                               </div>
 
-                            <p className="pt-2 text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-slate-400">Your role</p>
+                            <p className="pt-2 text-[length:calc(10px*var(--lp-scale))] font-mono font-bold uppercase tracking-[0.2em] text-slate-400">Your role</p>
 
                             <div className="space-y-2">
-                              <label htmlFor="regRole" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">Role</label>
+                              <label htmlFor="regRole" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Role</label>
                               <Select<UserRole>
                                 id="regRole"
                                 value={regRole}
@@ -1009,14 +1059,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                                 buttonClassName={`${inputClass} !py-0 !pl-[14px]`}
                                 options={SELF_REGISTER_ROLES.map((role) => ({ value: role, label: role.replace(/_/g, ' ') }))}
                               />
-                              <p className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                              <p className="flex items-center gap-1.5 text-[length:calc(11px*var(--lp-scale))] text-slate-500">
                                 {roleTierIcon[getRoleTier(regRole)]}
                                 {roleTierLabel[getRoleTier(regRole)]}
                               </p>
                             </div>
 
                             <div className="space-y-2">
-                              <label htmlFor="regDept" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">Department</label>
+                              <label htmlFor="regDept" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Department</label>
                               <Select<LaboratoryDepartment>
                                 id="regDept"
                                 value={regDepartment}
@@ -1024,7 +1074,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                                 buttonClassName={`${inputClass} !py-0 !pl-[14px]`}
                                 options={departmentsForRole(regRole).map((dept) => ({ value: dept, label: departmentLabels[dept] }))}
                               />
-                              <p className="text-[11px] text-slate-500">
+                              <p className="text-[length:calc(11px*var(--lp-scale))] text-slate-500">
                                 {departmentsForRole(regRole).length === 1
                                   ? 'This role is institution-wide and is not attached to a laboratory.'
                                   : 'Select the laboratory division you work in.'}
@@ -1035,7 +1085,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
 
                             <button type="submit" disabled={submitting} className={`${primaryBtnClass} disabled:opacity-60`}>{submitting ? 'Submitting…' : 'Request account approval'}</button>
 
-                            <p className="text-center text-[11px] leading-relaxed text-slate-500">
+                            <p className="text-center text-[length:calc(11px*var(--lp-scale))] leading-relaxed text-slate-500">
                               By submitting a request you agree to the{' '}
                               <button type="button" onClick={() => setShowTerms(true)} className="cursor-pointer text-[#111] underline">Terms &amp; Privacy</button>.
                             </p>
@@ -1057,7 +1107,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                       ) : (
                         <form onSubmit={handleActivate} className="space-y-[18px]">
                           <div className="space-y-2">
-                            <label htmlFor="activatePassword" className="block text-[13px] font-semibold text-[#111] sm:text-[12px]">Create password</label>
+                            <label htmlFor="activatePassword" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Create password</label>
                             <input
                               id="activatePassword"
                               type="password"
@@ -1093,7 +1143,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
             </div>
           </div>
 
-          <div className="relative z-10 flex flex-wrap items-center justify-between gap-2 border-t border-[#eeeef1] px-4 py-4 text-[11px] text-slate-500 sm:px-8">
+          <div className="relative z-10 flex flex-wrap items-center justify-between gap-2 border-t border-[#eeeef1] px-4 py-4 text-[length:calc(11px*var(--lp-scale))] text-slate-500 sm:px-8">
             <div className="flex items-center gap-3">
               <button type="button" onClick={() => setShowTerms(true)} className="cursor-pointer hover:text-[#111]">Terms</button>
               <button type="button" onClick={() => setShowTerms(true)} className="cursor-pointer hover:text-[#111]">Privacy</button>
@@ -1101,9 +1151,91 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
             </div>
             <span>© {new Date().getFullYear()} Government Chemist</span>
           </div>
+        </motion.div>
+  );
+
+  // The overview text sits a little smaller than the form. From 110% zoom (side-by-side layout) it is
+  // sized so it looks almost the same as at 100%, instead of shrinking with the window.
+  const overviewAt100 = DESIGN_TEXT_SCALE * OVERVIEW_TEXT_FACTOR;
+  const overviewCss = !centred && zoom >= ZOOM_THRESHOLD
+    ? (overviewAt100 / zoom) * ZOOMED_OVERVIEW_LOOK
+    : textScale * OVERVIEW_TEXT_FACTOR;
+  const overviewScale = {
+    ['--lp-scale' as string]: Number(overviewCss.toFixed(3)),
+    // The overview's widths grow by the same amount as its text, so its lines break as they do at 100%.
+    ['--lp-grow' as string]: Number((overviewCss / (textScale * OVERVIEW_TEXT_FACTOR)).toFixed(3)),
+    // Paddings, icons, step circles and gaps grow with the text too, so the carousel keeps its 100% shape.
+    ['--spacing' as string]: 'calc(0.25rem * var(--lp-grow))',
+  };
+
+  return (
+    <div
+      className={`relative isolate h-[100dvh] w-full ${centred ? 'overflow-y-auto overflow-x-hidden' : 'overflow-hidden'}`}
+      style={{ background: PANEL_BACKGROUND, colorScheme: 'light', ['--lp-scale' as string]: textScale }}
+    >
+      {/* National colours stripe */}
+      <div aria-hidden="true" className="absolute inset-x-0 top-0 z-20 flex h-1.5">
+        <span className="flex-1 bg-black" />
+        <span className="w-[3px] bg-white" />
+        <span className="flex-1 bg-[#bb0000]" />
+        <span className="w-[3px] bg-white" />
+        <span className="flex-1 bg-[#006600]" />
+      </div>
+
+      {/* Security-paper line pattern */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 -z-10"
+        style={{ backgroundImage: GUILLOCHE_PATTERN, backgroundSize: '120px 40px' }}
+      />
+      {/* Guilloché rosette */}
+      <svg
+        aria-hidden="true"
+        viewBox="-100 -100 200 200"
+        className="pointer-events-none absolute -bottom-40 -left-40 -z-10 h-[28rem] w-[28rem] text-white opacity-[0.07]"
+      >
+        {Array.from({ length: 36 }, (_, i) => (
+          <ellipse key={i} cx="0" cy="0" rx="96" ry="34" fill="none" stroke="currentColor" strokeWidth="0.5" transform={`rotate(${i * 5})`} />
+        ))}
+      </svg>
+
+      {centred ? (
+        // Zoomed in: the sign-in card sits in the middle of the screen; the overview follows below it.
+        <motion.div variants={panelVariants} initial="hidden" animate="show" className="relative z-10 flex flex-col text-white">
+          <div className="px-4 pt-5 sm:px-10 sm:pt-7" style={overviewScale}>{brandHeader}</div>
+          <section aria-label="Sign in" className="flex min-h-[calc(100dvh-6rem)] items-center justify-center px-4 py-6 text-left text-[#111] sm:px-6">
+            {formCard}
+          </section>
+          <section aria-label="About GC-ILCMS" className="px-4 pb-10 pt-4 sm:px-10" style={overviewScale}>
+            {brandStory}
+            <div className="mt-6">{trustLine}</div>
+          </section>
+        </motion.div>
+      ) : (
+      <div className="grid min-h-[100dvh] w-full grid-cols-1 lg:grid-cols-2 lg:items-stretch">
+        {/* Institutional branding panel */}
+        <div className="relative flex min-h-[100dvh] flex-col justify-between text-white" style={overviewScale}>
+
+          <motion.div
+            variants={panelVariants}
+            initial="hidden"
+            animate="show"
+            className="relative z-10 flex min-h-[100dvh] flex-col justify-between px-4 py-5 sm:px-10 sm:py-7 xl:px-12"
+          >
+            {brandHeader}
+
+            {brandStory}
+
+            {trustLine}
+          </motion.div>
         </div>
+
+        {/* Form panel: floating card over the page background */}
+        <div className={`${showMobileAuth ? 'flex animate-fade-in' : 'hidden'} fixed inset-0 z-30 items-center justify-center overflow-hidden bg-[#0b3a42]/45 p-4 backdrop-blur-md sm:p-6 lg:static lg:z-auto lg:block lg:bg-transparent lg:backdrop-blur-none lg:h-[100dvh] lg:py-6 lg:pl-0 lg:pr-6`}>
+          {formCard}
         </div>
       </div>
+      )}
 
       <TermsDialog open={showTerms} onClose={() => setShowTerms(false)} />
     </div>

@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { ForensicCase, DraftReport } from '../../types';
 import { LogoPlaceholder } from '../common/LogoPlaceholder';
+import { Portal } from '../common/Portal';
 
 interface CertificateExportModalProps {
   isOpen: boolean;
@@ -34,6 +35,7 @@ export const CertificateExportModal: React.FC<CertificateExportModalProps> = ({
   };
 
   return (
+    <Portal>
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md overflow-y-auto animate-fade-in"
       onClick={onClose}
@@ -201,5 +203,6 @@ export const CertificateExportModal: React.FC<CertificateExportModalProps> = ({
         </div>
       </div>
     </div>
+    </Portal>
   );
 };

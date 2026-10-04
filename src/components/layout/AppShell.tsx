@@ -34,7 +34,15 @@ import {
 } from '../../types';
 import { laboratoryLabel } from '../../data/laboratories';
 import { departmentQualifier } from '../../lib/departments';
-import { APP_NAV_GROUPS, NavItem, SETTINGS_NAV_ITEM, canSeeNavItem } from './appNav';
+import {
+  APP_NAV_GROUPS,
+  NavItem,
+  SETTINGS_NAV_ITEM,
+  SUPER_ADMIN_NAV_GROUPS,
+  SUPER_ADMIN_NAV_PREFIX,
+  SuperAdminTab,
+  canSeeNavItem,
+} from './appNav';
 
 /** 'HEAD_OF_DEPARTMENT' → 'Head of department' */
 const humaniseRole = (role: string) => {
@@ -57,6 +65,12 @@ interface AppShellProps {
   onOpenIntakeModal: () => void;
   onOpenCaseFile: (caseId: string) => void;
   onOpenNotifications: () => void;
+  /** Exhibits assigned to the signed-in officer that are still under analysis. */
+  myExhibitsCount?: number;
+  /** Which Super Admin console section is open; drives the admin sidebar highlight. */
+  superAdminTab?: SuperAdminTab;
+  /** Pending counts shown as badges on the admin sidebar sections. */
+  superAdminCounts?: Partial<Record<SuperAdminTab, number>>;
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
   mobileNavOpen: boolean;
@@ -79,6 +93,9 @@ export const AppShell: React.FC<AppShellProps> = ({
   onOpenIntakeModal,
   onOpenCaseFile,
   onOpenNotifications,
+  myExhibitsCount = 0,
+  superAdminTab = 'requests',
+  superAdminCounts = {},
   sidebarCollapsed,
   onToggleSidebar,
   mobileNavOpen,
@@ -89,7 +106,16 @@ export const AppShell: React.FC<AppShellProps> = ({
   // Command Center temporarily disabled.
   // const [rightSidebarCollapsed, setRightSidebarCollapsed] = React.useState(true);
 
-  const navGroups = APP_NAV_GROUPS;
+  const isSuperAdmin = currentUser.role === 'SUPER_ADMIN';
+  const navGroups = isSuperAdmin ? SUPER_ADMIN_NAV_GROUPS : APP_NAV_GROUPS;
+  // Super Admin groups fold away so the long operations list stays tidy.
+  const [foldedGroups, setFoldedGroups] = React.useState<Set<string>>(new Set());
+  const toggleGroup = (title: string) =>
+    setFoldedGroups((previous) => {
+      const next = new Set(previous);
+      if (!next.delete(title)) next.add(title);
+      return next;
+    });
 
   const navLinkClass = (isActive: boolean, collapsed: boolean) =>
     `group flex w-full cursor-pointer items-center rounded-lg text-left text-[13px] transition-colors ${
@@ -135,16 +161,29 @@ export const AppShell: React.FC<AppShellProps> = ({
   const renderSidebar = (mobile: boolean, onToggle: () => void) => {
     const collapsed = mobile ? false : sidebarCollapsed;
     const labQualifier = departmentQualifier(currentUser.department);
-    const workspace = labQualifier ? laboratoryLabel(labQualifier) : 'Government Chemist';
+    const workspace = isSuperAdmin
+      ? 'System Administration'
+      : labQualifier ? laboratoryLabel(labQualifier) : 'Government Chemist';
     const roleLabel = humaniseRole(currentUser.role);
 
     const visible = (item: NavItem) => canSeeNavItem(currentUser, item);
 
-    const badgeFor = (id: string) => (id === 'notifications' ? unreadNotificationsCount : 0);
+    const badgeFor = (id: string) => {
+      if (id.startsWith(SUPER_ADMIN_NAV_PREFIX)) {
+        return superAdminCounts[id.slice(SUPER_ADMIN_NAV_PREFIX.length) as SuperAdminTab] ?? 0;
+      }
+      if (id === 'notifications') return unreadNotificationsCount;
+      // How many exhibits this officer still has in progress, so the queue is
+      // visible from the sidebar without opening the page.
+      if (id === 'laboratory') return myExhibitsCount;
+      return 0;
+    };
 
     const renderItem = (item: NavItem) => {
       const Icon = item.icon;
-      const isActive = activeView === item.id;
+      const isActive = item.id.startsWith(SUPER_ADMIN_NAV_PREFIX)
+        ? activeView === 'super-admin' && item.id === `${SUPER_ADMIN_NAV_PREFIX}${superAdminTab === 'requests' ? 'users' : superAdminTab}`
+        : activeView === item.id;
       const badge = badgeFor(item.id);
       return (
         <li key={item.id}>
@@ -190,7 +229,7 @@ export const AppShell: React.FC<AppShellProps> = ({
             title={collapsed ? `${workspace} · ${roleLabel}` : undefined}
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-[13px] font-bold text-slate-950 shadow-sm"
           >
-            {(currentUser.department ?? 'GC').charAt(0)}
+            {isSuperAdmin ? <ShieldCheck className="h-4 w-4" /> : (currentUser.department ?? 'GC').charAt(0)}
           </div>
           {!collapsed && (
             <div className="min-w-0 flex-1">
@@ -225,9 +264,23 @@ export const AppShell: React.FC<AppShellProps> = ({
                 {collapsed ? (
                   <div className="mx-auto mb-2 h-px w-6 bg-slate-200 first:hidden dark:bg-slate-800" />
                 ) : (
-                  <div className="px-2.5 pb-1.5 text-[11px] font-medium text-slate-400 dark:text-slate-500">{group.title}</div>
+                  isSuperAdmin ? (
+                    <button
+                      type="button"
+                      onClick={() => toggleGroup(group.title)}
+                      aria-expanded={!foldedGroups.has(group.title)}
+                      className="flex w-full items-center justify-between px-2.5 pb-1.5 text-[11px] font-medium text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300"
+                    >
+                      {group.title}
+                      <ChevronRight className={`h-3 w-3 transition-transform ${foldedGroups.has(group.title) ? '' : 'rotate-90'}`} />
+                    </button>
+                  ) : (
+                    <div className="px-2.5 pb-1.5 text-[11px] font-medium text-slate-400 dark:text-slate-500">{group.title}</div>
+                  )
                 )}
-                <ul className="space-y-0.5">{items.map(renderItem)}</ul>
+                {(collapsed || !isSuperAdmin || !foldedGroups.has(group.title)) && (
+                  <ul className="space-y-0.5">{items.map(renderItem)}</ul>
+                )}
               </div>
             );
           })}

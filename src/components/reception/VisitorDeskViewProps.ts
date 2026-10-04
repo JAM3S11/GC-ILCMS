@@ -23,6 +23,8 @@ export interface VisitorDeskViewProps {
   onRevealNationalId: (visitorId: string) => Promise<string | null>;
   onProceedToLab: (visitor: OfficerVisitor) => void;
   onCheckOutVisitor: (visitorId: string) => Promise<void>;
+  /** Receptionist only: removes a visitor record (e.g. registered by mistake). */
+  onDeleteVisitor?: (visitor: OfficerVisitor) => Promise<void>;
   isLoading: boolean;
   hasMoreVisitors: boolean;
   isLoadingMoreVisitors: boolean;

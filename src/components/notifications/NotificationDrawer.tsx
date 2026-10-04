@@ -1,8 +1,16 @@
 import React, { useEffect, useLayoutEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { AlertTriangle, Bell, BellOff, Check, CheckCheck, CheckCircle2, Info, Siren, X } from 'lucide-react';
+import { Bell, BellOff, Check, CheckCheck, X } from 'lucide-react';
 import { AppNotification } from '../../types';
-import { departmentLabel } from '../../lib/departments';
+import {
+  NotificationFilter,
+  NotificationGroup,
+  NotificationRow,
+  NotificationTabs,
+  filterNotifications,
+  groupByDay,
+  needsAttention,
+} from './NotificationFeed';
 
 /**
  * Notification centre: a popover anchored under the header bell (full width
@@ -22,14 +30,7 @@ interface NotificationDrawerProps {
   onDismiss?: (id: string) => void;
 }
 
-const TYPE_STYLE: Record<AppNotification['type'], { icon: React.ComponentType<{ className?: string }>; cls: string; label: string }> = {
-  urgent: { icon: Siren, cls: 'bg-rose-500/10 text-rose-600 dark:text-rose-400', label: 'Urgent' },
-  warning: { icon: AlertTriangle, cls: 'bg-amber-500/10 text-amber-600 dark:text-amber-400', label: 'Action needed' },
-  info: { icon: Info, cls: 'bg-sky-500/10 text-sky-600 dark:text-sky-400', label: 'Update' },
-  success: { icon: CheckCircle2, cls: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400', label: 'Completed' },
-};
-
-type Filter = 'all' | 'unread';
+type Filter = NotificationFilter;
 
 export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
   isOpen,
@@ -65,11 +66,7 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
     return () => window.removeEventListener('keydown', onKey);
   }, [isOpen, onClose]);
 
-  const visible = filter === 'unread' ? notifications.filter((n) => !n.read) : notifications;
-  const groups = [
-    { title: 'New', items: visible.filter((n) => !n.read) },
-    { title: 'Earlier', items: visible.filter((n) => n.read) },
-  ].filter((g) => g.items.length > 0);
+  const groups = groupByDay(filterNotifications(notifications, filter));
 
   return (
     <AnimatePresence>
@@ -116,30 +113,12 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
             </div>
 
             {/* Filters */}
-            <div role="tablist" aria-label="Filter notifications" className="flex gap-4 border-b border-slate-200 px-4 dark:border-slate-800">
-              {(['all', 'unread'] as Filter[]).map((f) => {
-                const active = filter === f;
-                const count = f === 'all' ? notifications.length : unread;
-                return (
-                  <button
-                    key={f}
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => setFilter(f)}
-                    className={`-mb-px flex items-center gap-1.5 border-b-2 pb-2 pt-1 text-xs font-medium transition-colors ${
-                      active
-                        ? 'border-amber-500 text-slate-900 dark:text-white'
-                        : 'border-transparent text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200'
-                    }`}
-                  >
-                    {f === 'all' ? 'All' : 'Unread'}
-                    <span className="rounded-full bg-slate-100 px-1.5 text-[10px] tabular-nums text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                      {count}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
+            <NotificationTabs
+              compact
+              value={filter}
+              onChange={setFilter}
+              counts={{ all: notifications.length, unread, alerts: notifications.filter(needsAttention).length }}
+            />
 
             {/* List */}
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
@@ -159,22 +138,18 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
                 </div>
               ) : (
                 groups.map((g) => (
-                  <section key={g.title}>
-                    <h3 className="sticky top-0 z-10 bg-white/95 px-4 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wide text-slate-400 backdrop-blur dark:bg-slate-900/95">
-                      {g.title}
-                    </h3>
-                    <ul>
-                      {g.items.map((n) => (
-                        <NotificationRow
-                          key={n.id}
-                          n={n}
-                          onSelect={() => onSelectNotification?.(n)}
-                          onToggleRead={onToggleRead && (() => onToggleRead(n.id))}
-                          onDismiss={onDismiss && (() => onDismiss(n.id))}
-                        />
-                      ))}
-                    </ul>
-                  </section>
+                  <NotificationGroup key={g.label} label={g.label} compact>
+                    {g.items.map((n) => (
+                      <NotificationRow
+                        key={n.id}
+                        n={n}
+                        compact
+                        onSelect={() => onSelectNotification?.(n)}
+                        onToggleRead={onToggleRead && (() => onToggleRead(n.id))}
+                        onDismiss={onDismiss && (() => onDismiss(n.id))}
+                      />
+                    ))}
+                  </NotificationGroup>
                 ))
               )}
             </div>
@@ -190,83 +165,3 @@ export const NotificationDrawer: React.FC<NotificationDrawerProps> = ({
     </AnimatePresence>
   );
 };
-
-const NotificationRow: React.FC<{
-  n: AppNotification;
-  onSelect: () => void;
-  onToggleRead?: () => void;
-  onDismiss?: () => void;
-}> = ({ n, onSelect, onToggleRead, onDismiss }) => {
-  const style = TYPE_STYLE[n.type];
-  const Icon = style.icon;
-  return (
-    <li className="group relative">
-      <button
-        onClick={onSelect}
-        className={`flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/50 ${
-          n.read ? '' : 'bg-amber-500/[0.04]'
-        }`}
-      >
-        <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${style.cls}`}>
-          <Icon className="h-4 w-4" />
-        </span>
-        <span className="min-w-0 flex-1 pr-6 [@media(hover:none)]:pr-16">
-          <span className={`block text-[13px] leading-snug ${n.read ? 'text-slate-700 dark:text-slate-300' : 'font-semibold text-slate-900 dark:text-white'}`}>
-            {n.title}
-          </span>
-          <span className="mt-0.5 line-clamp-2 block text-xs leading-relaxed text-slate-500 dark:text-slate-400">{n.message}</span>
-          {n.linkAction?.startsWith('ADMIN_') && (
-            <span className="mt-1 inline-block text-[11px] font-semibold text-amber-700 dark:text-amber-400">
-              {n.linkAction === 'ADMIN_DEPARTMENT_REQUESTS' ? 'Review department request' : n.linkAction === 'ADMIN_USERS' ? 'Open user accounts' : 'Review approval requests'} →
-            </span>
-          )}
-          <span className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[11px] text-slate-400">
-            <span>{n.timestamp}</span>
-            {n.recipientDepartment && (
-              <>
-                <span aria-hidden="true">·</span>
-                <span>{departmentLabel(n.recipientDepartment)}</span>
-              </>
-            )}
-            <span aria-hidden="true">·</span>
-            <span>{style.label}</span>
-          </span>
-        </span>
-      </button>
-
-      {/* Unread dot, swapped for actions on hover / focus */}
-      {!n.read && (
-        <span
-          aria-label="Unread"
-          className="pointer-events-none absolute right-4 top-4 h-2 w-2 rounded-full bg-amber-500 transition-opacity group-focus-within:opacity-0 group-hover:opacity-0 [@media(hover:none)]:hidden"
-        />
-      )}
-      <div className="absolute right-2 top-2 flex gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100">
-        {onToggleRead && (
-          <IconAction label={n.read ? 'Mark as unread' : 'Mark as read'} onClick={onToggleRead}>
-            {n.read ? <span className="h-2 w-2 rounded-full border border-current" /> : <Check className="h-3.5 w-3.5" />}
-          </IconAction>
-        )}
-        {onDismiss && (
-          <IconAction label="Dismiss" onClick={onDismiss}>
-            <X className="h-3.5 w-3.5" />
-          </IconAction>
-        )}
-      </div>
-    </li>
-  );
-};
-
-const IconAction: React.FC<{ label: string; onClick: () => void; children: React.ReactNode }> = ({ label, onClick, children }) => (
-  <button
-    onClick={(e) => {
-      e.stopPropagation();
-      onClick();
-    }}
-    aria-label={label}
-    title={label}
-    className="flex h-7 w-7 items-center justify-center rounded-md bg-white text-slate-500 shadow-sm ring-1 ring-slate-200 transition-colors hover:text-slate-900 dark:bg-slate-800 dark:text-slate-300 dark:ring-slate-700 dark:hover:text-white"
-  >
-    {children}
-  </button>
-);

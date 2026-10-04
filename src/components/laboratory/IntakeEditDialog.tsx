@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import { Button } from '../common/Dashboard';
+import { Portal } from '../common/Portal';
 
 interface IntakeEditDialogProps {
   title: string;
@@ -33,6 +34,7 @@ export const IntakeEditDialog: React.FC<IntakeEditDialogProps> = ({
   }, [onClose, saving]);
 
   return (
+    <Portal>
     <div
       role="dialog"
       aria-modal="true"
@@ -83,5 +85,6 @@ export const IntakeEditDialog: React.FC<IntakeEditDialogProps> = ({
         </div>
       </form>
     </div>
+    </Portal>
   );
 };

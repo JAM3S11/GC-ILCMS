@@ -133,8 +133,42 @@ const createAdminNotification = (db, {
   [title, message, type, linkAction, recordType, recordId],
 );
 
+// Browsable addresses of this app, in order of preference. This box is reached
+// over several LAN addresses and DHCP moves them around, so a single hard-coded
+// URL goes stale and every emailed link then points somewhere unreachable.
+// Entries are an ALLOWLIST, not just candidates: request links are built from the
+// Host header the admin is browsing on, and a link is only ever emitted for a
+// host listed here. Trusting Host blindly would let anyone who can reach the
+// server poison the activation/password-reset links we email out.
+const appUrls = (process.env.APP_URLS ?? process.env.APP_URL ?? '')
+  .split(',')
+  .map((value) => value.trim().replace(/\/+$/, ''))
+  .filter(Boolean)
+  .filter((value) => {
+    try {
+      new URL(value);
+      return true;
+    } catch {
+      console.warn(`Ignoring malformed APP_URLS entry: ${value}`);
+      return false;
+    }
+  });
+
+// Picks the allowlisted address the request actually arrived on, so a link sent
+// from 192.168.100.13 points at .13 and one sent from 192.168.200.157 points at
+// .157. Falls back to the first entry for hosts not on the list (a reverse proxy,
+// say) and to localhost when nothing is configured at all.
+const resolveAppUrl = (req) => {
+  const requested = req?.get?.('host');
+  if (requested) {
+    const match = appUrls.find((base) => new URL(base).host === requested);
+    if (match) return match;
+  }
+  return appUrls[0] ?? `http://localhost:${process.env.PORT ?? 8000}`;
+};
+
 const makeMailer = () => {
-  const required = ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASSWORD', 'MAIL_FROM', 'APP_URL'];
+  const required = ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASSWORD', 'MAIL_FROM'];
   const missing = required.filter((name) => !process.env[name]);
   if (missing.length) throw new Error(`Email configuration is incomplete: ${missing.join(', ')}`);
   return nodemailer.createTransport({
@@ -148,8 +182,8 @@ const makeMailer = () => {
   });
 };
 
-const sendInvite = async (email, fullName, token, expiresAt) => {
-  const url = new URL('/activate', process.env.APP_URL);
+const sendInvite = async (req, email, fullName, token, expiresAt) => {
+  const url = new URL('/activate', resolveAppUrl(req));
   url.searchParams.set('token', token);
   url.searchParams.set('expires', new Date(expiresAt).toISOString());
   await makeMailer().sendMail({
@@ -183,8 +217,8 @@ const createPasswordReset = async (db, user, forcedBy = null) => {
   return { token, expiresAt: rows[0].expires_at };
 };
 
-const sendPasswordReset = async (email, fullName, token, expiresAt, forcedByName) => {
-  const url = new URL('/reset-password', process.env.APP_URL);
+const sendPasswordReset = async (req, email, fullName, token, expiresAt, forcedByName) => {
+  const url = new URL('/reset-password', resolveAppUrl(req));
   url.searchParams.set('token', token);
   url.searchParams.set('expires', new Date(expiresAt).toISOString());
   const opening = forcedByName
@@ -199,10 +233,10 @@ const sendPasswordReset = async (email, fullName, token, expiresAt, forcedByName
   });
 };
 
-const deliverPasswordReset = async (user, reset, forcedByName = null) => {
+const deliverPasswordReset = async (req, user, reset, forcedByName = null) => {
   if (!reset) return true;
   try {
-    await sendPasswordReset(user.email, user.full_name, reset.token, reset.expiresAt, forcedByName);
+    await sendPasswordReset(req, user.email, user.full_name, reset.token, reset.expiresAt, forcedByName);
     return true;
   } catch (error) {
     console.error('Password reset email delivery failed', {
@@ -230,10 +264,10 @@ const createInvite = async (db, user, admin) => {
   return { token, expiresAt: rows[0].expires_at };
 };
 
-const deliverInvite = async (user, invitation) => {
+const deliverInvite = async (req, user, invitation) => {
   if (!invitation) return true;
   try {
-    await sendInvite(user.email, user.full_name, invitation.token, invitation.expiresAt);
+    await sendInvite(req, user.email, user.full_name, invitation.token, invitation.expiresAt);
     return true;
   } catch (error) {
     console.error('Invitation email delivery failed', {
@@ -331,6 +365,7 @@ const waterIntakeProjection = `
   received.full_name AS "receivingOfficer",
   w.receiving_officer_id AS "receivingOfficerId",
   TO_CHAR(w.date_received, 'YYYY-MM-DD') AS "dateReceived",
+  TO_CHAR(w.date_sampled, 'YYYY-MM-DD') AS "dateSampled",
   w.supporting_documents AS "supportingDocuments",
   w.remarks,
   w.test_type AS "testType",
@@ -352,13 +387,25 @@ const waterIntakeProjection = `
   TO_CHAR(w.completed_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "completedDate",
   TO_CHAR(w.created_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "createdAt",
   (w.edited_at IS NOT NULL) AS "edited",
-  TO_CHAR(w.edited_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "editedDate"`;
+  TO_CHAR(w.edited_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "editedDate",
+  w.findings,
+  w.findings_results AS "findingsResults",
+  TO_CHAR(w.findings_recorded_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD HH24:MI:SS') AS "findingsRecordedAt",
+  finder.full_name AS "findingsRecordedBy",
+  w.findings_recorded_by AS "findingsRecordedById",
+  TO_CHAR(w.certificate_issued_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "certificateIssuedAt",
+  issuer.full_name AS "certificateIssuedBy",
+  TO_CHAR(w.documents_confirmed_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "documentsConfirmedAt",
+  confirmer.full_name AS "documentsConfirmedBy"`;
 const waterIntakeJoins = `
   JOIN users received ON received.id = w.receiving_officer_id
   LEFT JOIN users approver ON approver.id = w.approved_by
   LEFT JOIN users assigned ON assigned.id = w.analysis_officer_id
   LEFT JOIN users assigner ON assigner.id = w.assigned_by
-  LEFT JOIN users completer ON completer.id = w.completed_by`;
+  LEFT JOIN users completer ON completer.id = w.completed_by
+  LEFT JOIN users finder ON finder.id = w.findings_recorded_by
+  LEFT JOIN users issuer ON issuer.id = w.certificate_issued_by
+  LEFT JOIN users confirmer ON confirmer.id = w.documents_confirmed_by`;
 const appendWaterIntakeEvent = (db, intakeId, eventType, actorId, fromStatus, toStatus, details = {}) =>
   db.query(
     `INSERT INTO water_exhibit_intake_events (intake_id, event_type, actor_user_id, from_status, to_status, details)
@@ -551,7 +598,7 @@ app.get('/api/reception/visits/stats', requireSession, requireReceptionRead, asy
          COUNT(*) FILTER (WHERE v.departed_at >= d.starts_at AND v.departed_at < d.ends_at)::int AS "todayDeparted"
        FROM reception_visits v
        CROSS JOIN day_bounds d
-       WHERE ($1::text IS NULL OR v.destination_department = $1)`,
+       WHERE v.deleted_at IS NULL AND ($1::text IS NULL OR v.destination_department = $1)`,
       [departmentFilter],
     );
     res.json({ stats: rows[0] });
@@ -588,7 +635,7 @@ app.get('/api/reception/visits', requireSession, requireReceptionRead, asyncHand
     const { rows } = await pool.query(
       `SELECT ${receptionVisitProjection}
        FROM reception_visits
-       WHERE ($7::boolean OR (
+       WHERE deleted_at IS NULL AND ($7::boolean OR (
            arrived_at >= ((COALESCE($1::date, (NOW() AT TIME ZONE 'Africa/Nairobi')::date))::timestamp AT TIME ZONE 'Africa/Nairobi')
            AND arrived_at < (((COALESCE($1::date, (NOW() AT TIME ZONE 'Africa/Nairobi')::date) + 1)::timestamp) AT TIME ZONE 'Africa/Nairobi')
          ))
@@ -610,7 +657,7 @@ app.get('/api/reception/visits/:id', requireSession, requireReceptionRead, async
     const { rows } = await pool.query(
       `SELECT ${receptionVisitProjection}
        FROM reception_visits
-       WHERE id = $1
+       WHERE id = $1 AND deleted_at IS NULL
          AND ($2::text IS NULL OR destination_department = $2)`,
       [req.params.id, receptionLabRoles.has(req.user.role) ? req.user.department : null],
     );
@@ -653,9 +700,9 @@ app.post('/api/reception/visits', requireSession, requireReceptionWrite, asyncHa
       `INSERT INTO reception_visits (
          visitor_type, visitor_name, national_id, phone, badge_number, station_or_organization,
          vehicle_registration, postal_address, destination_department, purpose_of_visit,
-         documents_presented, exhibits_summary, registered_by, lab_notification_sent_at
+         documents_presented, exhibits_summary, registered_by
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING ${receptionVisitProjection}`,
       [
         visitorType, officerName.trim(), nationalId.trim(), phone.trim(),
@@ -686,20 +733,60 @@ app.post('/api/reception/visits', requireSession, requireReceptionWrite, asyncHa
       linkAction: 'RECEPTION_REGISTER',
       visitId: visit.id,
     });
-    await appendReceptionEvent(client, visit.id, 'LAB_NOTIFIED', req.user.id, null, null, {
-      destinationDepartment: laboratory,
-      automatic: true,
-    });
-    await createReceptionActivityNotification(client, {
-      recipientDepartment: laboratory,
-      title: `Client arriving at ${laboratory}`,
-      message: `${visit.officerName} (${visit.visitNumber}) has been registered at reception and is heading to ${laboratory}. Open the Lab Bay notification to receive the client and continue with intake.`,
-      type: 'warning',
-      linkAction: 'RECEPTION_LAB_BAY',
-      visitId: visit.id,
-    });
+    // The laboratory is not notified here: the receptionist sends it with "Notify <lab>".
     await client.query('COMMIT');
     res.status(201).json({ visit });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return next(error);
+  } finally {
+    client.release();
+  }
+}));
+
+// Only the receptionist may delete a visitor record. The row is hidden, not erased, and the
+// deletion is audited. A visit with an exhibit registered against it is part of an exhibit's
+// chain of custody and cannot be deleted.
+app.delete('/api/reception/visits/:id', requireSession, asyncHandler(async (req, res, next) => {
+  if (req.user.role !== 'RECEPTIONIST') {
+    return res.status(403).json({ error: 'Only the receptionist can delete a visitor record.' });
+  }
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.id ?? '')) {
+    return res.status(400).json({ error: 'That is not a valid visit reference.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `SELECT id, visit_number, visitor_name, destination_department, status
+       FROM reception_visits WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+      [req.params.id],
+    );
+    const visit = rows[0];
+    if (!visit) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Visitor record not found.' });
+    }
+    const linked = await client.query(
+      'SELECT 1 FROM water_exhibit_intakes WHERE reception_visit_id = $1 AND deleted_at IS NULL LIMIT 1',
+      [visit.id],
+    );
+    if (linked.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: `${visit.visit_number} has an exhibit registered against it and cannot be deleted.` });
+    }
+    await client.query(
+      'UPDATE reception_visits SET deleted_at = NOW(), deleted_by = $2, updated_at = NOW() WHERE id = $1',
+      [visit.id, req.user.id],
+    );
+    await audit(client, req.user.id, req.user.email, 'VISITOR_DELETED', 'reception_visit', visit.id, {
+      visitNumber: visit.visit_number,
+      visitorName: visit.visitor_name,
+      destinationDepartment: visit.destination_department,
+      status: visit.status,
+    });
+    await client.query('COMMIT');
+    res.json({ message: `Visitor record ${visit.visit_number} deleted.` });
   } catch (error) {
     await client.query('ROLLBACK');
     return next(error);
@@ -716,7 +803,7 @@ app.post('/api/reception/visits/:id/notify-lab', requireSession, asyncHandler(as
       `SELECT id, visit_number, visitor_name, destination_department, status, lab_notification_sent_at,
               EXTRACT(EPOCH FROM (NOW() - lab_notification_sent_at)) AS seconds_since_notified,
               ${labNotificationSeenSql} AS lab_notification_seen
-       FROM reception_visits WHERE id = $1 FOR UPDATE`,
+       FROM reception_visits WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
       [req.params.id],
     );
     const visit = rows[0];
@@ -789,7 +876,7 @@ app.get('/api/reception/visits/:id/national-id', requireSession, requireReceptio
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
-      'SELECT id, national_id, destination_department FROM reception_visits WHERE id = $1',
+      'SELECT id, national_id, destination_department FROM reception_visits WHERE id = $1 AND deleted_at IS NULL',
       [req.params.id],
     );
     const visit = rows[0];
@@ -819,7 +906,7 @@ const transitionReceptionVisit = (eventType, fromStatus, toStatus, allowedRoleCh
     try {
       await client.query('BEGIN');
       const { rows } = await client.query(
-        'SELECT id, visit_number, destination_department, status FROM reception_visits WHERE id = $1 FOR UPDATE',
+        'SELECT id, visit_number, destination_department, status FROM reception_visits WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
         [req.params.id],
       );
       const visit = rows[0];
@@ -945,10 +1032,77 @@ app.get('/api/water/intakes', requireSession, requireWaterLab, asyncHandler(asyn
   }
 }));
 
+// The process an exhibit has been through, oldest first. Each row is the audit
+// of one transition, so this is what an Analysis Officer opens to see where the
+// work they own currently stands.
+const WATER_INTAKE_EVENT_LABELS = {
+  REGISTERED: 'Registered',
+  APPROVED: 'Documents approved',
+  ASSIGNED: 'Assigned to Analysis Officer',
+  TRANSFERRED: 'Analysis Officer changed',
+  ANALYSIS_COMPLETED: 'Analysis completed',
+  FINDINGS_RECORDED: 'Findings recorded',
+  CERTIFICATE_ISSUED: 'Memo approved by the Head',
+  EDITED: 'Details edited',
+  DELETED: 'Deleted',
+};
+
+app.get('/api/water/intakes/:id/events', requireSession, requireWaterLab, asyncHandler(async (req, res, next) => {
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.id ?? '')) {
+    return res.status(400).json({ error: 'That is not a valid Water exhibit reference.' });
+  }
+  try {
+    const { rows: exhibitRows } = await pool.query(
+      `SELECT analysis_officer_id
+       FROM water_exhibit_intakes
+       WHERE id = $1 AND deleted_at IS NULL`,
+      [req.params.id],
+    );
+    if (!exhibitRows.length) {
+      return res.status(404).json({ error: 'Water exhibit intake not found.' });
+    }
+    // An officer may only read the process of an exhibit assigned to them. The
+    // Head of Water & Environment approves and assigns, and Water's Senior Chemists
+    // supervise the analysis, so both can open any exhibit; a super-admin can always audit.
+    const isOwner = exhibitRows[0].analysis_officer_id === req.user.id;
+    const isSupervisor = ['HEAD_OF_DEPARTMENT', 'SENIOR_CHEMIST'].includes(req.user.role) && req.user.department === 'Water';
+    if (!isOwner && !isSupervisor && req.user.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: 'You can only open the process of an exhibit assigned to you.' });
+    }
+    const { rows } = await pool.query(
+      `SELECT e.event_type AS "eventType",
+              e.from_status AS "fromStatus",
+              e.to_status AS "toStatus",
+              e.details,
+              TO_CHAR(e.occurred_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD HH24:MI:SS') AS "occurredAt",
+              actor.full_name AS actor
+       FROM water_exhibit_intake_events e
+       JOIN users actor ON actor.id = e.actor_user_id
+       WHERE e.intake_id = $1
+       ORDER BY e.occurred_at, e.id`,
+      [req.params.id],
+    );
+    res.json({
+      events: rows.map((row) => ({
+        ...row,
+        label: WATER_INTAKE_EVENT_LABELS[row.eventType] ?? row.eventType,
+      })),
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+// A real calendar day in YYYY-MM-DD form (rejects 2026-02-31 and the like).
+const isValidDay = (value) =>
+  typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+  !Number.isNaN(Date.parse(`${value}T00:00:00Z`)) &&
+  new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
+
 app.post('/api/water/intakes', requireSession, requireWaterLab, asyncHandler(async (req, res, next) => {
   const {
     receptionVisitId, senderType, senderName, senderAddress, senderMobile,
-    contactPerson, contactPersonMobile, receivingOfficerId, dateReceived,
+    contactPerson, contactPersonMobile, receivingOfficerId, dateReceived, dateSampled, documentsConfirmed,
     testType, specificParameters, sourceCategory, sourceType, locationFrom,
     dischargeTo, receiptNumber, supportingDocuments, remarks,
   } = req.body ?? {};
@@ -971,6 +1125,7 @@ app.post('/api/water/intakes', requireSession, requireWaterLab, asyncHandler(asy
     typeof dateReceived !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(dateReceived) ||
     Number.isNaN(Date.parse(`${dateReceived}T00:00:00Z`)) ||
     new Date(`${dateReceived}T00:00:00Z`).toISOString().slice(0, 10) !== dateReceived ||
+    !isValidDay(dateSampled) || dateSampled > dateReceived ||
     !waterTestTypes.has(testType) ||
     (testType === 'Specific Chemical Analysis' &&
       (!parameters.length || parameters.some((value) => !value || value.length > 100))) ||
@@ -984,7 +1139,7 @@ app.post('/api/water/intakes', requireSession, requireWaterLab, asyncHandler(asy
     (supportingDocuments != null && (typeof supportingDocuments !== 'string' || supportingDocuments.length > 2000)) ||
     (remarks != null && (typeof remarks !== 'string' || remarks.length > 1000))
   ) {
-    return res.status(400).json({ error: 'Provide valid sender, receipt, test, source, and location details for the Water & Environment intake.' });
+    return res.status(400).json({ error: 'Provide valid sender, receipt, sampling date (not after the date received), test, source, and location details for the Water & Environment intake.' });
   }
 
   const client = await pool.connect();
@@ -992,7 +1147,7 @@ app.post('/api/water/intakes', requireSession, requireWaterLab, asyncHandler(asy
     await client.query('BEGIN');
     const visitResult = await client.query(
       `SELECT id FROM reception_visits
-       WHERE id = $1 AND destination_department = 'Water'
+       WHERE id = $1 AND deleted_at IS NULL AND destination_department = 'Water'
          AND status IN ('AWAITING_LAB_RECEPTION', 'IN_LABORATORY')
          AND lab_notification_sent_at IS NOT NULL
        FOR UPDATE`,
@@ -1043,11 +1198,14 @@ app.post('/api/water/intakes', requireSession, requireWaterLab, asyncHandler(asy
          reception_visit_id, sender_type, sender_name, sender_address, sender_mobile, contact_person,
          contact_person_mobile, receiving_officer_id, registered_by, date_received,
          supporting_documents, remarks, test_type, specific_parameters, source_category, source_type,
-         location_from, discharge_to, charges, receipt_number
+         location_from, discharge_to, charges, receipt_number, date_sampled,
+         documents_confirmed_at, documents_confirmed_by, status
        )
        VALUES ($1, $2, 'Sealed Water Sampling Bottle', 'Intact & Sealed', $3, $4, $5, $6, $7,
                $8, $9, $10, $11, $12, $13, $14::date, $15, $16, $17, $18::text[],
-               $19, $20, $21, $22, $23, $24)
+               $19, $20, $21, $22, $23, $24, $25::date,
+               CASE WHEN $26::boolean THEN NOW() END, CASE WHEN $26::boolean THEN $13::uuid END,
+               'Awaiting Assignment')
        RETURNING id`,
       [
         exhibitNumber, sealNumber, WATER_STORAGE_LOCATION, labReference, receptionVisitId, senderType,
@@ -1057,10 +1215,12 @@ app.post('/api/water/intakes', requireSession, requireWaterLab, asyncHandler(asy
         typeof remarks === 'string' ? remarks.trim() : '', testType, parameters, sourceCategory, sourceType,
         locationFrom.trim(), sourceCategory === 'Effluent Water' ? dischargeTo : null, charge,
         typeof receiptNumber === 'string' && receiptNumber.trim() ? receiptNumber.trim() : null,
+        dateSampled,
+        documentsConfirmed === true && req.user.department === 'Water',
       ],
     );
     const intakeId = rows[0].id;
-    await appendWaterIntakeEvent(client, intakeId, 'REGISTERED', req.user.id, null, 'Awaiting Approval', {
+    await appendWaterIntakeEvent(client, intakeId, 'REGISTERED', req.user.id, null, 'Awaiting Assignment', {
       exhibitNumber,
       receptionVisitId,
     });
@@ -1085,9 +1245,9 @@ app.post('/api/water/intakes', requireSession, requireWaterLab, asyncHandler(asy
   }
 }));
 
-// Document approval gate: the Head of Water & Environment reviews the submitted
-// documents before an Analysis Officer can be assigned. Approval moves the
-// exhibit from "Awaiting Approval" to "Awaiting Assignment".
+// The Head of Water & Environment approves the intake documents at the memo stage, before approving the
+// memo. The documents must first have been confirmed fine by the department. It does not change the
+// exhibit's status; it records who approved and when.
 app.post('/api/water/intakes/:id/approve', requireSession, requireWaterLab, asyncHandler(async (req, res, next) => {
   if (req.user.role !== 'SUPER_ADMIN' &&
       !(req.user.role === 'HEAD_OF_DEPARTMENT' && req.user.department === 'Water')) {
@@ -1097,24 +1257,27 @@ app.post('/api/water/intakes/:id/approve', requireSession, requireWaterLab, asyn
   try {
     await client.query('BEGIN');
     const { rows: current } = await client.query(
-      `SELECT id, status, lab_reference FROM water_exhibit_intakes WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+      `SELECT id, status, lab_reference, approved_at, documents_confirmed_at
+       FROM water_exhibit_intakes WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
       [req.params.id],
     );
     if (!current.length) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Water exhibit intake not found.' });
     }
-    if (current[0].status !== 'Awaiting Approval') {
+    if (current[0].approved_at) {
       await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'This exhibit is not awaiting document approval. Refresh the Water register.' });
+      return res.status(409).json({ error: 'These documents have already been approved.' });
+    }
+    if (!current[0].documents_confirmed_at) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'The documents must be confirmed fine (the tick box) before the Head approves them.' });
     }
     await client.query(
-      `UPDATE water_exhibit_intakes
-       SET status = 'Awaiting Assignment', approved_by = $2, approved_at = NOW(), updated_at = NOW()
-       WHERE id = $1`,
+      `UPDATE water_exhibit_intakes SET approved_by = $2, approved_at = NOW(), updated_at = NOW() WHERE id = $1`,
       [req.params.id, req.user.id],
     );
-    await appendWaterIntakeEvent(client, req.params.id, 'APPROVED', req.user.id, 'Awaiting Approval', 'Awaiting Assignment', {});
+    await appendWaterIntakeEvent(client, req.params.id, 'APPROVED', req.user.id, current[0].status, current[0].status, {});
     await audit(client, req.user.id, req.user.email, 'WATER_EXHIBIT_APPROVED', 'water_exhibit_intake', req.params.id, {
       labReference: current[0].lab_reference,
     });
@@ -1147,23 +1310,31 @@ app.post('/api/water/intakes/:id/assign', requireSession, requireWaterLab, async
   try {
     await client.query('BEGIN');
     const { rows: current } = await client.query(
-      `SELECT id, status, lab_reference FROM water_exhibit_intakes WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+      `SELECT w.id, w.status, w.lab_reference, w.analysis_officer_id,
+              assigned.full_name AS analysis_officer
+       FROM water_exhibit_intakes w
+       LEFT JOIN users assigned ON assigned.id = w.analysis_officer_id
+       WHERE w.id = $1 AND w.deleted_at IS NULL
+       FOR UPDATE OF w`,
       [req.params.id],
     );
     if (!current.length) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Water exhibit intake not found.' });
     }
-    if (current[0].status !== 'Awaiting Assignment') {
+    const isTransfer = current[0].status === 'Under Analysis' && !!current[0].analysis_officer_id;
+    if (!['Awaiting Assignment', 'Awaiting Approval'].includes(current[0].status) && !isTransfer) {
       await client.query('ROLLBACK');
       return res.status(409).json({
-        error: current[0].status === 'Awaiting Approval'
-          ? 'Approve the submitted documents before assigning an Analysis Officer.'
-          : 'This exhibit has already been assigned or completed. Refresh the Water register.',
+        error: 'This exhibit has already been assigned or completed. Refresh the Water register.',
       });
     }
+    if (isTransfer && current[0].analysis_officer_id === analysisOfficerId) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Choose a different Analysis Officer to transfer this exhibit.' });
+    }
     const { rows: officer } = await client.query(
-      `SELECT id FROM users
+      `SELECT id, full_name FROM users
        WHERE id = $1 AND department = 'Water' AND status = 'ACTIVE'
          AND role = ANY($2::text[])
        FOR UPDATE`,
@@ -1180,13 +1351,275 @@ app.post('/api/water/intakes/:id/assign', requireSession, requireWaterLab, async
        WHERE id = $1`,
       [req.params.id, analysisOfficerId, req.user.id],
     );
-    await appendWaterIntakeEvent(client, req.params.id, 'ASSIGNED', req.user.id, 'Awaiting Assignment', 'Under Analysis', {
-      analysisOfficerId,
-    });
-    await audit(client, req.user.id, req.user.email, 'WATER_EXHIBIT_ASSIGNED', 'water_exhibit_intake', req.params.id, {
+    const eventType = isTransfer ? 'TRANSFERRED' : 'ASSIGNED';
+    await appendWaterIntakeEvent(
+      client,
+      req.params.id,
+      eventType,
+      req.user.id,
+      isTransfer ? 'Under Analysis' : 'Awaiting Assignment',
+      'Under Analysis',
+      {
+        ...(isTransfer ? { previousOfficer: current[0].analysis_officer } : {}),
+        analysisOfficer: officer[0].full_name,
+        analysisOfficerId,
+      },
+    );
+    await audit(client, req.user.id, req.user.email, isTransfer ? 'WATER_EXHIBIT_TRANSFERRED' : 'WATER_EXHIBIT_ASSIGNED', 'water_exhibit_intake', req.params.id, {
       labReference: current[0].lab_reference,
+      ...(isTransfer
+        ? { previousAnalysisOfficerId: current[0].analysis_officer_id, previousAnalysisOfficer: current[0].analysis_officer }
+        : {}),
       analysisOfficerId,
+      analysisOfficer: officer[0].full_name,
     });
+    const { rows: updated } = await client.query(
+      `SELECT ${waterIntakeProjection}
+       FROM water_exhibit_intakes w ${waterIntakeJoins}
+       WHERE w.id = $1`,
+      [req.params.id],
+    );
+    await client.query('COMMIT');
+    res.json({ intake: updated[0] });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return next(error);
+  } finally {
+    client.release();
+  }
+}));
+
+// Records what the analysis found. Only the Analysis Officer the exhibit is
+// assigned to may write, and only while it is still Under Analysis: once the
+// Head has the completed report the finding is part of the closed record.
+// Rewriting is allowed while the analysis is open, so an officer can correct a
+// typo, and every write is kept in the event log.
+// Anyone in Water & Environment (the receiving officer included) ticks or unticks that the intake documents are fine.
+// The memo cannot be approved while it is unticked.
+app.post('/api/water/intakes/:id/documents-check', requireSession, requireWaterLab, asyncHandler(async (req, res, next) => {
+  if (req.user.department !== 'Water') {
+    return res.status(403).json({ error: 'Only Water & Environment staff can confirm the intake documents.' });
+  }
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.id ?? '')) {
+    return res.status(400).json({ error: 'That is not a valid Water exhibit reference.' });
+  }
+  if (typeof req.body?.confirmed !== 'boolean') {
+    return res.status(400).json({ error: 'Say whether the intake documents are confirmed.' });
+  }
+  const confirmed = req.body.confirmed;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: current } = await client.query(
+      `SELECT id, lab_reference, certificate_issued_at, approved_at FROM water_exhibit_intakes WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+      [req.params.id],
+    );
+    if (!current.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Water exhibit intake not found.' });
+    }
+    if (current[0].certificate_issued_at) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'The memo has already been approved, so this can no longer be changed.' });
+    }
+    if (!confirmed && current[0].approved_at) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'The Head has already approved the intake documents, so this can no longer be unticked.' });
+    }
+    await client.query(
+      `UPDATE water_exhibit_intakes
+       SET documents_confirmed_at = CASE WHEN $2::boolean THEN NOW() ELSE NULL END,
+           documents_confirmed_by = CASE WHEN $2::boolean THEN $3::uuid ELSE NULL END,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [req.params.id, confirmed, req.user.id],
+    );
+    await audit(client, req.user.id, req.user.email, confirmed ? 'WATER_DOCUMENTS_CONFIRMED' : 'WATER_DOCUMENTS_UNCONFIRMED', 'water_exhibit_intake', req.params.id, {
+      labReference: current[0].lab_reference,
+    });
+    const { rows: updated } = await client.query(
+      `SELECT ${waterIntakeProjection}
+       FROM water_exhibit_intakes w ${waterIntakeJoins}
+       WHERE w.id = $1`,
+      [req.params.id],
+    );
+    await client.query('COMMIT');
+    res.json({ intake: updated[0] });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return next(error);
+  } finally {
+    client.release();
+  }
+}));
+
+// The Head approves the memo (the Certificate of Analysis) once the analysis officer's work is counter-checked.
+app.post('/api/water/intakes/:id/certificate', requireSession, requireWaterLab, asyncHandler(async (req, res, next) => {
+  if (!(req.user.role === 'HEAD_OF_DEPARTMENT' && req.user.department === 'Water')) {
+    return res.status(403).json({ error: 'Only the Head of Water & Environment can approve the memo.' });
+  }
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.id ?? '')) {
+    return res.status(400).json({ error: 'That is not a valid Water exhibit reference.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: current } = await client.query(
+      `SELECT id, status, lab_reference, findings_results, certificate_issued_at, documents_confirmed_at, approved_at
+       FROM water_exhibit_intakes WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+      [req.params.id],
+    );
+    if (!current.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Water exhibit intake not found.' });
+    }
+    const intake = current[0];
+    if (intake.status !== 'Analysis Complete') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'The memo can be approved once the analysis is complete.' });
+    }
+    if (!Object.keys(intake.findings_results?.results ?? {}).length) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Enter and save the test results before approving the memo.' });
+    }
+    if (!intake.certificate_issued_at && !intake.documents_confirmed_at) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Confirm that the intake documents are fine before approving the memo.' });
+    }
+    // A repeat call keeps the first approval time and approver.
+    if (!intake.certificate_issued_at) {
+      await client.query(
+        `UPDATE water_exhibit_intakes SET certificate_issued_at = NOW(), certificate_issued_by = $2, updated_at = NOW() WHERE id = $1`,
+        [req.params.id, req.user.id],
+      );
+      // Approving the memo covers the intake documents too, so the Head does it in one step.
+      if (!intake.approved_at) {
+        await client.query(
+          `UPDATE water_exhibit_intakes SET approved_by = $2, approved_at = NOW() WHERE id = $1`,
+          [req.params.id, req.user.id],
+        );
+        await appendWaterIntakeEvent(client, req.params.id, 'APPROVED', req.user.id, intake.status, intake.status, {});
+      }
+      await appendWaterIntakeEvent(client, req.params.id, 'CERTIFICATE_ISSUED', req.user.id, intake.status, intake.status, {});
+      await audit(client, req.user.id, req.user.email, 'WATER_CERTIFICATE_ISSUED', 'water_exhibit_intake', req.params.id, {
+        labReference: intake.lab_reference,
+      });
+    }
+    const { rows: updated } = await client.query(
+      `SELECT ${waterIntakeProjection}
+       FROM water_exhibit_intakes w ${waterIntakeJoins}
+       WHERE w.id = $1`,
+      [req.params.id],
+    );
+    await client.query('COMMIT');
+    res.json({ intake: updated[0] });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return next(error);
+  } finally {
+    client.release();
+  }
+}));
+
+app.post('/api/water/intakes/:id/findings', requireSession, requireWaterLab, asyncHandler(async (req, res, next) => {
+  const { findings, results, remarks } = req.body ?? {};
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.id ?? '')) {
+    return res.status(400).json({ error: 'That is not a valid Water exhibit reference.' });
+  }
+
+  // Structured test results: { parameterId: { result, report } }. Rows left blank are dropped.
+  let structured = null;
+  if (results !== undefined) {
+    if (!results || typeof results !== 'object' || Array.isArray(results)) {
+      return res.status(400).json({ error: 'Test results must be a list of parameters.' });
+    }
+    const entries = Object.entries(results);
+    if (entries.length > 80) {
+      return res.status(400).json({ error: 'Too many test parameters.' });
+    }
+    const cleaned = {};
+    for (const [key, entry] of entries) {
+      if (!/^[a-z0-9_]{1,40}$/.test(key) || !entry || typeof entry !== 'object') {
+        return res.status(400).json({ error: 'A test parameter was not recognised.' });
+      }
+      const result = typeof entry.result === 'string' ? entry.result.trim() : '';
+      const report = typeof entry.report === 'string' ? entry.report.trim() : '';
+      if (result.length > 100 || !['', 'Acceptable', 'AAL', '-'].includes(report)) {
+        return res.status(400).json({ error: 'A test result is too long or has an invalid report value.' });
+      }
+      if (result || report) cleaned[key] = { result, report };
+    }
+    const note = typeof remarks === 'string' ? remarks.trim() : '';
+    if (note.length > 2000) {
+      return res.status(400).json({ error: 'Remarks are limited to 2000 characters.' });
+    }
+    structured = { results: cleaned, remarks: note };
+  }
+
+  const resultCount = structured ? Object.keys(structured.results).length : 0;
+  // The plain-text column doubles as the "findings recorded" marker, so a
+  // structured save writes a readable summary there.
+  const text = structured
+    ? (structured.remarks || (resultCount ? `${resultCount} test result${resultCount === 1 ? '' : 's'} recorded.` : ''))
+    : (typeof findings === 'string' ? findings.trim() : '');
+  if (!text || text.length > 5000) {
+    return res.status(400).json({ error: structured ? 'Enter at least one test result before saving.' : 'Record your findings in 1 to 5000 characters.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: current } = await client.query(
+      `SELECT id, status, lab_reference, analysis_officer_id, findings, certificate_issued_at
+       FROM water_exhibit_intakes WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+      [req.params.id],
+    );
+    if (!current.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Water exhibit intake not found.' });
+    }
+    const intake = current[0];
+    const isWaterHead = req.user.role === 'HEAD_OF_DEPARTMENT' && req.user.department === 'Water';
+    const isAssignedOfficer = intake.analysis_officer_id === req.user.id;
+    if (!isAssignedOfficer && !isWaterHead) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Only the assigned Analysis Officer or the Head of Water & Environment can change the test results.' });
+    }
+    // Results can be corrected through completion; once the Head has issued the certificate only the Head can.
+    if (intake.certificate_issued_at && !isWaterHead) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'The memo has been approved, so only the Head of Water & Environment can change the test results.' });
+    }
+    if (!['Under Analysis', 'Analysis Complete'].includes(intake.status)) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Test results are recorded once the exhibit is assigned and under analysis.' });
+    }
+    await client.query(
+      `UPDATE water_exhibit_intakes
+       SET findings = $2, findings_results = COALESCE($4::jsonb, findings_results),
+           findings_recorded_at = NOW(), findings_recorded_by = $3, updated_at = NOW()
+       WHERE id = $1`,
+      [req.params.id, text, req.user.id, structured ? JSON.stringify(structured) : null],
+    );
+    await appendWaterIntakeEvent(client, req.params.id, 'FINDINGS_RECORDED', req.user.id, intake.status, intake.status, {});
+    await audit(client, req.user.id, req.user.email, 'WATER_EXHIBIT_FINDINGS_RECORDED', 'water_exhibit_intake', req.params.id, {
+      labReference: intake.lab_reference,
+      characters: text.length,
+      parametersReported: resultCount,
+    });
+    // Saving the test results completes the analysis: there is no separate "mark complete" step.
+    // Corrections to results that are already complete leave the status as it is.
+    if (intake.status === 'Under Analysis') {
+      await client.query(
+        `UPDATE water_exhibit_intakes
+         SET status = 'Analysis Complete', completed_by = $2, completed_at = NOW(), updated_at = NOW()
+         WHERE id = $1`,
+        [req.params.id, req.user.id],
+      );
+      await appendWaterIntakeEvent(client, req.params.id, 'ANALYSIS_COMPLETED', req.user.id, 'Under Analysis', 'Analysis Complete');
+      await audit(client, req.user.id, req.user.email, 'WATER_ANALYSIS_COMPLETED', 'water_exhibit_intake', req.params.id, {
+        labReference: intake.lab_reference,
+      });
+    }
     const { rows: updated } = await client.query(
       `SELECT ${waterIntakeProjection}
        FROM water_exhibit_intakes w ${waterIntakeJoins}
@@ -1227,6 +1660,10 @@ app.post('/api/water/intakes/:id/complete', requireSession, requireWaterLab, asy
       await client.query('ROLLBACK');
       return res.status(403).json({ error: 'Only the assigned Analysis Officer or the Head can complete this exhibit.' });
     }
+    if (!intake.findings?.trim()) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Open the case file and save your findings before marking the analysis complete.' });
+    }
     await client.query(
       `UPDATE water_exhibit_intakes
        SET status = 'Analysis Complete', completed_by = $2, completed_at = NOW(), updated_at = NOW()
@@ -1253,11 +1690,127 @@ app.post('/api/water/intakes/:id/complete', requireSession, requireWaterLab, asy
   }
 }));
 
-// A registered intake can be corrected exactly once, and only before analysis
-// starts. Sender details come from reception and are never editable here.
+
+// Sender (client) details of a Water exhibit can be corrected by reception and by the
+// Head of Water & Environment, until the analysis is complete.
+const canEditWaterSender = (user) =>
+  user?.role === 'RECEPTIONIST' ||
+  (user?.role === 'HEAD_OF_DEPARTMENT' && user?.department === 'Water');
+
+const waterSenderProjection = `
+  id, lab_reference AS "labReference", exhibit_number AS "exhibitId", status,
+  sender_type AS "senderType", sender_name AS "senderName", sender_address AS "senderAddress",
+  sender_mobile AS "senderMobile", contact_person AS "contactPerson",
+  contact_person_mobile AS "contactPersonMobile"`;
+
+// Reception works from the visit, so it finds the exhibit registered against it.
+app.get('/api/water/intakes/by-visit/:visitId', requireSession, asyncHandler(async (req, res, next) => {
+  if (!canEditWaterSender(req.user)) {
+    return res.status(403).json({ error: 'Only reception or the Head of Water & Environment can open client details.' });
+  }
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.visitId ?? '')) {
+    return res.status(400).json({ error: 'That is not a valid visit reference.' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `SELECT ${waterIntakeProjection}
+       FROM water_exhibit_intakes w ${waterIntakeJoins}
+       WHERE w.reception_visit_id = $1 AND w.deleted_at IS NULL
+       ORDER BY w.created_at DESC LIMIT 1`,
+      [req.params.visitId],
+    );
+    if (!rows.length) {
+      return res.status(404).json({ error: 'No exhibit has been registered for this client yet.' });
+    }
+    // Reception edits the intake form but has no business reading the analysis results.
+    const intake = { ...rows[0] };
+    if (req.user.role !== 'HEAD_OF_DEPARTMENT') {
+      for (const key of ['findings', 'findingsResults', 'findingsRecordedAt', 'findingsRecordedBy', 'findingsRecordedById']) delete intake[key];
+    }
+    res.json({ intake });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+app.patch('/api/water/intakes/:id/sender', requireSession, asyncHandler(async (req, res, next) => {
+  if (!canEditWaterSender(req.user)) {
+    return res.status(403).json({ error: 'Only reception or the Head of Water & Environment can edit client details.' });
+  }
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.id ?? '')) {
+    return res.status(400).json({ error: 'That is not a valid Water exhibit reference.' });
+  }
+  const { senderName, senderAddress, senderMobile, contactPerson, contactPersonMobile } = req.body ?? {};
+  const phonePattern = /^(?:\+?254|0)(?:7|1)\d{8}$/;
+  const cleanPhone = (value) => typeof value === 'string' ? value.replace(/[\s-]/g, '') : '';
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: current } = await client.query(
+      `SELECT id, status, lab_reference, sender_type FROM water_exhibit_intakes
+       WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+      [req.params.id],
+    );
+    if (!current.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Water exhibit intake not found.' });
+    }
+    const intake = current[0];
+    if (intake.status === 'Analysis Complete') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'The analysis is complete, so the client details are locked.' });
+    }
+    const isIndividual = intake.sender_type === 'Individual';
+    if (
+      typeof senderName !== 'string' || senderName.trim().length < 2 || senderName.trim().length > 200 ||
+      typeof senderAddress !== 'string' || senderAddress.trim().length < 2 || senderAddress.trim().length > 300 ||
+      (isIndividual && (!/^\s*p\.?\s*o\.?\s*box\.?\s*\d{1,6}(\s*-\s*\d{1,6})?\s*$/i.test(senderAddress) ||
+        !phonePattern.test(cleanPhone(senderMobile)))) ||
+      (!isIndividual && (typeof contactPerson !== 'string' || contactPerson.trim().length < 2 || contactPerson.trim().length > 150)) ||
+      (typeof contactPersonMobile === 'string' && contactPersonMobile.trim() && !phonePattern.test(cleanPhone(contactPersonMobile)))
+    ) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Provide a valid name, P.O Box address and contact details for the client.' });
+    }
+    await client.query(
+      `UPDATE water_exhibit_intakes
+       SET sender_name = $2, sender_address = $3, sender_mobile = $4, contact_person = $5,
+           contact_person_mobile = $6, updated_at = NOW()
+       WHERE id = $1`,
+      [
+        req.params.id, senderName.trim(), senderAddress.trim(),
+        isIndividual ? cleanPhone(senderMobile) : null,
+        isIndividual ? null : contactPerson.trim(),
+        !isIndividual && typeof contactPersonMobile === 'string' && contactPersonMobile.trim() ? cleanPhone(contactPersonMobile) : null,
+      ],
+    );
+    await appendWaterIntakeEvent(client, req.params.id, 'EDITED', req.user.id, intake.status, intake.status, { clientDetails: true });
+    await audit(client, req.user.id, req.user.email, 'WATER_EXHIBIT_CLIENT_DETAILS_EDITED', 'water_exhibit_intake', req.params.id, {
+      labReference: intake.lab_reference,
+    });
+    const { rows: updated } = await client.query(
+      `SELECT ${waterSenderProjection} FROM water_exhibit_intakes WHERE id = $1`,
+      [req.params.id],
+    );
+    await client.query('COMMIT');
+    res.json({ sender: updated[0] });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return next(error);
+  } finally {
+    client.release();
+  }
+}));
+
+// A registered intake can be corrected before analysis starts, and only by the
+// officer who received that exhibit (once) or by the Head of Water & Environment,
+// who may fill in missing information at any point before analysis begins.
+// Once analysis has started, the receiver keeps their one full edit if unused; otherwise
+// the receiver and the Head may only fill in details that were left out (a blank field).
+// Sender details come from reception and are never editable here.
 app.patch('/api/water/intakes/:id', requireSession, requireWaterLab, asyncHandler(async (req, res, next) => {
   const {
-    receivingOfficerId, dateReceived, testType, specificParameters, sourceCategory,
+    receivingOfficerId, dateReceived, dateSampled, testType, specificParameters, sourceCategory,
     sourceType, locationFrom, dischargeTo, receiptNumber,
   } = req.body ?? {};
   const parameters = Array.isArray(specificParameters)
@@ -1268,6 +1821,8 @@ app.patch('/api/water/intakes/:id', requireSession, requireWaterLab, asyncHandle
     typeof dateReceived !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(dateReceived) ||
     Number.isNaN(Date.parse(`${dateReceived}T00:00:00Z`)) ||
     new Date(`${dateReceived}T00:00:00Z`).toISOString().slice(0, 10) !== dateReceived ||
+    // Exhibits registered before the sampling date existed may leave it blank.
+    (dateSampled != null && dateSampled !== '' && (!isValidDay(dateSampled) || dateSampled > dateReceived)) ||
     !waterTestTypes.has(testType) ||
     (testType === 'Specific Chemical Analysis' &&
       (!parameters.length || parameters.some((value) => !value || value.length > 100))) ||
@@ -1279,13 +1834,17 @@ app.patch('/api/water/intakes/:id', requireSession, requireWaterLab, asyncHandle
     (sourceCategory === 'Potable Water' && dischargeTo != null && dischargeTo !== '') ||
     (receiptNumber != null && (typeof receiptNumber !== 'string' || receiptNumber.trim().length > 100))
   ) {
-    return res.status(400).json({ error: 'Provide valid receipt, test, source, and location details.' });
+    return res.status(400).json({ error: 'Provide valid receipt, sampling date (not after the date received), test, source, and location details.' });
   }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const { rows: current } = await client.query(
-      `SELECT id, status, lab_reference, sender_type, edited_at
+      `SELECT id, status, lab_reference, sender_type, edited_at, receiving_officer_id,
+              TO_CHAR(date_received, 'YYYY-MM-DD') AS date_received_text,
+              TO_CHAR(date_sampled, 'YYYY-MM-DD') AS date_sampled_text,
+              test_type, specific_parameters, source_category, source_type, location_from,
+              discharge_to, receipt_number
        FROM water_exhibit_intakes WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
       [req.params.id],
     );
@@ -1294,13 +1853,44 @@ app.patch('/api/water/intakes/:id', requireSession, requireWaterLab, asyncHandle
       return res.status(404).json({ error: 'Water exhibit intake not found.' });
     }
     const intake = current[0];
-    if (intake.edited_at) {
+    const isReceiver = intake.receiving_officer_id === req.user.id;
+    const isWaterHead = req.user.role === 'HEAD_OF_DEPARTMENT' && req.user.department === 'Water';
+    if (!isReceiver && !isWaterHead) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Only the officer who received this exhibit, or the Head of Water & Environment, can edit its intake.' });
+    }
+    // While analysis is under way an intake can only be completed, never changed:
+    // the only fields that can be blank are the sampling date and the receipt number.
+    // The officer who received the exhibit still has their one full edit after analysis starts.
+    const receiverFullEdit = isReceiver && !intake.edited_at;
+    const fillInOnly = intake.status === 'Under Analysis' && !receiverFullEdit;
+    if (!fillInOnly && !['Awaiting Approval', 'Awaiting Assignment', 'Under Analysis'].includes(intake.status)) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'An intake cannot be edited once the analysis is complete.' });
+    }
+    if (!fillInOnly && intake.edited_at && !isWaterHead) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'This intake has already been edited once and cannot be edited again.' });
     }
-    if (!['Awaiting Approval', 'Awaiting Assignment'].includes(intake.status)) {
-      await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'An intake cannot be edited once analysis has started.' });
+    if (fillInOnly) {
+      const sameParameters = JSON.stringify([...(intake.specific_parameters ?? [])].sort()) === JSON.stringify([...parameters].sort());
+      const unchanged =
+        receivingOfficerId === intake.receiving_officer_id &&
+        dateReceived === intake.date_received_text &&
+        testType === intake.test_type && sameParameters &&
+        sourceCategory === intake.source_category && sourceType === intake.source_type &&
+        locationFrom.trim() === intake.location_from &&
+        (sourceCategory === 'Effluent Water' ? dischargeTo : null) === intake.discharge_to &&
+        (!intake.date_sampled_text || dateSampled === intake.date_sampled_text) &&
+        (!intake.receipt_number || (typeof receiptNumber === 'string' && receiptNumber.trim() === intake.receipt_number));
+      if (!unchanged) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Analysis has started, so you can only fill in details that were left out. Details already recorded cannot be changed.' });
+      }
+      if (intake.date_sampled_text && intake.receipt_number) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Nothing is missing from this intake, so there is nothing to fill in.' });
+      }
     }
     const { rows: today } = await client.query(
       `SELECT TO_CHAR((NOW() AT TIME ZONE 'Africa/Nairobi')::date, 'YYYY-MM-DD') AS today`,
@@ -1323,7 +1913,9 @@ app.patch('/api/water/intakes/:id', requireSession, requireWaterLab, asyncHandle
        SET receiving_officer_id = $2, date_received = $3::date, test_type = $4,
            specific_parameters = $5::text[], source_category = $6, source_type = $7,
            location_from = $8, discharge_to = $9, charges = $10, receipt_number = $11,
-           edited_at = NOW(), edited_by = $12, updated_at = NOW()
+           edited_at = CASE WHEN $14::boolean THEN edited_at ELSE NOW() END,
+           edited_by = CASE WHEN $14::boolean THEN edited_by ELSE $12 END,
+           date_sampled = $13::date, updated_at = NOW()
        WHERE id = $1`,
       [
         req.params.id, receivingOfficerId, dateReceived, testType, parameters, sourceCategory, sourceType,
@@ -1331,6 +1923,8 @@ app.patch('/api/water/intakes/:id', requireSession, requireWaterLab, asyncHandle
         waterCharges[testType][intake.sender_type],
         typeof receiptNumber === 'string' && receiptNumber.trim() ? receiptNumber.trim() : null,
         req.user.id,
+        typeof dateSampled === 'string' && dateSampled ? dateSampled : null,
+        fillInOnly,
       ],
     );
     await appendWaterIntakeEvent(client, req.params.id, 'EDITED', req.user.id, intake.status, intake.status, {});
@@ -1529,7 +2123,7 @@ app.post('/api/auth/forgot-password', authLimiter, asyncHandler(async (req, res,
     } finally {
       client.release();
     }
-    const emailSent = await deliverPasswordReset(user, reset);
+    const emailSent = await deliverPasswordReset(req, user, reset);
     res.json({ emailSent, message: emailSent ? generic : `${generic} Email delivery failed, so contact your administrator.` });
   } catch (error) {
     next(error);
@@ -1927,7 +2521,7 @@ app.post('/api/admin/requests/:id/approve', requireSession, requireSuperAdmin, a
   } finally {
     client.release();
   }
-  const emailSent = await deliverInvite(user, invitation);
+  const emailSent = await deliverInvite(req, user, invitation);
   res.status(emailSent ? 200 : 202).json({
     emailSent,
     message: emailSent
@@ -2015,7 +2609,7 @@ app.post('/api/admin/users', requireSession, requireSuperAdmin, asyncHandler(asy
   } finally {
     client.release();
   }
-  const emailSent = await deliverInvite(user, invitation);
+  const emailSent = await deliverInvite(req, user, invitation);
   res.status(201).json({
     emailSent,
     message: emailSent
@@ -2056,7 +2650,7 @@ app.post('/api/admin/users/:id/resend-invite', requireSession, requireSuperAdmin
   } finally {
     client.release();
   }
-  const emailSent = await deliverInvite(user, invitation);
+  const emailSent = await deliverInvite(req, user, invitation);
   res.status(emailSent ? 200 : 202).json({
     emailSent,
     message: emailSent
@@ -2099,7 +2693,7 @@ app.post('/api/admin/users/:id/reset-password', requireSession, requireSuperAdmi
   } finally {
     client.release();
   }
-  const emailSent = await deliverPasswordReset(user, reset, req.user.full_name ?? req.user.email);
+  const emailSent = await deliverPasswordReset(req, user, reset, req.user.full_name ?? req.user.email);
   res.status(emailSent ? 200 : 202).json({
     emailSent,
     message: emailSent

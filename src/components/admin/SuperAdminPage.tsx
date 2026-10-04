@@ -19,6 +19,8 @@ import {
 } from 'lucide-react';
 import { LaboratoryDepartment, UserRole } from '../../types';
 import { apiRequest } from '../../lib/api';
+import { AuditLogView } from './AuditLogView';
+import { Select } from '../common/Select';
 import {
   GENERAL_ADMINISTRATION,
   departmentForRole,
@@ -99,8 +101,13 @@ const statusStyle: Record<AccountRecord['status'], string> = {
 export const SuperAdminPage: React.FC<{
   currentUserId: string;
   initialTab?: Tab;
-}> = ({ currentUserId, initialTab = 'requests' }) => {
+  /** The sidebar already switches sections, so the in-page tab strip is redundant. */
+  hideTabs?: boolean;
+}> = ({ currentUserId, initialTab = 'requests', hideTabs = false }) => {
   const [tab, setTab] = useState<Tab>(initialTab);
+  const [usersView, setUsersView] = useState<'accounts' | 'requests'>(initialTab === 'requests' ? 'requests' : 'accounts');
+  // With the sidebar driving sections, approval requests live inside User accounts.
+  const shownTab: Tab = hideTabs && tab === 'requests' ? 'users' : tab;
   const [overview, setOverview] = useState<Overview | null>(null);
   const [requests, setRequests] = useState<RequestRecord[]>([]);
   const [departmentRequests, setDepartmentRequests] = useState<DepartmentRequestRecord[]>([]);
@@ -146,7 +153,7 @@ export const SuperAdminPage: React.FC<{
     }
   }, []);
 
-  useEffect(() => { setTab(initialTab); }, [initialTab]);
+  useEffect(() => { setTab(initialTab); setUsersView(initialTab === 'requests' ? 'requests' : 'accounts'); }, [initialTab]);
   useEffect(() => { void loadData(); }, [loadData]);
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -267,6 +274,26 @@ export const SuperAdminPage: React.FC<{
     { id: 'audit', label: 'Audit log' },
   ];
 
+  const renderRequests = () => (
+    requests.length === 0 ? <EmptyState title="No pending account requests" detail="New staff registrations will appear here for approval." /> : (
+      <div className="divide-y divide-slate-100 dark:divide-slate-800">
+        {requests.filter((request) => request.status === 'PENDING').map((request) => (
+          <article key={request.id} className="flex flex-wrap items-center justify-between gap-4 px-4 py-4">
+            <div className="min-w-0">
+              <div className="font-semibold text-slate-900 dark:text-white">{request.fullName}</div>
+              <div className="mt-1 text-xs text-slate-500">{request.email}</div>
+              <div className="mt-1 text-xs text-slate-500">{request.requestedRole.replaceAll('_', ' ')}{request.department ? ` · ${departmentLabel(request.department)}` : ''} · {formatDate(request.createdAt)}</div>
+            </div>
+            <div className="flex gap-2">
+              <button type="button" disabled={workingId === request.id} onClick={() => void approve(request.id)} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-xs font-semibold text-white disabled:opacity-60"><Check className="h-4 w-4" /> Approve & invite</button>
+              <button type="button" disabled={workingId === request.id} onClick={() => void reject(request.id)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-rose-200 px-3 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950/30"><X className="h-4 w-4" /> Reject</button>
+            </div>
+          </article>
+        ))}
+      </div>
+    )
+  );
+
   return (
     <section className="mx-auto w-full max-w-7xl space-y-6 pb-8">
       <header className="flex flex-wrap items-start justify-between gap-4">
@@ -308,14 +335,10 @@ export const SuperAdminPage: React.FC<{
             <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-normal text-slate-900 outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
           </label>
           <label className="space-y-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300">Role
-            <select required value={role} onChange={(e) => chooseInviteRole(e.target.value as UserRole)} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white">
-              {roles.map((item) => <option key={item} value={item}>{item.replaceAll('_', ' ')}</option>)}
-            </select>
+            <Select value={role} onChange={chooseInviteRole} options={roles.map((item) => ({ value: item, label: item.replaceAll('_', ' ') }))} />
           </label>
           <label className="space-y-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300">Department
-            <select required value={department} onChange={(e) => setDepartment(e.target.value as LaboratoryDepartment)} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-normal text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-white">
-              {departmentsForRole(role).map((item) => <option key={item} value={item}>{departmentLabel(item)}</option>)}
-            </select>
+            <Select value={department} onChange={(value) => setDepartment(value as LaboratoryDepartment)} options={departmentsForRole(role).map((item) => ({ value: item, label: departmentLabel(item) }))} />
             <span className="block text-[11px] font-normal text-slate-500">
               {role === 'HEAD_OF_DEPARTMENT'
                 ? 'One Head of Department per laboratory. Change the current head’s role first to replace them.'
@@ -348,13 +371,18 @@ export const SuperAdminPage: React.FC<{
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
           <div className="flex flex-wrap gap-1">
-            {tabs.map((item) => (
+            {hideTabs && (
+              <h2 className="px-1 text-sm font-semibold text-slate-900 dark:text-white">
+                {tabs.find((item) => item.id === shownTab)?.label}
+              </h2>
+            )}
+            {!hideTabs && tabs.map((item) => (
               <button key={item.id} type="button" onClick={() => setTab(item.id)} className={`rounded-lg px-3 py-2 text-sm font-semibold ${tab === item.id ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>
                 {item.label}{item.count ? <span className="ml-2 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] text-slate-950">{item.count}</span> : null}
               </button>
             ))}
           </div>
-          {tab === 'users' && (
+          {shownTab === 'users' && usersView === 'accounts' && (
             <label className="flex h-9 items-center gap-2 rounded-lg border border-slate-200 px-2.5 dark:border-slate-700">
               <Search className="h-4 w-4 text-slate-400" />
               <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search staff" className="w-40 bg-transparent text-xs outline-none dark:text-white" />
@@ -364,25 +392,9 @@ export const SuperAdminPage: React.FC<{
 
         {loading ? (
           <div className="p-8 text-center text-sm text-slate-500">Loading administration data…</div>
-        ) : tab === 'requests' ? (
-          requests.length === 0 ? <EmptyState title="No pending account requests" detail="New staff registrations will appear here for approval." /> : (
-            <div className="divide-y divide-slate-100 dark:divide-slate-800">
-              {requests.filter((request) => request.status === 'PENDING').map((request) => (
-                <article key={request.id} className="flex flex-wrap items-center justify-between gap-4 px-4 py-4">
-                  <div className="min-w-0">
-                    <div className="font-semibold text-slate-900 dark:text-white">{request.fullName}</div>
-                    <div className="mt-1 text-xs text-slate-500">{request.email}</div>
-                    <div className="mt-1 text-xs text-slate-500">{request.requestedRole.replaceAll('_', ' ')}{request.department ? ` · ${departmentLabel(request.department)}` : ''} · {formatDate(request.createdAt)}</div>
-                  </div>
-                  <div className="flex gap-2">
-                    <button type="button" disabled={workingId === request.id} onClick={() => void approve(request.id)} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-xs font-semibold text-white disabled:opacity-60"><Check className="h-4 w-4" /> Approve & invite</button>
-                    <button type="button" disabled={workingId === request.id} onClick={() => void reject(request.id)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-rose-200 px-3 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950/30"><X className="h-4 w-4" /> Reject</button>
-                  </div>
-                </article>
-              ))}
-            </div>
-          )
-        ) : tab === 'department-requests' ? (
+        ) : shownTab === 'requests' ? (
+          renderRequests()
+        ) : shownTab === 'department-requests' ? (
           departmentRequests.length === 0 ? <EmptyState title="No pending department changes" detail="Staff requests to move to another department will appear here." /> : (
             <div className="divide-y divide-slate-100 dark:divide-slate-800">
               {departmentRequests.map((request) => (
@@ -401,8 +413,28 @@ export const SuperAdminPage: React.FC<{
               ))}
             </div>
           )
-        ) : tab === 'users' ? (
-          filteredUsers.length === 0 ? <EmptyState title="No staff accounts found" detail="Change your search or invite a new staff member." /> : (
+        ) : shownTab === 'users' ? (
+          <>
+          {hideTabs && (
+            <div role="tablist" aria-label="User accounts sections" className="flex gap-1 border-b border-slate-200 px-4 py-2 dark:border-slate-800">
+              {([
+                { id: 'accounts', label: 'Accounts', count: undefined },
+                { id: 'requests', label: 'Approval requests', count: overview?.pending_requests ?? requests.length },
+              ] as const).map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={usersView === item.id}
+                  onClick={() => setUsersView(item.id)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${usersView === item.id ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                >
+                  {item.label}{item.count ? <span className="ml-2 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] text-slate-950">{item.count}</span> : null}
+                </button>
+              ))}
+            </div>
+          )}
+          {hideTabs && usersView === 'requests' ? renderRequests() : filteredUsers.length === 0 ? <EmptyState title="No staff accounts found" detail="Change your search or invite a new staff member." /> : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[760px] text-left text-xs">
                 <thead className="bg-slate-50 text-slate-500 dark:bg-slate-950/50"><tr><th className="px-4 py-3 font-semibold">Staff member</th><th className="px-4 py-3 font-semibold">Role / unit</th><th className="px-4 py-3 font-semibold">Status</th><th className="px-4 py-3 font-semibold">Created</th><th className="px-4 py-3 text-right font-semibold">Actions</th></tr></thead>
@@ -413,24 +445,23 @@ export const SuperAdminPage: React.FC<{
                       <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
                         {editingRoleId === user.id ? (
                           <div className="flex flex-wrap items-center gap-1.5">
-                            <select
-                              autoFocus
+                            <Select
+                              size="xs"
+                              className="w-44"
+                              aria-label="Role"
                               value={roleDraft}
-                              onChange={(e) => chooseRoleDraft(e.target.value as UserRole)}
-                              className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-900 outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
-                            >
-                              {roles.map((item) => <option key={item} value={item}>{item.replaceAll('_', ' ')}</option>)}
-                            </select>
-                            <select
+                              onChange={chooseRoleDraft}
+                              options={roles.map((item) => ({ value: item, label: item.replaceAll('_', ' ') }))}
+                            />
+                            <Select
+                              size="xs"
+                              className="w-40"
                               aria-label="Department"
                               value={departmentDraft}
-                              onChange={(e) => setDepartmentDraft(e.target.value as LaboratoryDepartment)}
+                              onChange={(value) => setDepartmentDraft(value as LaboratoryDepartment)}
                               disabled={!isLabScopedRole(roleDraft)}
-                              title={isLabScopedRole(roleDraft) ? 'Laboratory division' : 'This role is institution-wide'}
-                              className="h-8 max-w-[9rem] rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-900 outline-none focus:border-amber-500 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
-                            >
-                              {departmentsForRole(roleDraft).map((item) => <option key={item} value={item}>{departmentLabel(item)}</option>)}
-                            </select>
+                              options={departmentsForRole(roleDraft).map((item) => ({ value: item, label: departmentLabel(item) }))}
+                            />
                             <button type="button" title="Save role" disabled={workingId === user.id || (roleDraft === user.role && departmentDraft === user.department)} onClick={() => void saveRole(user)} className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-600 text-white disabled:opacity-40"><Check className="h-3.5 w-3.5" /></button>
                             <button type="button" title="Cancel" onClick={() => setEditingRoleId(null)} className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300"><X className="h-3.5 w-3.5" /></button>
                           </div>
@@ -469,18 +500,10 @@ export const SuperAdminPage: React.FC<{
                 </tbody>
               </table>
             </div>
-          )
+          )}
+          </>
         ) : (
-          events.length === 0 ? <EmptyState title="No audit activity yet" detail="Authentication and administrative actions will be recorded here." /> : (
-            <div className="divide-y divide-slate-100 dark:divide-slate-800">
-              {events.map((event) => (
-                <div key={event.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 text-xs">
-                  <div><div className="font-semibold text-slate-800 dark:text-slate-100">{event.action.replaceAll('_', ' ')}</div><div className="mt-1 text-slate-500">{event.actorEmail} · {event.recordType}{event.recordId ? ` · ${event.recordId}` : ''}</div></div>
-                  <time className="text-slate-500">{formatDate(event.createdAt)}</time>
-                </div>
-              ))}
-            </div>
-          )
+          <AuditLogView events={events} />
         )}
       </div>
       <p className="flex items-center gap-2 text-[11px] text-slate-500"><CheckCircle2 className="h-4 w-4 text-emerald-500" /> Administrator actions are stored in PostgreSQL audit logs.</p>

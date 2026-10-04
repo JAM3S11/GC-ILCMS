@@ -354,7 +354,7 @@ export const VisitorRegistrationPage: React.FC<VisitorRegistrationPageProps> = (
 
           <FormSection
             title="Destination"
-            description="The laboratory receiving the submission is notified as soon as the visitor is registered."
+            description="After registering, press Notify on the visitor's row to tell this laboratory the client is coming."
           >
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
               <Field label="Destination laboratory" icon={FlaskConical} required>
@@ -444,7 +444,7 @@ export const VisitorRegistrationPage: React.FC<VisitorRegistrationPageProps> = (
             <p className="text-xs text-slate-500 dark:text-slate-400">
               {isValid ? (
                 <span className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400">
-                  <Check className="h-3.5 w-3.5" /> Ready to register — {laboratoryLabel(laboratory)} will be notified.
+                  <Check className="h-3.5 w-3.5" /> Ready to register — you can then notify {laboratoryLabel(laboratory)}.
                 </span>
               ) : (
                 `${Object.keys(errors).length} required field${Object.keys(errors).length === 1 ? '' : 's'} remaining`

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Building2,
@@ -48,6 +48,7 @@ import { Button, DashboardHeader, DashboardPage, Panel, SegmentedControl, Status
 import { Select } from '../common/Select';
 import { Field, Meta, Section, inputCls } from './IntakeFormParts';
 import { ReceptionClientDetails } from './ReceptionClientDetails';
+import { WaterEditAccess, WaterIntakeEdit, WaterSenderEdit } from '../../lib/waterIntakeAccess';
 
 /**
  * Water & Environment exhibit intake. Registration ends at Charges; the Head
@@ -78,6 +79,16 @@ interface WaterIntakePageProps {
   intakes: WaterIntake[];
   onSaveIntake: (submission: WaterIntakeSubmission) => Promise<WaterIntake>;
   onCancel: () => void;
+  /** Open an existing exhibit with its details ready to change, instead of registering a new one. */
+  editIntake?: WaterIntake;
+  /** What this person may change on `editIntake`. */
+  editAccess?: WaterEditAccess;
+  /** Saves the changed parts; either part is null when it was not changed or not allowed. */
+  onSaveEdit?: (intakeId: string, intakeEdit: WaterIntakeEdit | null, senderEdit: WaterSenderEdit | null) => Promise<void>;
+  /** Whether this person may tick that the intake documents are approved (Water staff). */
+  canConfirmDocuments?: boolean;
+  /** Saves the tick straight away when editing an existing exhibit. */
+  onSetDocumentsConfirmed?: (intakeId: string, confirmed: boolean) => Promise<void>;
 }
 
 const WATER_STORAGE_LOCATION = 'Water & Environment Sample Store — Cold Room W-01';
@@ -97,6 +108,11 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
   intakes,
   onSaveIntake,
   onCancel,
+  editIntake,
+  editAccess,
+  onSaveEdit,
+  canConfirmDocuments = true,
+  onSetDocumentsConfirmed,
 }) => {
   const today = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Africa/Nairobi',
@@ -104,50 +120,78 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
     month: '2-digit',
     day: '2-digit',
   }).format(new Date());
-  // Client details always come from the reception record and are read only.
-  // Without a visitor routed to Water they stay empty; only the P.O Box can be
-  // typed, and only when reception left it empty.
-  const reception = visitor && visitor.laboratory === 'Water' ? visitor : null;
+  // Do not expose sender details until reception has notified Water.
+  const reception =
+    visitor && visitor.laboratory === 'Water' && visitor.labNotificationSentAt ? visitor : null;
   const notified = !!reception?.labNotificationSentAt;
-  const senderType: WaterSenderType = 'Organisation';
-  const [poBoxInput, setPoBoxInput] = useState('');
-  useEffect(() => {
-    setPoBoxInput('');
-  }, [reception?.id]);
-  const orgName = reception?.station ?? '';
-  const contactPerson = reception?.officerName ?? '';
-  const contactMobile = reception?.phone ?? '';
-  const orgAddress = reception?.poBox?.trim() ? reception.poBox : poBoxInput;
+  const editing = !!editIntake;
+  const access: WaterEditAccess = editAccess ?? { intake: true, sender: true, fillInOnly: false };
+  const senderType: WaterSenderType = editIntake?.senderType ?? 'Organisation';
+  // In edit mode the sender is held on the exhibit and can be changed (if allowed);
+  // when registering it always comes from the reception record.
+  const [eSenderName, setESenderName] = useState(editIntake?.senderName ?? '');
+  const [eAddress, setEAddress] = useState(editIntake?.senderAddress ?? '');
+  const [eSenderMobile, setESenderMobile] = useState(editIntake?.senderMobile ?? '');
+  const [eContact, setEContact] = useState(editIntake?.contactPerson ?? '');
+  const [eContactMobile, setEContactMobile] = useState(editIntake?.contactPersonMobile ?? '');
+  const orgName = editing ? eSenderName : reception?.station ?? '';
+  const contactPerson = editing ? eContact : reception?.officerName ?? '';
+  const contactMobile = editing ? eContactMobile : reception?.phone ?? '';
+  const orgAddress = editing ? eAddress : reception?.poBox?.trim() ?? '';
 
   // Receipt
-  const [receivingOfficerId, setReceivingOfficerId] = useState(currentUserId);
-  const [dateReceived, setDateReceived] = useState(today);
+  const [receivingOfficerId, setReceivingOfficerId] = useState(editIntake?.receivingOfficerId ?? currentUserId);
+  const [dateReceived, setDateReceived] = useState(editIntake?.dateReceived ?? today);
+  const [dateSampled, setDateSampled] = useState(editIntake?.dateSampled ?? '');
+  // New exhibit: held here and saved with it. Existing exhibit: saved the moment it is ticked.
+  const [documentsConfirmedNew, setDocumentsConfirmedNew] = useState(false);
+  const [confirmingDocuments, setConfirmingDocuments] = useState(false);
+  const documentsConfirmed = editing ? !!editIntake?.documentsConfirmedAt : documentsConfirmedNew;
 
   // Test
-  const [testType, setTestType] = useState<WaterTestType | ''>('');
-  const [parameters, setParameters] = useState<string[]>([]);
+  const [testType, setTestType] = useState<WaterTestType | ''>(editIntake?.testType ?? '');
+  const [parameters, setParameters] = useState<string[]>(editIntake?.specificParameters ?? []);
   const [otherParameter, setOtherParameter] = useState('');
 
   // Source of locality
-  const [sourceCategory, setSourceCategory] = useState<WaterSourceCategory | ''>('');
-  const [sourceType, setSourceType] = useState('');
-  const [locationFrom, setLocationFrom] = useState('');
-  const [dischargeTo, setDischargeTo] = useState('');
+  const [sourceCategory, setSourceCategory] = useState<WaterSourceCategory | ''>(editIntake?.sourceCategory ?? '');
+  const [sourceType, setSourceType] = useState(editIntake?.sourceType ?? '');
+  const [locationFrom, setLocationFrom] = useState(editIntake?.locationFrom ?? '');
+  const [dischargeTo, setDischargeTo] = useState(editIntake?.dischargeTo ?? '');
 
   // Charges
-  const [receiptNumber, setReceiptNumber] = useState('');
+  const [receiptNumber, setReceiptNumber] = useState(editIntake?.receiptNumber ?? '');
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
 
-  const labReference = 'Issued when registered';
+  const labReference = editIntake?.labReference ?? 'Issued when registered';
 
   const isEffluent = sourceCategory === 'Effluent Water';
+  // Receipt, test and source are locked unless the intake part is editable; once analysis has
+  // started only blanks can be filled in (the receiver, date received, test and source stay put).
+  const lockIntake = editing && (!access.intake || access.fillInOnly);
+  const lockDateSampled = editing && (!access.intake || (access.fillInOnly && !!editIntake?.dateSampled));
+  const lockReceipt = editing && (!access.intake || (access.fillInOnly && !!editIntake?.receiptNumber));
+  const lockSender = editing && !access.sender;
+  const officerOptions = staffMembers.some((m) => m.id === editIntake?.receivingOfficerId) || !editIntake?.receivingOfficerId
+    ? staffMembers
+    : [{ id: editIntake.receivingOfficerId, name: editIntake.receivingOfficer }, ...staffMembers];
   const allParameters = [...parameters, ...(otherParameter.trim() ? [otherParameter.trim()] : [])];
   const charge = testType ? waterTestCharge(testType, senderType) : 0;
 
   const poBoxInvalid = orgAddress.trim() !== '' && !isValidPoBox(orgAddress);
 
-  const senderChecks = [
+  const senderChecks = editing
+    ? lockSender
+      ? []
+      : [
+          { label: senderType === 'Individual' ? 'Full name' : 'Organisation / station', value: orgName.trim(), ok: orgName.trim().length >= 2 },
+          { label: 'P.O Box', value: orgAddress.trim(), ok: senderType === 'Individual' ? isValidPoBox(orgAddress) : orgAddress.trim().length >= 2 },
+          senderType === 'Individual'
+            ? { label: 'Mobile', value: eSenderMobile.trim(), ok: isValidKenyanMobile(eSenderMobile) }
+            : { label: 'Contact person', value: contactPerson.trim(), ok: contactPerson.trim().length >= 2 },
+        ]
+    : [
     { label: 'Client', value: contactPerson.trim(), ok: !!reception },
     { label: 'Organisation / station', value: orgName.trim(), ok: orgName.trim() !== '' },
     { label: 'P.O Box', value: orgAddress.trim(), ok: isValidPoBox(orgAddress) },
@@ -158,6 +202,8 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
     ...senderChecks,
     { label: 'Receiving officer', value: staffMembers.find((member) => member.id === receivingOfficerId)?.name ?? '', ok: !!receivingOfficerId },
     { label: 'Date received', value: dateReceived, ok: dateReceived !== '' && dateReceived <= today },
+    // Older exhibits were registered before the sampling date existed, so editing may leave it blank.
+    { label: 'Date sample taken', value: dateSampled, ok: (editing ? dateSampled === '' : dateSampled !== '') || (dateSampled !== '' && dateSampled <= dateReceived) },
     {
       label: 'Type of test',
       value: testType === 'Specific Chemical Analysis' && allParameters.length ? `Specific — ${allParameters.join(', ')}` : testType,
@@ -186,8 +232,100 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
     setDischargeTo('');
   };
 
+  const intakeEdit: WaterIntakeEdit | null = testType && sourceCategory
+    ? {
+        receivingOfficerId,
+        dateReceived,
+        dateSampled: dateSampled || undefined,
+        testType,
+        specificParameters: testType === 'Specific Chemical Analysis' ? allParameters : [],
+        sourceCategory,
+        sourceType,
+        locationFrom: locationFrom.trim(),
+        dischargeTo: isEffluent ? dischargeTo : undefined,
+        receiptNumber: receiptNumber.trim() || undefined,
+      }
+    : null;
+  const senderEdit: WaterSenderEdit = {
+    senderName: orgName.trim(),
+    senderAddress: orgAddress.trim(),
+    senderMobile: senderType === 'Individual' ? eSenderMobile.trim() : undefined,
+    contactPerson: senderType === 'Individual' ? undefined : contactPerson.trim(),
+    contactPersonMobile: senderType === 'Individual' ? undefined : contactMobile.trim() || undefined,
+  };
+  const sameList = (a: string[], b: string[]) => JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
+  const intakeChanged =
+    !!editIntake && !!intakeEdit &&
+    (intakeEdit.receivingOfficerId !== (editIntake.receivingOfficerId ?? '') ||
+      intakeEdit.dateReceived !== editIntake.dateReceived ||
+      (intakeEdit.dateSampled ?? '') !== (editIntake.dateSampled ?? '') ||
+      intakeEdit.testType !== editIntake.testType ||
+      !sameList(intakeEdit.specificParameters, editIntake.specificParameters ?? []) ||
+      intakeEdit.sourceCategory !== editIntake.sourceCategory ||
+      intakeEdit.sourceType !== editIntake.sourceType ||
+      intakeEdit.locationFrom !== editIntake.locationFrom ||
+      (intakeEdit.dischargeTo ?? '') !== (editIntake.dischargeTo ?? '') ||
+      (intakeEdit.receiptNumber ?? '') !== (editIntake.receiptNumber ?? ''));
+  const senderChanged =
+    !!editIntake &&
+    (senderEdit.senderName !== editIntake.senderName ||
+      senderEdit.senderAddress !== editIntake.senderAddress ||
+      (senderEdit.senderMobile ?? '') !== (editIntake.senderMobile ?? '') ||
+      (senderEdit.contactPerson ?? '') !== (editIntake.contactPerson ?? '') ||
+      (senderEdit.contactPersonMobile ?? '') !== (editIntake.contactPersonMobile ?? ''));
+  const canSaveEdit =
+    editing && doneCount === checks.length && ((access.intake && intakeChanged) || (access.sender && senderChanged));
+
+  // Why Save is greyed out, in plain words, so it never just looks broken.
+  const saveBlocker = !editing
+    ? ''
+    : checks.find((c) => !c.ok)
+      ? `Complete ${checks.find((c) => !c.ok)?.label.toLowerCase()} to save.`
+      : !((access.intake && intakeChanged) || (access.sender && senderChanged))
+        ? 'Change a detail to enable Save.'
+        : '';
+  const errorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // The form is long; bring a failed save into view instead of leaving it below the fold.
+    if (saveError) errorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [saveError]);
+
+  const toggleDocuments = async (confirmed: boolean) => {
+    if (!editing || !editIntake) {
+      setDocumentsConfirmedNew(confirmed);
+      return;
+    }
+    setConfirmingDocuments(true);
+    setSaveError('');
+    try {
+      await onSetDocumentsConfirmed?.(editIntake.id, confirmed);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Could not save the confirmation.');
+    } finally {
+      setConfirmingDocuments(false);
+    }
+  };
+  const showDocumentsCheck = canConfirmDocuments && !(editing && editIntake?.certificateIssuedAt);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (editing && editIntake) {
+      if (!canSaveEdit || saving) return;
+      setSaving(true);
+      setSaveError('');
+      try {
+        await onSaveEdit?.(
+          editIntake.id,
+          access.intake && intakeChanged ? intakeEdit : null,
+          access.sender && senderChanged ? senderEdit : null,
+        );
+      } catch (error) {
+        setSaveError(error instanceof Error ? error.message : 'The changes could not be saved.');
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
     if (!canSubmit || !reception || !testType || !sourceCategory || saving) return;
 
     const exhibitId = `EXH-${String(activeCase.exhibits.length + 1).padStart(4, '0')}`;
@@ -244,9 +382,11 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
           senderAddress,
           contactPerson: contactPerson.trim(),
           contactPersonMobile: contactMobile.trim() || undefined,
+          documentsConfirmedAt: documentsConfirmedNew ? today : undefined,
           receivingOfficer: receivedBy,
           receivingOfficerId,
           dateReceived,
+          dateSampled,
           testType,
           specificParameters: testType === 'Specific Chemical Analysis' ? allParameters : undefined,
           sourceCategory,
@@ -255,7 +395,7 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
           dischargeTo: isEffluent ? dischargeTo : undefined,
           charges: charge,
           receiptNumber: receiptNumber.trim() || undefined,
-          status: 'Awaiting Approval',
+          status: 'Awaiting Assignment',
         },
       });
     } catch (error) {
@@ -268,13 +408,13 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
   return (
     <DashboardPage>
       <DashboardHeader
-        breadcrumb={['Laboratory', 'Water & Environment', 'Exhibit intake']}
-        title="Exhibit intake"
+        breadcrumb={['Laboratory', 'Water & Environment', editing ? 'Edit exhibit intake' : 'Exhibit intake']}
+        title={editing ? 'Edit exhibit intake' : 'Exhibit intake'}
         meta={<StatusPill tone="sky" dot={false}>{labReference}</StatusPill>}
-        description="Record a water or wastewater sample received by the Water and Environment laboratory."
+        description={editing ? 'Change the details you need to and save. Fields you cannot change are greyed out.' : 'Record a water or wastewater sample received by the Water and Environment laboratory.'}
         actions={
           <Button icon={ArrowLeft} onClick={onCancel}>
-            Back to laboratory
+            {editing ? 'Back' : 'Back to laboratory'}
           </Button>
         }
       />
@@ -285,7 +425,18 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
           onSubmit={handleSubmit}
           className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:col-span-8 dark:border-slate-800 dark:bg-slate-900"
         >
-          {reception && notified ? (
+          {editing ? (
+            <div role="status" className="flex items-center gap-2 border-b border-sky-500/20 bg-sky-500/5 px-5 py-2.5 text-xs text-sky-700 dark:text-sky-300">
+              <FileText className="h-3.5 w-3.5 shrink-0" />
+              {access.fillInOnly
+                ? 'Analysis has started, so you can only fill in details that were left out.'
+                : access.intake && access.sender
+                  ? 'You can change the client and the exhibit details.'
+                  : access.intake
+                    ? 'You can change the exhibit details. Client details can be changed by reception or the Head.'
+                    : 'You can change the client details. The exhibit details are locked for you.'}
+            </div>
+          ) : reception && notified ? (
             <div className="flex items-center gap-2 border-b border-sky-500/20 bg-sky-500/5 px-5 py-2.5 text-xs text-sky-700 dark:text-sky-300">
               <FileText className="h-3.5 w-3.5 shrink-0" />
               Client details come from reception record {reception.visitNumber}, registered by {reception.receptionistName}, and cannot be edited here.
@@ -313,13 +464,61 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
 
           {/* 2. Sender */}
           <Section icon={Building2} title="Sender" description="The police station or organisation submitting the sample, as recorded at reception.">
-            <ReceptionClientDetails
-              visitor={reception}
-              poBox={orgAddress}
-              onPoBoxChange={setPoBoxInput}
-              poBoxInvalid={poBoxInvalid}
-            />
+            {editing ? (
+              <fieldset disabled={lockSender} className="contents">
+                <Field label={senderType === 'Individual' ? 'Full name' : 'Organisation / police station'} required className="sm:col-span-2">
+                  <input value={eSenderName} onChange={(e) => setESenderName(e.target.value)} maxLength={200} className={`${inputCls} disabled:cursor-not-allowed disabled:opacity-60`} />
+                </Field>
+                <Field label="P.O Box" required error={senderType === 'Individual' && eAddress !== '' && !isValidPoBox(eAddress)} hint={senderType === 'Individual' && eAddress !== '' && !isValidPoBox(eAddress) ? 'Use the form P.O Box 123-30100' : undefined}>
+                  <input value={eAddress} onChange={(e) => setEAddress(e.target.value)} maxLength={300} className={`${inputCls} disabled:cursor-not-allowed disabled:opacity-60`} />
+                </Field>
+                {senderType === 'Individual' ? (
+                  <Field label="Mobile" required error={eSenderMobile !== '' && !isValidKenyanMobile(eSenderMobile)} hint={eSenderMobile !== '' && !isValidKenyanMobile(eSenderMobile) ? 'Enter a valid Kenyan mobile number' : undefined}>
+                    <input value={eSenderMobile} onChange={(e) => setESenderMobile(e.target.value)} className={`${inputCls} disabled:cursor-not-allowed disabled:opacity-60`} />
+                  </Field>
+                ) : (
+                  <>
+                    <Field label="Contact person" required>
+                      <input value={eContact} onChange={(e) => setEContact(e.target.value)} maxLength={150} className={`${inputCls} disabled:cursor-not-allowed disabled:opacity-60`} />
+                    </Field>
+                    <Field label="Contact mobile" hint="Optional" error={eContactMobile.trim() !== '' && !isValidKenyanMobile(eContactMobile)}>
+                      <input value={eContactMobile} onChange={(e) => setEContactMobile(e.target.value)} className={`${inputCls} disabled:cursor-not-allowed disabled:opacity-60`} />
+                    </Field>
+                  </>
+                )}
+              </fieldset>
+            ) : (
+              <ReceptionClientDetails
+                visitor={reception}
+                poBox={orgAddress}
+                readOnlyPoBox
+                poBoxInvalid={poBoxInvalid}
+              />
+            )}
           </Section>
+
+          {/* Intake documents: the Head cannot approve the memo until this is ticked */}
+          {showDocumentsCheck && (
+            <Section icon={FileText} title="Intake documents" description="Confirm the documents submitted with the exhibit are fine.">
+              <label className="flex cursor-pointer items-start gap-2.5 text-[13px] text-slate-700 sm:col-span-2 dark:text-slate-200">
+                <input
+                  type="checkbox"
+                  checked={documentsConfirmed}
+                  disabled={confirmingDocuments || (editing && !onSetDocumentsConfirmed)}
+                  onChange={(event) => void toggleDocuments(event.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-amber-500 focus:ring-amber-500"
+                />
+                <span>
+                  Intake documents are approved
+                  <span className="block text-[11px] text-slate-500 dark:text-slate-400">
+                    {editing && editIntake?.documentsConfirmedAt
+                      ? `Confirmed ${editIntake.documentsConfirmedAt}${editIntake.documentsConfirmedBy ? ` by ${editIntake.documentsConfirmedBy}` : ''}. Untick to stop the memo being approved.`
+                      : 'Tick once the submitted documents have been checked. The Head cannot approve the memo until this is ticked.'}
+                  </span>
+                </span>
+              </label>
+            </Section>
+          )}
 
           {/* 3. Receipt */}
           <Section icon={PackageCheck} title="Receipt" description="The officer taking custody of the sample, and when.">
@@ -329,15 +528,20 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
                 value={receivingOfficerId}
                 onChange={setReceivingOfficerId}
                 placeholder="Select officer…"
-                options={staffMembers.map((member) => ({ value: member.id, label: member.name }))}
+                disabled={lockIntake}
+                options={officerOptions.map((member) => ({ value: member.id, label: member.name }))}
               />
             </Field>
             <Field label="Date of receiving" required icon={Calendar} error={dateReceived > today} hint={dateReceived > today ? 'Cannot be in the future' : undefined}>
-              <input type="date" max={today} value={dateReceived} onChange={(e) => setDateReceived(e.target.value)} className={inputCls} />
+              <input type="date" max={today} value={dateReceived} onChange={(e) => setDateReceived(e.target.value)} disabled={lockIntake} className={`${inputCls} disabled:cursor-not-allowed disabled:opacity-60`} />
+            </Field>
+            <Field label="Date sample taken" required={!editing} icon={Calendar} error={dateSampled !== '' && dateSampled > dateReceived} hint={dateSampled !== '' && dateSampled > dateReceived ? 'Cannot be after the date received' : undefined}>
+              <input type="date" max={dateReceived || today} value={dateSampled} onChange={(e) => setDateSampled(e.target.value)} disabled={lockDateSampled} className={`${inputCls} disabled:cursor-not-allowed disabled:opacity-60`} />
             </Field>
           </Section>
 
           {/* 4. Type of test */}
+          <fieldset disabled={lockIntake} className="contents">
           <Section icon={FlaskConical} title="Type of test" description="Charges shown for an organisation.">
             <RadioRows
               label="Type of test"
@@ -353,7 +557,7 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
                   Parameters to test <span className="text-rose-500">*</span>
                 </span>
                 <div className="flex flex-wrap gap-2">
-                  {WATER_SPECIFIC_PARAMETERS.map((p) => {
+                  {[...new Set([...WATER_SPECIFIC_PARAMETERS, ...parameters])].map((p) => {
                     const on = parameters.includes(p);
                     return (
                       <button
@@ -383,7 +587,10 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
             )}
           </Section>
 
+          </fieldset>
+
           {/* 5. Source of locality */}
+          <fieldset disabled={lockIntake} className="contents">
           <Section icon={Droplets} title="Source of locality" description="What kind of water it is and where it was taken from.">
             <RadioRows
               label="Source of locality"
@@ -426,6 +633,8 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
             )}
           </Section>
 
+          </fieldset>
+
           {/* 6. Charges */}
           <Section icon={Receipt} title="Charges" description="Calculated from the type of test and the sender category." last>
             <div className="overflow-hidden rounded-lg border border-slate-200 text-xs sm:col-span-2 dark:border-slate-800">
@@ -449,11 +658,12 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
                 value={receiptNumber}
                 onChange={(e) => setReceiptNumber(e.target.value)}
                 placeholder="e.g. RCT-2026-00481"
-                className={`${inputCls} font-mono`}
+                disabled={lockReceipt}
+                className={`${inputCls} font-mono disabled:cursor-not-allowed disabled:opacity-60`}
               />
             </Field>
             <div className="grid grid-cols-2 gap-3 rounded-lg bg-slate-50 p-3 text-xs dark:bg-slate-950/50">
-              <Meta label="Exhibit ID" value="Issued on save" mono />
+              <Meta label="Exhibit ID" value={editIntake?.exhibitId ?? 'Issued on save'} mono />
               <Meta label="Storage" value="Cold Room W-01" icon={Warehouse} />
             </div>
           </Section>
@@ -465,17 +675,17 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
                 <div className="h-full rounded-full bg-sky-500 transition-all" style={{ width: `${(doneCount / checks.length) * 100}%` }} />
               </div>
               <span className="text-xs text-slate-500 dark:text-slate-400">
-                {doneCount} of {checks.length} required fields
+                {editing && saveBlocker ? saveBlocker : `${doneCount} of ${checks.length} required fields`}
               </span>
             </div>
             <div className="flex gap-2">
               <Button onClick={onCancel}>Cancel</Button>
-              <Button type="submit" variant="primary" icon={Check} disabled={!canSubmit || saving}>
-                {saving ? 'Saving…' : 'Register exhibit'}
+              <Button type="submit" variant="primary" icon={Check} disabled={editing ? !canSaveEdit || saving : !canSubmit || saving}>
+                {saving ? 'Saving…' : editing ? 'Save changes' : 'Register exhibit'}
               </Button>
             </div>
           </div>
-          {saveError && <div role="alert" className="border-t border-rose-200 bg-rose-50 px-5 py-3 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">{saveError}</div>}
+          {saveError && <div ref={errorRef} role="alert" className="border-t border-rose-200 bg-rose-50 px-5 py-3 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">{saveError}</div>}
         </form>
 
         {/* ------------------------------ Aside ----------------------------- */}
@@ -506,10 +716,10 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
           <Panel icon={UserCheck} tone="amber" title="What happens next">
             <ol className="space-y-3 text-xs">
               {[
-                { title: 'Registered', text: 'You register the exhibit. It is stored as Awaiting Approval.', active: true },
-                { title: 'Documents approved', text: 'The Head of Water & Environment reviews and approves the submitted documents.' },
+                { title: 'Registered', text: 'You register the exhibit. It waits for the Head to assign it.', active: true },
                 { title: 'Analysis Officer assigned', text: 'The Head of Water & Environment assigns an officer. Everyone in the department can see who holds it.' },
-                { title: 'Analysis complete', text: 'The assigned officer marks the analysis complete.' },
+                { title: 'Analysis complete', text: 'The assigned officer enters the test results and marks the analysis complete.' },
+                { title: 'Documents and memo approved', text: 'The Head approves the intake documents, then the memo, which can then be printed.' },
               ].map((s, i) => (
                 <li key={s.title} className="flex gap-3">
                   <span

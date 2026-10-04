@@ -38,7 +38,9 @@ import { formatKes } from './waterIntake';
 
 import { LaboratoryWorkspace } from './components/laboratory/LaboratoryWorkspace';
 import { WaterLaboratoryView } from './components/laboratory/WaterLaboratoryView';
-import { WaterIntakeEdit } from './components/laboratory/WaterIntakeEditModal';
+import { ExhibitCaseFile } from './components/laboratory/ExhibitCaseFile';
+import { ExhibitCaseFileIndex } from './components/laboratory/ExhibitCaseFileIndex';
+import { WaterEditAccess, WaterIntakeEdit, WaterSenderEdit, canEditWaterIntake, waterEditAccess } from './lib/waterIntakeAccess';
 import { FoodDrugIntakeEdit } from './components/laboratory/FoodDrugIntakeEditModal';
 import { FoodDrugLaboratoryView } from './components/laboratory/FoodDrugLaboratoryView';
 import { DigitalCaseFile } from './components/case/DigitalCaseFile';
@@ -53,13 +55,14 @@ import { SettingsView, readUserSettings } from './components/settings/SettingsVi
 import { useTheme } from './theme/ThemeProvider';
 import { ApiError, apiRequest } from './lib/api';
 import { SuperAdminPage } from './components/admin/SuperAdminPage';
+import { SuperAdminDashboard } from './components/dashboard/SuperAdminDashboard';
 
 const LABORATORY_WORKSPACE_ROLES: UserRole[] = ['ANALYST', 'SENIOR_CHEMIST', 'HEAD_OF_DEPARTMENT'];
-const RECEPTIONIST_VIEWS = new Set(['dashboard', 'register-visitor', 'lab-bay', 'check-out', 'notifications', 'audit', 'settings']);
+const RECEPTIONIST_VIEWS = new Set(['dashboard', 'register-visitor', 'lab-bay', 'check-out', 'notifications', 'audit', 'settings', 'water-intake-edit']);
 
 // Every member of these departments (interns included) works the laboratory
 // workspace, since each of them registers submissions for the section.
-const LABORATORY_WORKSPACE_DEPARTMENTS: LaboratoryDepartment[] = ['Food & Drugs'];
+const LABORATORY_WORKSPACE_DEPARTMENTS: LaboratoryDepartment[] = ['Food & Drugs', 'Water'];
 
 const canAccessLaboratoryWorkspace = (user?: User | null) =>
   !!user &&
@@ -68,6 +71,25 @@ const canAccessLaboratoryWorkspace = (user?: User | null) =>
 
 const isReceptionist = (role?: UserRole | null) => role === 'RECEPTIONIST';
 
+// Roles the server will assign a Water exhibit to (waterLabRoles on the server,
+// minus HEAD_OF_DEPARTMENT, who approves and assigns rather than analyses).
+// Keep in step with the `my-exhibits` nav item.
+const MY_EXHIBITS_ROLES: UserRole[] = ['ANALYST', 'SENIOR_CHEMIST', 'INTERN', 'ATTACHEE'];
+
+const canAccessMyExhibits = (user?: User | null) => !!user && MY_EXHIBITS_ROLES.includes(user.role);
+
+/**
+ * An exhibit case file is reachable by the officer the exhibit is assigned to, and by
+ * the Water Head and Senior Chemists, who supervise every exhibit. The server enforces this on every event and findings request; the client
+ * check just avoids rendering a page the officer could not load. The Water Head
+ * and super-admins keep oversight through the department register.
+ */
+const canOpenExhibitCaseFile = (user?: User | null, intake?: WaterIntake | null) =>
+  !!user && !!intake && (
+    intake.analysisOfficerId === user.id ||
+    (user.department === 'Water' && (user.role === 'HEAD_OF_DEPARTMENT' || user.role === 'SENIOR_CHEMIST'))
+  );
+
 export default function App() {
   const { setMode } = useTheme();
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -75,6 +97,8 @@ export default function App() {
   const [activeView, setActiveView] = useState<string>('landing');
   const [activeCase, setActiveCase] = useState<ForensicCase>(DEMO_CASE);
   const [waterIntakes, setWaterIntakes] = useState<WaterIntake[]>([]);
+  // The exhibit whose case file is open, when activeView is 'exhibit-case-file'.
+  const [activeWaterIntakeId, setActiveWaterIntakeId] = useState<string | null>(null);
   const [waterIntakesLoading, setWaterIntakesLoading] = useState(false);
   const [waterIntakesError, setWaterIntakesError] = useState('');
   const [waterStaff, setWaterStaff] = useState<Pick<User, 'id' | 'name' | 'role'>[]>([]);
@@ -93,7 +117,7 @@ export default function App() {
   const [receptionActivityNotificationError, setReceptionActivityNotificationError] = useState('');
   const [adminNotifications, setAdminNotifications] = useState<AppNotification[]>([]);
   const [adminNotificationError, setAdminNotificationError] = useState('');
-  const [superAdminTab, setSuperAdminTab] = useState<'requests' | 'department-requests' | 'users' | 'audit'>('requests');
+  const [superAdminTab, setSuperAdminTab] = useState<'requests' | 'department-requests' | 'users' | 'audit'>('users');
   const [auditLogs, setAuditLogs] = useState<AuditEvent[]>(INITIAL_AUDIT_LOGS);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -119,6 +143,16 @@ export default function App() {
       ),
     [visitors, selectedIntakeVisitId, currentUser?.department]
   );
+  // The client the Water intake form is bound to. Only a client chosen on purpose (Open intake
+  // from Reception & Client Handover) is used; opening the form from the sidebar leaves the
+  // client details as dashes instead of silently picking up whoever arrived last.
+  const chosenWaterVisitor = useMemo(
+    () =>
+      selectedIntakeVisitId
+        ? visitors.find((v) => v.id === selectedIntakeVisitId && v.status !== 'Departed' && v.laboratory === 'Water')
+        : undefined,
+    [visitors, selectedIntakeVisitId],
+  );
   const officerVerified = !!intakeVisitor &&
     intakeVisitor.status !== 'Awaiting Laboratory Reception' &&
     intakeVisitor.status !== 'Departed';
@@ -143,6 +177,25 @@ export default function App() {
   }, [currentUser?.id, currentUser?.department]);
 
   const waterOfficers = useMemo(() => waterStaff.filter((u) => u.role !== 'HEAD_OF_DEPARTMENT'), [waterStaff]);
+
+  // The exhibit whose case file is open. Read from the list so the case file sees
+  // status and findings changes without a second fetch.
+  const activeWaterIntake = useMemo(
+    () => waterIntakes.find((intake) => intake.id === activeWaterIntakeId) ?? null,
+    [waterIntakes, activeWaterIntakeId],
+  );
+
+  /** Merges a freshly saved intake back into the list, so every view stays in step. */
+  const handleWaterIntakeUpdated = useCallback((intake: WaterIntake) => {
+    setWaterIntakes((previous) => [intake, ...previous.filter((item) => item.id !== intake.id)]);
+  }, []);
+  // Sidebar badge for My Exhibits: this officer's queue still to finish.
+  const myExhibitsCount = useMemo(
+    () => (currentUser
+      ? waterIntakes.filter((i) => i.analysisOfficerId === currentUser.id && i.status === 'Under Analysis').length
+      : 0),
+    [waterIntakes, currentUser?.id],
+  );
 
   // Departmental alerts: staff attached to a laboratory only see notifications
   // addressed to their own department (or their role), never another
@@ -182,7 +235,7 @@ export default function App() {
       .then(({ user }) => {
         if (!cancelled) {
           setCurrentUser(user);
-          setActiveView(user.role === 'SUPER_ADMIN' ? 'super-admin' : 'dashboard');
+          setActiveView('dashboard');
         }
       })
       .catch((error: unknown) => {
@@ -220,8 +273,15 @@ export default function App() {
     if (!currentUser) return;
     if (isReceptionist(currentUser.role) && !RECEPTIONIST_VIEWS.has(activeView)) {
       setActiveView('dashboard');
+    } else if (activeView === 'lab-bay' && currentUser.department === 'Water' && currentUser.role !== 'SUPER_ADMIN') {
+      // Water handles its clients from the Exhibit Laboratory page.
+      setActiveView('laboratory');
     } else if (activeView === 'laboratory' && !canAccessLaboratoryWorkspace(currentUser)) {
       setActiveView('dashboard');
+    } else if (activeView === 'exhibit-case-file' && !canOpenExhibitCaseFile(currentUser, activeWaterIntake)) {
+      // e.g. the exhibit was transferred to another officer while it was open.
+      setActiveWaterIntakeId(null);
+      setActiveView('laboratory');
     } else if (activeView === 'food-drug-intake' && currentUser.department !== 'Food & Drugs') {
       setActiveView('dashboard');
     } else if (activeView === 'water-intake' && currentUser.department !== 'Water') {
@@ -434,7 +494,7 @@ export default function App() {
 
   const handleLogin = (user: User) => {
     setCurrentUser(user);
-    setActiveView(user.role === 'SUPER_ADMIN' ? 'super-admin' : 'dashboard');
+    setActiveView('dashboard');
 
     // Add audit log
     const newLog: AuditEvent = {
@@ -482,12 +542,22 @@ export default function App() {
     }
 
     const isSuperAdmin = currentUser.role === 'SUPER_ADMIN';
+    // Admin sidebar entries ('super-admin:users', ...) open a console section.
+    if (view.startsWith('super-admin:')) {
+      if (!isSuperAdmin) {
+        showToast('Super-admin access is restricted.');
+        return;
+      }
+      setSuperAdminTab(view.slice('super-admin:'.length) as typeof superAdminTab);
+      setActiveView('super-admin');
+      return;
+    }
     if (view === 'super-admin' && !isSuperAdmin) {
       showToast('Super-admin access is restricted.');
       return;
     }
     if (isReceptionist(currentUser?.role) && !RECEPTIONIST_VIEWS.has(view)) {
-      showToast('Reception access is limited to registration, Lab Bay monitoring, and check-out.');
+      showToast('Reception access is limited to registration, Reception & Client Handover monitoring, and check-out.');
       return;
     }
 
@@ -505,6 +575,19 @@ export default function App() {
       showToast('Laboratory Workspace is restricted to Analyst and Head of Department roles, and Food & Drugs staff.');
       return;
     }
+
+    // The case file is a drill-down from My Exhibits, not a sidebar destination,
+    // so it is only reachable through an exhibit the officer actually owns.
+    if (view === 'exhibit-case-file' && !canOpenExhibitCaseFile(currentUser, activeWaterIntake)) {
+      showToast('Open an exhibit assigned to you from the Exhibit Laboratory to see its case file.');
+      return;
+    }
+
+    // Going to the intake form from the menu starts blank; Open intake sets the client itself.
+    if (view === 'water-intake') setSelectedIntakeVisitId(null);
+
+    // Opening Case File from the sidebar starts at the list, not the last exhibit.
+    if (view === 'case-file' && isSuperAdmin) setActiveWaterIntakeId(null);
 
     setActiveView(view);
   };
@@ -633,7 +716,14 @@ export default function App() {
           );
           setVisitors((previous) => [visit, ...previous.filter((current) => current.id !== visit.id)]);
           setSelectedIntakeVisitId(visit.id);
-          setActiveView('lab-bay');
+          setActiveView(
+            currentUser?.department === 'Water' &&
+              visit.laboratory === 'Water' &&
+              !!visit.labNotificationSentAt &&
+              visit.status !== 'Departed'
+              ? 'water-intake'
+              : 'lab-bay',
+          );
         } catch (cause) {
           showToast(cause instanceof Error ? cause.message : 'Could not load the visitor record.');
         }
@@ -691,6 +781,18 @@ export default function App() {
     }
   };
 
+  // Receptionist only (the server refuses everyone else).
+  const handleDeleteVisitor = async (visitor: OfficerVisitor) => {
+    try {
+      const result = await apiRequest<{ message: string }>(`/api/reception/visits/${visitor.id}`, { method: 'DELETE' });
+      setVisitors((previous) => previous.filter((visit) => visit.id !== visitor.id));
+      void loadReceptionVisitStats();
+      showToast(result.message);
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'The visitor record could not be deleted.');
+    }
+  };
+
   const handleRegisterVisitor = async (draft: ReceptionVisitDraft): Promise<boolean> => {
     try {
       const { visit } = await apiRequest<{ visit: OfficerVisitor }>('/api/reception/visits', {
@@ -700,20 +802,7 @@ export default function App() {
       setVisitors((prev) => [visit, ...prev.filter((current) => current.id !== visit.id)]);
       void loadReceptionVisitStats();
       await loadReceptionActivityNotifications();
-      setAuditLogs((prev) => [
-        {
-          id: `AUD-${Date.now().toString().slice(-4)}`,
-          timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
-          user: currentUser ? currentUser.name : 'Reception',
-          role: currentUser ? currentUser.role : 'RECEPTIONIST',
-          action: 'LAB_NOTIFICATION_DISPATCHED',
-          recordType: 'Notification',
-          recordId: visit.visitNumber,
-          details: `Dispatched automated arrival alert to ${laboratoryLabel(visit.laboratory)} staff for visitor ${visit.visitNumber}.`,
-        },
-        ...prev,
-      ]);
-      showToast(`Visitor ${visit.visitNumber} registered and ${laboratoryLabel(visit.laboratory)} has been notified.`);
+      showToast(`Visitor ${visit.visitNumber} registered. Press "Notify ${laboratoryLabel(visit.laboratory)}" to send the client to the laboratory.`);
       return true;
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Could not register visitor.');
@@ -884,6 +973,7 @@ export default function App() {
         contactPersonMobile: draft.contactPersonMobile,
         receivingOfficerId: draft.receivingOfficerId,
         dateReceived: draft.dateReceived,
+        dateSampled: draft.dateSampled,
         testType: draft.testType,
         specificParameters: draft.specificParameters ?? [],
         sourceCategory: draft.sourceCategory,
@@ -891,6 +981,7 @@ export default function App() {
         locationFrom: draft.locationFrom,
         dischargeTo: draft.dischargeTo,
         receiptNumber: draft.receiptNumber,
+        documentsConfirmed: !!draft.documentsConfirmedAt,
         supportingDocuments: submissionData.supportingDocuments,
         remarks: submissionData.remarks,
       }),
@@ -1020,49 +1111,25 @@ export default function App() {
     showToast(`${intakeId} reported by ${reportedBy}.`);
   };
 
-  // The Head of Water & Environment signs off the submitted documents before
-  // any Analysis Officer can be assigned. Enforced by the API.
-  const handleApproveWaterIntake = async (intakeId: string) => {
-    try {
-      const { intake } = await apiRequest<{ intake: WaterIntake }>(`/api/water/intakes/${intakeId}/approve`, {
-        method: 'POST',
-        body: '{}',
-      });
-      setWaterIntakes((previous) => [intake, ...previous.filter((item) => item.id !== intake.id)]);
-      setNotifications((previous) => [
-        {
-          id: `NOTIF-${Date.now()}`,
-          timestamp: 'Just now',
-          title: 'Water & Environment documents approved',
-          message: `${intake.labReference} (${intake.testType}) was approved by ${intake.approvedBy} and is ready for an Analysis Officer.`,
-          recipientDepartment: 'Water',
-          type: 'success',
-          read: false,
-          linkAction: 'LAB_WORKSPACE',
-        },
-        ...previous,
-      ]);
-      showToast(`${intake.labReference} documents approved.`);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Could not approve the Water exhibit documents.');
-    }
-  };
-
   // Only the Head of Water & Environment assigns the Analysis Officer. The
-  // assignment and completion transitions are enforced by the API.
+  // assignment, transfer and completion transitions are enforced by the API.
   const handleAssignWaterIntake = async (intakeId: string, officerId: string) => {
     try {
+      const previousAssignee = waterIntakes.find((item) => item.id === intakeId)?.analysisOfficer;
       const { intake } = await apiRequest<{ intake: WaterIntake }>(`/api/water/intakes/${intakeId}/assign`, {
         method: 'POST',
         body: JSON.stringify({ analysisOfficerId: officerId }),
       });
       setWaterIntakes((previous) => [intake, ...previous.filter((item) => item.id !== intake.id)]);
+      const transferred = !!previousAssignee;
       setNotifications((previous) => [
         {
           id: `NOTIF-${Date.now()}`,
           timestamp: 'Just now',
-          title: 'Water & Environment exhibit assigned',
-          message: `${intake.labReference} (${intake.testType}) has been assigned to ${intake.analysisOfficer} for analysis by ${intake.assignedBy}.`,
+          title: transferred ? 'Water & Environment exhibit transferred' : 'Water & Environment exhibit assigned',
+          message: transferred
+            ? `${intake.labReference} (${intake.testType}) was transferred from ${previousAssignee} to ${intake.analysisOfficer} by ${intake.assignedBy}.`
+            : `${intake.labReference} (${intake.testType}) has been assigned to ${intake.analysisOfficer} for analysis by ${intake.assignedBy}.`,
           recipientDepartment: 'Water',
           type: 'info',
           read: false,
@@ -1070,7 +1137,9 @@ export default function App() {
         },
         ...previous,
       ]);
-      showToast(`${intake.labReference} assigned to ${intake.analysisOfficer}.`);
+      showToast(transferred
+        ? `${intake.labReference} transferred from ${previousAssignee} to ${intake.analysisOfficer}.`
+        : `${intake.labReference} assigned to ${intake.analysisOfficer}.`);
     } catch (error) {
       showToast(error instanceof Error ? error.message : 'Could not assign the Water exhibit.');
     }
@@ -1089,16 +1158,74 @@ export default function App() {
     }
   };
 
-  // One edit per intake, before analysis starts, then it is locked. The API
-  // enforces this; errors are thrown so the edit dialog can show them.
-  const handleEditWaterIntake = async (intakeId: string, edit: WaterIntakeEdit): Promise<boolean> => {
-    const { intake } = await apiRequest<{ intake: WaterIntake }>(`/api/water/intakes/${intakeId}`, {
-      method: 'PATCH',
-      body: JSON.stringify(edit),
+  const openWaterCaseFile = (intake: WaterIntake) => {
+    setActiveWaterIntakeId(intake.id);
+    setActiveView('exhibit-case-file');
+  };
+
+  // Editing an exhibit opens the intake form with its details ready to change. Who may change
+  // what is decided by waterEditAccess and enforced again by the API.
+  const [editingIntake, setEditingIntake] = useState<{ intake: WaterIntake; access: WaterEditAccess; returnTo: string } | null>(null);
+
+  const openWaterIntakeEdit = (intake: WaterIntake, returnTo = 'laboratory') => {
+    const access = waterEditAccess(currentUser, intake);
+    if (!canEditWaterIntake(access)) {
+      showToast('You cannot edit this exhibit at its current stage.');
+      return;
+    }
+    setEditingIntake({ intake, access, returnTo });
+    setActiveView('water-intake-edit');
+  };
+
+  // Reception works from the visit, so the exhibit registered for it is fetched first.
+  const openVisitIntakeEdit = async (visit: OfficerVisitor) => {
+    try {
+      const { intake } = await apiRequest<{ intake: WaterIntake }>(`/api/water/intakes/by-visit/${visit.id}`);
+      openWaterIntakeEdit(intake, 'lab-bay');
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not open the exhibit intake.');
+    }
+  };
+
+  // The intake documents tick: saved at once, and kept in sync in the register and in the open form.
+  const setWaterDocumentsConfirmed = async (intakeId: string, confirmed: boolean) => {
+    const { intake } = await apiRequest<{ intake: WaterIntake }>(`/api/water/intakes/${intakeId}/documents-check`, {
+      method: 'POST',
+      body: JSON.stringify({ confirmed }),
     });
     setWaterIntakes((previous) => previous.map((item) => (item.id === intake.id ? intake : item)));
-    showToast(`${intake.labReference} updated. It can't be edited again.`);
-    return true;
+    setEditingIntake((previous) => (previous && previous.intake.id === intake.id ? { ...previous, intake } : previous));
+  };
+
+  const closeWaterIntakeEdit = () => {
+    const returnTo = editingIntake?.returnTo ?? 'laboratory';
+    setEditingIntake(null);
+    setActiveView(returnTo);
+  };
+
+  const handleSaveWaterIntakeEdit = async (
+    intakeId: string,
+    intakeEdit: WaterIntakeEdit | null,
+    senderEdit: WaterSenderEdit | null,
+  ) => {
+    let labReference = editingIntake?.intake.labReference ?? '';
+    if (senderEdit) {
+      const { sender } = await apiRequest<{ sender: Partial<WaterIntake> }>(`/api/water/intakes/${intakeId}/sender`, {
+        method: 'PATCH',
+        body: JSON.stringify(senderEdit),
+      });
+      setWaterIntakes((previous) => previous.map((item) => (item.id === intakeId ? { ...item, ...sender } : item)));
+    }
+    if (intakeEdit) {
+      const { intake } = await apiRequest<{ intake: WaterIntake }>(`/api/water/intakes/${intakeId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(intakeEdit),
+      });
+      labReference = intake.labReference;
+      setWaterIntakes((previous) => previous.map((item) => (item.id === intake.id ? intake : item)));
+    }
+    showToast(`${labReference} updated.`);
+    closeWaterIntakeEdit();
   };
 
   // Only the Head of Water & Environment deletes an intake (enforced by the API).
@@ -1246,6 +1373,8 @@ export default function App() {
             onOpenIntakeModal={openIntake}
             onOpenCaseFile={() => setActiveView('case-file')}
             onOpenNotifications={() => setNotificationsOpen(true)}
+            myExhibitsCount={myExhibitsCount}
+            superAdminTab={superAdminTab}
             sidebarCollapsed={sidebarCollapsed}
             onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
             mobileNavOpen={mobileNavOpen}
@@ -1268,14 +1397,22 @@ export default function App() {
                   onRevealNationalId={handleRevealNationalId}
                   onProceedToLab={(v) => {
                     handleNavigateView('lab-bay');
-                    showToast(`Opened Lab Bay for ${v.visitNumber}.`);
+                    showToast(`Opened Reception & Client Handover for ${v.visitNumber}.`);
                   }}
                   onCheckOutVisitor={handleCheckOutVisitor}
+                  onDeleteVisitor={handleDeleteVisitor}
                   isLoading={visitsLoading}
                   hasMoreVisitors={visitsHasMore}
                   isLoadingMoreVisitors={visitsLoadingMore}
                   onLoadMoreVisitors={loadOlderReceptionVisits}
                   currentUserName={currentUser.name}
+                  onNavigate={handleNavigateView}
+                />
+              ) : currentUser.role === 'SUPER_ADMIN' ? (
+                <SuperAdminDashboard
+                  currentUser={currentUser}
+                  visitors={visitors}
+                  waterIntakes={waterIntakes}
                   onNavigate={handleNavigateView}
                 />
               ) : (
@@ -1307,9 +1444,10 @@ export default function App() {
                 onRevealNationalId={handleRevealNationalId}
                 onProceedToLab={(v) => {
                   handleNavigateView('lab-bay');
-                  showToast(`Opened Lab Bay for ${v.visitNumber}.`);
+                  showToast(`Opened Reception & Client Handover for ${v.visitNumber}.`);
                 }}
                 onCheckOutVisitor={handleCheckOutVisitor}
+                onDeleteVisitor={currentUser.role === 'RECEPTIONIST' ? handleDeleteVisitor : undefined}
                 isLoading={visitsLoading}
                 hasMoreVisitors={visitsHasMore}
                 isLoadingMoreVisitors={visitsLoadingMore}
@@ -1347,23 +1485,28 @@ export default function App() {
                 isLoadingMoreVisitors={visitsLoadingMore}
                 onLoadMoreVisitors={loadOlderReceptionVisits}
                 currentUserName={currentUser.name}
+                onEditClientDetails={
+                  currentUser.role === 'RECEPTIONIST'
+                    ? (visit) => void openVisitIntakeEdit(visit)
+                    : undefined
+                }
                 onSendLabNotification={
-                  currentUser.department === 'Food & Drugs' || currentUser.department === 'Water'
+                  currentUser.role === 'RECEPTIONIST' || currentUser.department === 'Food & Drugs' || currentUser.department === 'Water'
                     ? handleSendLabNotification
                     : undefined
                 }
-                onOpenIntake={
-                  (currentUser.department === 'Food & Drugs' || currentUser.department === 'Water')
-                    ? (visit) => {
-                        if (visit.status !== 'In Laboratory') {
-                          showToast('The laboratory must receive this client before intake.');
-                          return;
-                        }
-                        setSelectedIntakeVisitId(visit.id);
-                        setActiveView(visit.laboratory === 'Food & Drugs' ? 'food-drug-intake' : 'water-intake');
-                      }
-                    : undefined
-                }
+              />
+            )}
+
+            {activeView === 'exhibit-case-file' && activeWaterIntake && (
+              <ExhibitCaseFile
+                intake={activeWaterIntake}
+                currentUser={currentUser}
+                backLabel="Exhibit Laboratory"
+                onEditIntake={(intake) => openWaterIntakeEdit(intake, 'exhibit-case-file')}
+                onBack={() => setActiveView('laboratory')}
+                onComplete={handleCompleteWaterIntake}
+                onIntakeUpdated={handleWaterIntakeUpdated}
               />
             )}
 
@@ -1415,7 +1558,7 @@ export default function App() {
               </div>
             )}
 
-            {activeView === 'laboratory' && canAccessLaboratoryWorkspace(currentUser) && intakeVisitor && (
+            {activeView === 'laboratory' && canAccessLaboratoryWorkspace(currentUser) && intakeVisitor && currentUser.department !== 'Water' && (
               <LaboratoryWorkspace
                 currentDepartment={currentUser.department || 'Narcotics'}
                 activeCase={activeCase}
@@ -1435,25 +1578,30 @@ export default function App() {
                 onDeleteFoodDrugIntake={handleDeleteFoodDrugIntake}
                 waterOfficers={waterOfficers}
                 waterIntakes={waterIntakes}
-                onApproveWaterIntake={handleApproveWaterIntake}
                 onAssignWaterIntake={handleAssignWaterIntake}
-                onCompleteWaterIntake={handleCompleteWaterIntake}
-                onEditWaterIntake={handleEditWaterIntake}
+                onOpenWaterCaseFile={openWaterCaseFile}
+                onEditWaterIntake={(intake) => openWaterIntakeEdit(intake)}
                 onDeleteWaterIntake={handleDeleteWaterIntake}
                 onOpenIntake={openIntake}
               />
             )}
-            {activeView === 'laboratory' && canAccessLaboratoryWorkspace(currentUser) && !intakeVisitor && currentUser.department === 'Water' && (
+            {activeView === 'laboratory' && canAccessLaboratoryWorkspace(currentUser) && currentUser.department === 'Water' && (
               <WaterLaboratoryView
                 intakes={waterIntakes}
                 currentUser={currentUser}
                 officers={waterOfficers}
                 onOpenIntake={openIntake}
-                onApprove={handleApproveWaterIntake}
                 onAssign={handleAssignWaterIntake}
-                onComplete={handleCompleteWaterIntake}
-                onEdit={handleEditWaterIntake}
+                onOpenCaseFile={openWaterCaseFile}
+                onEdit={(intake) => openWaterIntakeEdit(intake)}
                 onDelete={handleDeleteWaterIntake}
+                clients={visitors.filter((v) => v.laboratory === 'Water' && ((v.status === 'Awaiting Laboratory Reception' && !!v.labNotificationSentAt) || v.status === 'In Laboratory'))}
+                canReceiveClients={['ANALYST', 'SENIOR_CHEMIST', 'HEAD_OF_DEPARTMENT'].includes(currentUser.role)}
+                onAcceptClient={(visitId) => void transitionReceptionVisit(visitId, 'lab-received')}
+                onRegisterExhibit={(visit) => {
+                  setSelectedIntakeVisitId(visit.id);
+                  setActiveView('water-intake');
+                }}
               />
             )}
             {activeView === 'laboratory' && canAccessLaboratoryWorkspace(currentUser) && !intakeVisitor && currentUser.department === 'Food & Drugs' && (
@@ -1473,7 +1621,7 @@ export default function App() {
               <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center dark:border-slate-700 dark:bg-slate-900">
                 <FlaskConical className="mx-auto h-8 w-8 text-slate-400" />
                 <h2 className="mt-3 text-sm font-bold text-slate-900 dark:text-white">No active reception visits</h2>
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">New arrivals routed to your laboratory will appear in Lab Bay.</p>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">New arrivals routed to your laboratory will appear under Reception &amp; Client Handover.</p>
               </div>
             )}
 
@@ -1494,7 +1642,7 @@ export default function App() {
             {activeView === 'food-drug-intake' && isFoodDrugUser && !intakeVisitor && (
               <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center dark:border-slate-700 dark:bg-slate-900">
                 <h2 className="text-sm font-bold text-slate-900 dark:text-white">No active reception visit</h2>
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">A Food &amp; Drugs arrival must be received at Lab Bay before intake.</p>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">A Food &amp; Drugs arrival must be received at Reception &amp; Client Handover before intake.</p>
               </div>
             )}
 
@@ -1502,7 +1650,7 @@ export default function App() {
               // Fillable even before a client is sent; registering stays disabled until reception has notified Water.
               <WaterIntakePage
                 activeCase={activeCase}
-                visitor={intakeVisitor ?? null}
+                visitor={chosenWaterVisitor ?? null}
                 currentUserId={currentUser.id}
                 staffMembers={waterStaff}
                 intakes={waterIntakes}
@@ -1514,7 +1662,42 @@ export default function App() {
                 onCancel={() => handleNavigateView('laboratory')}
               />
             )}
-            {activeView === 'case-file' && (
+            {activeView === 'water-intake-edit' && editingIntake && (
+              <WaterIntakePage
+                activeCase={activeCase}
+                visitor={null}
+                currentUserId={currentUser.id}
+                staffMembers={waterStaff}
+                intakes={waterIntakes}
+                onSaveIntake={async () => { throw new Error('This exhibit is already registered.'); }}
+                onCancel={closeWaterIntakeEdit}
+                editIntake={editingIntake.intake}
+                editAccess={editingIntake.access}
+                onSaveEdit={handleSaveWaterIntakeEdit}
+                canConfirmDocuments={currentUser.department === 'Water'}
+                onSetDocumentsConfirmed={setWaterDocumentsConfirmed}
+              />
+            )}
+            {activeView === 'case-file' && currentUser.role === 'SUPER_ADMIN' && (
+              activeWaterIntake ? (
+                <ExhibitCaseFile
+                  intake={activeWaterIntake}
+                  currentUser={currentUser}
+                  backLabel="Case files"
+                  onBack={() => setActiveWaterIntakeId(null)}
+                  onComplete={handleCompleteWaterIntake}
+                  onIntakeUpdated={handleWaterIntakeUpdated}
+                />
+              ) : (
+                <ExhibitCaseFileIndex
+                  intakes={waterIntakes}
+                  isLoading={waterIntakesLoading}
+                  error={waterIntakesError}
+                  onOpenCaseFile={(intake) => setActiveWaterIntakeId(intake.id)}
+                />
+              )
+            )}
+            {activeView === 'case-file' && currentUser.role !== 'SUPER_ADMIN' && (
               <DigitalCaseFile
                 caseData={activeCase}
                 onUpdateDraftReport={handleUpdateDraftReport}
@@ -1524,7 +1707,7 @@ export default function App() {
             {activeView === 'references' && <ReferenceDatabaseView />}
 
             {activeView === 'super-admin' && currentUser.role === 'SUPER_ADMIN' && (
-              <SuperAdminPage currentUserId={currentUser.id} initialTab={superAdminTab} />
+              <SuperAdminPage currentUserId={currentUser.id} initialTab={superAdminTab} hideTabs />
             )}
 
             {activeView === 'executive' && (

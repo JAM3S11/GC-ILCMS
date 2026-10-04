@@ -8,6 +8,7 @@ import {
   LogIn,
   LogOut,
   Shield,
+  Trash2,
   User,
   UserCheck,
   UserPlus,
@@ -49,6 +50,7 @@ export const VisitorDeskView: React.FC<VisitorDeskViewProps> = ({
   onRevealNationalId,
   onProceedToLab,
   onCheckOutVisitor,
+  onDeleteVisitor,
   isLoading,
   hasMoreVisitors,
   isLoadingMoreVisitors,
@@ -57,6 +59,24 @@ export const VisitorDeskView: React.FC<VisitorDeskViewProps> = ({
   const [filterText, setFilterText] = useState('');
   const [registerFilter, setRegisterFilter] = useState<RegisterFilter>('all');
   const [dateFilter, setDateFilter] = useState('');
+  // Delete asks for a second press on the same row before it removes the record.
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const deleteVisitor = async (visitor: OfficerVisitor) => {
+    if (!onDeleteVisitor) return;
+    if (confirmDeleteId !== visitor.id) {
+      setConfirmDeleteId(visitor.id);
+      return;
+    }
+    setDeletingId(visitor.id);
+    try {
+      await onDeleteVisitor(visitor);
+    } finally {
+      setDeletingId(null);
+      setConfirmDeleteId(null);
+    }
+  };
 
   const onPremises = visitors.filter((v) => v.status !== 'Departed');
   const inLabBay = visitors.filter((v) => v.status === 'Awaiting Laboratory Reception');
@@ -344,6 +364,20 @@ export const VisitorDeskView: React.FC<VisitorDeskViewProps> = ({
                                 title="Record the visitor's departure time"
                               >
                                 Check out
+                              </Button>
+                            )}
+                            {onDeleteVisitor && (
+                              <Button
+                                size="xs"
+                                variant={confirmDeleteId === vis.id ? 'danger' : 'ghost'}
+                                icon={Trash2}
+                                disabled={deletingId === vis.id}
+                                onClick={() => void deleteVisitor(vis)}
+                                onBlur={() => setConfirmDeleteId((id) => (id === vis.id ? null : id))}
+                                title={confirmDeleteId === vis.id ? 'Press again to delete this visitor record' : 'Delete this visitor record'}
+                                aria-label={`Delete visitor record ${vis.visitNumber}`}
+                              >
+                                {deletingId === vis.id ? 'Deleting…' : confirmDeleteId === vis.id ? 'Confirm delete' : null}
                               </Button>
                             )}
                           </div>

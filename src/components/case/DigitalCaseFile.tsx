@@ -623,18 +623,22 @@ const INTEGRATION = [
 ];
 
 /** Seven-stage tracker; a compact progress bar on phones. */
-const ProcessTracker: React.FC<{ stage: number; details: string[] }> = ({ stage, details }) => (
+export const ProcessTracker: React.FC<{ stage: number; details: string[]; stages?: readonly string[] }> = ({
+  stage,
+  details,
+  stages = STAGES,
+}) => (
   <section aria-label="Case progress" className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
     {/* Phones */}
     <div className="md:hidden">
       <div className="flex items-baseline justify-between text-xs">
-        <span className="font-semibold text-slate-900 dark:text-white">{STAGES[stage]}</span>
+        <span className="font-semibold text-slate-900 dark:text-white">{stages[stage]}</span>
         <span className="text-slate-500 dark:text-slate-400">
-          Stage {stage + 1} of {STAGES.length}
+          Stage {stage + 1} of {stages.length}
         </span>
       </div>
       <div className="mt-2 flex gap-1">
-        {STAGES.map((s, i) => (
+        {stages.map((s, i) => (
           <span
             key={s}
             className={`h-1.5 flex-1 rounded-full ${i < stage ? 'bg-emerald-500' : i === stage ? 'bg-amber-500' : 'bg-slate-200 dark:bg-slate-800'}`}
@@ -643,13 +647,13 @@ const ProcessTracker: React.FC<{ stage: number; details: string[] }> = ({ stage,
       </div>
       <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
         {details[stage]}
-        {stage < STAGES.length - 1 && <> · Next: {STAGES[stage + 1]}</>}
+        {stage < stages.length - 1 && <> · Next: {stages[stage + 1]}</>}
       </p>
     </div>
 
     {/* Tablets and up */}
-    <ol className="hidden grid-cols-7 md:grid">
-      {STAGES.map((s, i) => {
+    <ol className="hidden md:grid" style={{ gridTemplateColumns: `repeat(${stages.length}, minmax(0, 1fr))` }}>
+      {stages.map((s, i) => {
         const done = i < stage;
         const current = i === stage;
         return (

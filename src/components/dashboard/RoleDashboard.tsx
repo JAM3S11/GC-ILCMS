@@ -492,7 +492,7 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
           action={{ label: 'Open case file', onClick: () => onNavigate('case-file') }} />
         <KpiCard label="Awaiting allocation" value={3} icon={Inbox} tone="sky" hint="Pending HoD assignment" />
         <KpiCard label="Visitors on site" value={onSite.length} icon={Users} tone="violet"
-          hint={`${awaitingLab.length} awaiting a laboratory`} action={{ label: 'Open Lab Bay', onClick: () => onNavigate('lab-bay') }} />
+          hint={`${awaitingLab.length} awaiting a laboratory`} action={{ label: 'Reception & Client Handover', onClick: () => onNavigate('lab-bay') }} />
         <KpiCard label="Certificates to dispatch" value={6} icon={FileCheck} tone="emerald" hint="Signed and sealed" />
       </>
     ),
@@ -896,7 +896,7 @@ const WaterLabDashboard: React.FC<WaterLabDashboardProps> = ({
             {currentUser.role === 'HEAD_OF_DEPARTMENT' && <StatusPill tone="emerald">Head of Department</StatusPill>}
           </div>
         }
-        actions={<Button icon={Users} onClick={() => onNavigate('lab-bay')}>Open Lab Bay</Button>}
+        actions={<Button icon={Users} onClick={() => onNavigate('laboratory')}>Open Exhibit Laboratory</Button>}
       />
 
       {error && (

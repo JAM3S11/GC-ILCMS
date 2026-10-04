@@ -195,6 +195,8 @@ export interface WaterIntake {
   receivingOfficerId?: string;
   receivingOfficer: string;
   dateReceived: string;
+  /** When the sample was taken; blank on exhibits registered before this was recorded. */
+  dateSampled?: string;
   supportingDocuments?: string;
   remarks?: string;
   testType: WaterTestType;
@@ -216,6 +218,44 @@ export interface WaterIntake {
   completedDate?: string;
   edited?: boolean; // an intake can be edited once, before analysis starts
   editedDate?: string;
+  /** What the analysis found, recorded by the assigned officer while under analysis. */
+  findings?: string;
+  /** Structured physical and chemical test results entered in the case file. */
+  findingsResults?: { results: Record<string, { result: string; report: string }>; remarks?: string } | null;
+  /** Africa/Nairobi wall-clock time, 'YYYY-MM-DD HH24:MI:SS'. */
+  findingsRecordedAt?: string;
+  findingsRecordedBy?: string;
+  findingsRecordedById?: string;
+  /** Set when the Head prints the certificate; after that only the Head can change the results. */
+  certificateIssuedAt?: string;
+  certificateIssuedBy?: string;
+  /** The Head's tick that the intake documents are fine; the memo can only be approved while it is set. */
+  documentsConfirmedAt?: string;
+  documentsConfirmedBy?: string;
+}
+
+export type WaterIntakeEventType =
+  | 'REGISTERED'
+  | 'APPROVED'
+  | 'ASSIGNED'
+  | 'TRANSFERRED'
+  | 'ANALYSIS_COMPLETED'
+  | 'FINDINGS_RECORDED'
+  | 'CERTIFICATE_ISSUED'
+  | 'EDITED'
+  | 'DELETED';
+
+/** One recorded transition in an exhibit's process, as stored in water_exhibit_intake_events. */
+export interface WaterIntakeEvent {
+  eventType: WaterIntakeEventType;
+  /** Server-supplied human wording for the transition. */
+  label: string;
+  fromStatus?: WaterIntakeStatus | null;
+  toStatus: WaterIntakeStatus;
+  /** Africa/Nairobi wall-clock time, 'YYYY-MM-DD HH24:MI'. */
+  occurredAt: string;
+  actor: string;
+  details: Record<string, unknown>;
 }
 
 export type CustodyAction =

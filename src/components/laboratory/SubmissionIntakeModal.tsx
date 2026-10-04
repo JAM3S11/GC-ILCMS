@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Portal } from '../common/Portal';
 import {
   Package,
   Plus,
@@ -171,6 +172,7 @@ export const SubmissionIntakeModal: React.FC<SubmissionIntakeModalProps> = ({
   };
 
   return (
+    <Portal>
     <div className="fixed inset-0 z-50 bg-slate-50/85 dark:bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-4xl w-full p-6 shadow-2xl space-y-6 my-auto max-h-[92vh] flex flex-col">
         {/* Header */}
@@ -513,5 +515,6 @@ export const SubmissionIntakeModal: React.FC<SubmissionIntakeModalProps> = ({
         </form>
       </div>
     </div>
+    </Portal>
   );
 };
