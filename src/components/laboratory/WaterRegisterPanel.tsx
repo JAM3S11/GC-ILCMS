@@ -9,6 +9,7 @@ import {
   Pencil,
   Trash2,
   UserCheck,
+  ClipboardSignature,
 } from 'lucide-react';
 import { User, WaterIntake, WaterIntakeStatus } from '../../types';
 import { formatKes } from '../../waterIntake';
@@ -23,6 +24,7 @@ import {
   tableClasses as tc,
 } from '../common/Dashboard';
 import { Select } from '../common/Select';
+import { WorkAllocationDialog, WorkAllocationViewer } from './WorkAllocationForm';
 import { canEditWaterIntake, waterEditAccess } from '../../lib/waterIntakeAccess';
 
 /**
@@ -41,7 +43,8 @@ interface WaterRegisterPanelProps {
   currentUser: Pick<User, 'id' | 'name' | 'role'> & { department?: User['department'] };
   /** Water & Environment officers the Head can assign an exhibit to. */
   officers: Pick<User, 'id' | 'name'>[];
-  onAssign: (intakeId: string, officerId: string) => void;
+  /** Assigns (or transfers) with a completed work allocation form; resolves true when saved. */
+  onAssign: (intakeId: string, officerId: string, remarks: string) => Promise<boolean>;
   /** Opens the exhibit's case file; only the assigned officer can open it. */
   onOpenCaseFile?: (intake: WaterIntake) => void;
   /** Opens the exhibit intake form with this exhibit's details ready to change. */
@@ -284,11 +287,14 @@ const Detail: React.FC<{ label: string; children: React.ReactNode; mono?: boolea
   </div>
 );
 
+const allocationSubject = (intake: WaterIntake) =>
+  `${testLabel(intake)} · ${intake.sourceCategory}, ${intake.sourceType} (${intake.locationFrom}) · from ${intake.senderName}`;
+
 /** The one thing this person can do next with an exhibit; used by both the table and the board. */
 const ExhibitNextAction: React.FC<
   Pick<WaterRegisterPanelProps, 'currentUser' | 'officers' | 'onAssign' | 'onOpenCaseFile'> & { intake: WaterIntake }
 > = ({ intake, currentUser, officers, onAssign, onOpenCaseFile }) => {
-  const [officer, setOfficer] = useState('');
+  const [allocating, setAllocating] = useState(false);
   const isHead = currentUser.role === 'HEAD_OF_DEPARTMENT';
   const isMine = intake.analysisOfficerId === currentUser.id;
   // The Head and Senior Chemists supervise every exhibit, so they can open any case file.
@@ -296,20 +302,22 @@ const ExhibitNextAction: React.FC<
 
   if (intake.status === 'Awaiting Assignment' || intake.status === 'Awaiting Approval') {
     return isHead ? (
-      <div className="flex items-center justify-end gap-2">
-        <Select
-          size="xs"
-          className="w-44"
-          aria-label={`Assign Analysis Officer to ${intake.labReference}`}
-          value={officer}
-          onChange={setOfficer}
-          placeholder="Assign officer…"
-          options={officers.map((o) => ({ value: o.id, label: o.name }))}
-        />
-        <Button size="xs" variant="primary" icon={UserCheck} disabled={!officer} onClick={() => onAssign(intake.id, officer)}>
-          Assign
+      <>
+        <Button size="xs" variant="primary" icon={UserCheck} onClick={() => setAllocating(true)}>
+          Allocate work
         </Button>
-      </div>
+        {allocating && (
+          <WorkAllocationDialog
+            department="Water & Environment"
+            labReference={intake.labReference}
+            subject={allocationSubject(intake)}
+            officers={officers}
+            headName={currentUser.name}
+            onSubmit={(analystId, remarks) => onAssign(intake.id, analystId, remarks)}
+            onClose={() => setAllocating(false)}
+          />
+        )}
+      </>
     ) : (
       <span className="text-[11px] text-slate-500 dark:text-slate-400">Waiting for Head to assign</span>
     );
@@ -346,7 +354,8 @@ const RegisterRow: React.FC<Omit<WaterRegisterPanelProps, 'intakes'> & { intake:
   onDelete,
 }) => {
   const [open, setOpen] = useState(false);
-  const [transferOfficer, setTransferOfficer] = useState('');
+  const [transferring, setTransferring] = useState(false);
+  const [viewingAllocation, setViewingAllocation] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const isHead = currentUser.role === 'HEAD_OF_DEPARTMENT';
@@ -358,6 +367,8 @@ const RegisterRow: React.FC<Omit<WaterRegisterPanelProps, 'intakes'> & { intake:
   const canEdit = !!onEdit && canEditWaterIntake(access);
   const canDelete = !!onDelete && isHead;
   const canTransfer = isHead && intake.status === 'Under Analysis';
+  // The Head holds the original allocation form; the assigned analyst holds a copy.
+  const canViewAllocation = !!intake.analysisOfficerId && (isHead || isMine);
   const source = `${intake.sourceCategory} · ${intake.sourceType}, ${intake.locationFrom}${
     intake.dischargeTo ? ` → ${intake.dischargeTo}` : ''
   }`;
@@ -461,7 +472,7 @@ const RegisterRow: React.FC<Omit<WaterRegisterPanelProps, 'intakes'> & { intake:
               )}
             </dl>
 
-            {(canTransfer || canEdit || canDelete || intake.edited || (canOpenCase && !isMine && (intake.status === 'Awaiting Approval' || intake.status === 'Awaiting Assignment'))) && (
+            {(canTransfer || canViewAllocation || canEdit || canDelete || intake.edited || (canOpenCase && !isMine && (intake.status === 'Awaiting Approval' || intake.status === 'Awaiting Assignment'))) && (
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-3 dark:border-slate-800">
                 <span className="text-[11px] text-slate-500 dark:text-slate-400">
                   {access.fillInOnly
@@ -477,31 +488,15 @@ const RegisterRow: React.FC<Omit<WaterRegisterPanelProps, 'intakes'> & { intake:
                             : ''}
                 </span>
                 <div className="flex flex-wrap items-center gap-2">
+                  {canViewAllocation && (
+                    <Button size="xs" icon={ClipboardSignature} onClick={() => setViewingAllocation(true)}>
+                      {isHead ? 'Allocation form' : 'Allocation form (copy)'}
+                    </Button>
+                  )}
                   {canTransfer && (
-                    <>
-                      <Select
-                        size="xs"
-                        className="w-52"
-                        aria-label={`Transfer ${intake.labReference} to another Analysis Officer`}
-                        value={transferOfficer}
-                        onChange={setTransferOfficer}
-                        placeholder="Transfer to another officer…"
-                        options={officers
-                          .filter((option) => option.id !== intake.analysisOfficerId)
-                          .map((option) => ({ value: option.id, label: option.name }))}
-                      />
-                      <Button
-                        size="xs"
-                        icon={ArrowRightLeft}
-                        disabled={!transferOfficer}
-                        onClick={() => {
-                          onAssign(intake.id, transferOfficer);
-                          setTransferOfficer('');
-                        }}
-                      >
-                        Transfer
-                      </Button>
-                    </>
+                    <Button size="xs" icon={ArrowRightLeft} onClick={() => setTransferring(true)}>
+                      Transfer
+                    </Button>
                   )}
                   {canOpenCase && (intake.status === 'Awaiting Approval' || intake.status === 'Awaiting Assignment') && (
                     <Button size="xs" icon={FolderOpen} onClick={() => onOpenCaseFile?.(intake)}>
@@ -533,6 +528,22 @@ const RegisterRow: React.FC<Omit<WaterRegisterPanelProps, 'intakes'> & { intake:
               </div>
             )}
 
+            {transferring && (
+              <WorkAllocationDialog
+                department="Water & Environment"
+                labReference={intake.labReference}
+                subject={allocationSubject(intake)}
+                officers={officers}
+                excludeOfficerId={intake.analysisOfficerId}
+                headName={currentUser.name}
+                isTransfer
+                onSubmit={(analystId, remarks) => onAssign(intake.id, analystId, remarks)}
+                onClose={() => setTransferring(false)}
+              />
+            )}
+            {viewingAllocation && (
+              <WorkAllocationViewer recordType="WATER_INTAKE" recordId={intake.id} onClose={() => setViewingAllocation(false)} />
+            )}
           </td>
         </tr>
       )}

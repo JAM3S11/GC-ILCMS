@@ -147,8 +147,8 @@ export type FoodDrugSampleType = 'Aflatoxin' | 'Miscellaneous' | 'Mycotoxins';
 export type FoodDrugIntakeStatus = 'Awaiting Approval' | 'Awaiting Assignment' | 'Under Analysis' | 'Reported';
 
 export interface FoodDrugIntake {
-  id: string; // e.g. FDI-0001
-  caseId: string;
+  id: string; // sample number from the database, e.g. FDI-2026-001
+  caseId?: string;
   exhibitId: string; // links to the auto-generated ExhibitItem
   clientName: string; // Full name of the person bringing the sample
   nationalId: string; // digits only, max 8
@@ -160,6 +160,13 @@ export interface FoodDrugIntake {
   approvedBy?: string; // Head of Section who approved the submitted documents
   approvedDate?: string;
   analystAssigned?: string; // Food & Drugs officer (main process), set by the Head
+  analystId?: string;
+  sealNumber?: string;
+  receiptFormSaved?: boolean;
+  worksheetStatus?: 'Draft' | 'Awaiting check' | 'Checked' | null;
+  receptionVisitId?: string;
+  notes?: string;
+  createdAt?: string;
   assignedBy?: string;
   assignedDate?: string;
   reportedBy?: string; // final step, after analysis is complete
@@ -463,6 +470,61 @@ export interface AppNotification {
   /** Set when the department resolved it, e.g. by registering the visitor's intake. */
   resolvedAt?: string | null;
   resolvedBy?: string | null;
+}
+
+/** Food & Drugs analytical sample receipt form, filled from the sample's case file. */
+export interface FoodDrugReceiptForm {
+  intakeId: string;
+  formDate: string;
+  senderName: string;
+  senderPhysicalAddress: string;
+  senderPostalAddress: string;
+  senderTelephone: string;
+  submitterName: string;
+  submitterIdNumber: string;
+  sampleDescription: string;
+  examinationRequired: string;
+  feeKes: number | null;
+  invoiceNumber: string;
+  receiptNumber: string;
+  analystReceivingId?: string | null;
+  analystReceiving?: string | null;
+  analystReceivedDate: string;
+  updatedBy?: string;
+  updatedAt?: string;
+}
+
+/** Food & Drugs laboratory worksheet: analysed by the analyst, checked by the Head. */
+export interface FoodDrugWorksheet {
+  intakeId: string;
+  analysisStartedOn: string;
+  testMethods: string;
+  results?: string | null;
+  analysedBy?: string | null;
+  analysedDate?: string | null;
+  checkedBy?: string | null;
+  checkedDate?: string | null;
+  updatedBy?: string;
+  updatedAt?: string;
+}
+
+export type WorkAllocationRecordType = 'WATER_INTAKE' | 'FOOD_DRUG_INTAKE';
+
+/** A work allocation form: the Head keeps the original, the analyst gets a copy. */
+export interface WorkAllocation {
+  id: string;
+  formNumber: string; // e.g. WAF-2026-00012
+  department: string;
+  recordType: WorkAllocationRecordType;
+  recordId: string;
+  labReference: string;
+  subject: string;
+  remarks: string;
+  analystId: string;
+  analystName: string;
+  headName: string;
+  allocatedAt: string; // Africa/Nairobi 'YYYY-MM-DD HH24:MI'
+  supersededAt?: string | null;
 }
 
 export interface AuditEvent {

@@ -26,7 +26,8 @@ import {
   Users,
   Wallet,
 } from 'lucide-react';
-import { User as UserType, UserRole, ForensicCase, OfficerVisitor, LaboratoryDepartment, WaterIntake } from '../../types';
+import { User as UserType, UserRole, ForensicCase, OfficerVisitor, LaboratoryDepartment, WaterIntake, FoodDrugIntake } from '../../types';
+import { FoodDrugLabDashboard } from './FoodDrugLabDashboard';
 import {
   Avatar,
   Button,
@@ -53,6 +54,9 @@ interface RoleDashboardProps {
   waterIntakes: WaterIntake[];
   waterIntakesLoading: boolean;
   waterIntakesError: string;
+  foodDrugIntakes?: FoodDrugIntake[];
+  foodDrugIntakesLoading?: boolean;
+  foodDrugIntakesError?: string;
   officerVerified: boolean;
   onNavigate: (view: string) => void;
   onOpenVerifyOfficer: () => void;
@@ -269,6 +273,9 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
   waterIntakes,
   waterIntakesLoading,
   waterIntakesError,
+  foodDrugIntakes = [],
+  foodDrugIntakesLoading = false,
+  foodDrugIntakesError = '',
   officerVerified,
   onNavigate,
   onOpenVerifyOfficer,
@@ -440,6 +447,18 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
         intakes={waterIntakes}
         isLoading={waterIntakesLoading}
         error={waterIntakesError}
+        onNavigate={onNavigate}
+      />
+    );
+  }
+
+  if (department === 'Food & Drugs' && currentUser.role !== 'SUPER_ADMIN') {
+    return (
+      <FoodDrugLabDashboard
+        currentUser={currentUser}
+        intakes={foodDrugIntakes}
+        isLoading={foodDrugIntakesLoading}
+        error={foodDrugIntakesError}
         onNavigate={onNavigate}
       />
     );

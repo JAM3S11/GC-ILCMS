@@ -44,6 +44,7 @@ import { ExhibitCaseFileIndex } from './components/laboratory/ExhibitCaseFileInd
 import { WaterEditAccess, WaterIntakeEdit, WaterSenderEdit, canEditWaterIntake, waterEditAccess } from './lib/waterIntakeAccess';
 import { FoodDrugIntakeEdit } from './components/laboratory/FoodDrugIntakeEditModal';
 import { FoodDrugLaboratoryView } from './components/laboratory/FoodDrugLaboratoryView';
+import { FoodDrugCaseFile } from './components/laboratory/FoodDrugCaseFile';
 import { DigitalCaseFile } from './components/case/DigitalCaseFile';
 import { ReferenceDatabaseView } from './components/reference/ReferenceDatabaseView';
 import { ExecutiveDashboard } from './components/dashboard/ExecutiveDashboard';
@@ -98,6 +99,8 @@ export default function App() {
   const [activeView, setActiveView] = useState<string>('landing');
   const [activeCase, setActiveCase] = useState<ForensicCase>(DEMO_CASE);
   const [waterIntakes, setWaterIntakes] = useState<WaterIntake[]>([]);
+  // The Food & Drugs sample whose case file is open, when activeView is 'food-drug-case-file'.
+  const [activeFoodDrugIntakeId, setActiveFoodDrugIntakeId] = useState<string | null>(null);
   // The exhibit whose case file is open, when activeView is 'exhibit-case-file'.
   const [activeWaterIntakeId, setActiveWaterIntakeId] = useState<string | null>(null);
   const [waterIntakesLoading, setWaterIntakesLoading] = useState(false);
@@ -154,28 +157,59 @@ export default function App() {
         : undefined,
     [visitors, selectedIntakeVisitId],
   );
+  const chosenFoodDrugVisitor = useMemo(
+    () =>
+      selectedIntakeVisitId
+        ? visitors.find((v) => v.id === selectedIntakeVisitId && v.status !== 'Departed' && v.laboratory === 'Food & Drugs')
+        : undefined,
+    [visitors, selectedIntakeVisitId],
+  );
   const officerVerified = !!intakeVisitor &&
     intakeVisitor.status !== 'Awaiting Laboratory Reception' &&
     intakeVisitor.status !== 'Departed';
 
-  // Officers the Food & Drugs Head of Section can assign samples to: every
-  // active staff account in that department, loaded from the API.
+  // Food & Drugs samples and staff come from the database, refreshed every 15
+  // seconds so the dashboard, register and stat cards stay live.
+  const [foodDrugIntakes, setFoodDrugIntakes] = useState<FoodDrugIntake[]>([]);
+  const [foodDrugIntakesLoading, setFoodDrugIntakesLoading] = useState(false);
+  const [foodDrugIntakesError, setFoodDrugIntakesError] = useState('');
   const [foodDrugStaff, setFoodDrugStaff] = useState<Pick<User, 'id' | 'name' | 'role'>[]>([]);
   const foodDrugOfficers = useMemo(
     () => foodDrugStaff.filter((u) => u.role !== 'HEAD_OF_DEPARTMENT'),
     [foodDrugStaff],
   );
-  useEffect(() => {
-    if (currentUser?.department !== 'Food & Drugs') {
-      setFoodDrugStaff([]);
-      return;
+  const canUseFoodDrugRegister =
+    currentUser?.role === 'SUPER_ADMIN' || currentUser?.department === 'Food & Drugs';
+
+  const loadFoodDrugIntakes = useCallback(async () => {
+    try {
+      const result = await apiRequest<{
+        intakes: FoodDrugIntake[];
+        officers: Pick<User, 'id' | 'name' | 'role'>[];
+      }>('/api/food-drug/intakes');
+      setFoodDrugIntakes(result.intakes);
+      setFoodDrugStaff(result.officers);
+      setFoodDrugIntakesError('');
+    } catch (cause) {
+      setFoodDrugIntakesError(cause instanceof Error ? cause.message : 'Unable to load Food & Drugs samples.');
     }
-    let cancelled = false;
-    apiRequest<{ officers: Pick<User, 'id' | 'name' | 'role'>[] }>('/api/department/officers')
-      .then((result) => { if (!cancelled) setFoodDrugStaff(result.officers); })
-      .catch(() => { if (!cancelled) setFoodDrugStaff([]); });
-    return () => { cancelled = true; };
-  }, [currentUser?.id, currentUser?.department]);
+  }, []);
+
+  useEffect(() => {
+    if (!canUseFoodDrugRegister) {
+      setFoodDrugIntakes([]);
+      setFoodDrugStaff([]);
+      setFoodDrugIntakesError('');
+      return undefined;
+    }
+    setFoodDrugIntakesLoading(true);
+    void loadFoodDrugIntakes().finally(() => setFoodDrugIntakesLoading(false));
+    const intervalId = window.setInterval(() => void loadFoodDrugIntakes(), 15_000);
+    return () => window.clearInterval(intervalId);
+  }, [currentUser?.id, canUseFoodDrugRegister, loadFoodDrugIntakes]);
+
+  const upsertFoodDrugIntake = (intake: FoodDrugIntake) =>
+    setFoodDrugIntakes((previous) => [intake, ...previous.filter((item) => item.id !== intake.id)]);
 
   const waterOfficers = useMemo(() => waterStaff.filter((u) => u.role !== 'HEAD_OF_DEPARTMENT'), [waterStaff]);
 
@@ -283,6 +317,8 @@ export default function App() {
       // e.g. the exhibit was transferred to another officer while it was open.
       setActiveWaterIntakeId(null);
       setActiveView('laboratory');
+    } else if (activeView === 'food-drug-case-file' && currentUser.role !== 'SUPER_ADMIN' && currentUser.department !== 'Food & Drugs') {
+      setActiveView('dashboard');
     } else if (activeView === 'food-drug-intake' && currentUser.department !== 'Food & Drugs') {
       setActiveView('dashboard');
     } else if (activeView === 'water-intake' && currentUser.department !== 'Water') {
@@ -585,7 +621,7 @@ export default function App() {
     }
 
     // Going to the intake form from the menu starts blank; Open intake sets the client itself.
-    if (view === 'water-intake') setSelectedIntakeVisitId(null);
+    if (view === 'water-intake' || view === 'food-drug-intake') setSelectedIntakeVisitId(null);
 
     // Opening Case File from the sidebar starts at the list, not the last exhibit.
     if (view === 'case-file' && isSuperAdmin) setActiveWaterIntakeId(null);
@@ -717,16 +753,25 @@ export default function App() {
           );
           setVisitors((previous) => [visit, ...previous.filter((current) => current.id !== visit.id)]);
           setSelectedIntakeVisitId(visit.id);
+          const canRegister = !!visit.labNotificationSentAt && visit.status !== 'Departed';
           setActiveView(
-            currentUser?.department === 'Water' &&
-              visit.laboratory === 'Water' &&
-              !!visit.labNotificationSentAt &&
-              visit.status !== 'Departed'
+            canRegister && currentUser?.department === 'Water' && visit.laboratory === 'Water'
               ? 'water-intake'
-              : 'lab-bay',
+              : canRegister && currentUser?.department === 'Food & Drugs' && visit.laboratory === 'Food & Drugs'
+                ? 'food-drug-intake'
+                : 'lab-bay',
           );
         } catch (cause) {
           showToast(cause instanceof Error ? cause.message : 'Could not load the visitor record.');
+        }
+        return;
+      }
+      if (notification.linkAction === 'WORK_ALLOCATION') {
+        if (notification.relatedRecordType === 'WATER_INTAKE' && notification.relatedRecordId) {
+          setActiveWaterIntakeId(notification.relatedRecordId);
+          setActiveView('exhibit-case-file');
+        } else {
+          setActiveView('laboratory');
         }
         return;
       }
@@ -1064,119 +1109,95 @@ export default function App() {
     }
   };
 
-  const updateFoodDrugIntake = (intakeId: string, patch: Partial<FoodDrugIntake>) =>
-    setActiveCase((prev) => ({
-      ...prev,
-      foodDrugIntakes: prev.foodDrugIntakes?.map((i) => (i.id === intakeId ? { ...i, ...patch } : i)),
-    }));
-
-  const logFoodDrugAudit = (action: string, intakeId: string, details: string) => {
-    if (!currentUser) return;
-    setAuditLogs((prev) => [
-      {
-        id: `AUD-${Date.now().toString().slice(-4)}`,
-        timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
-        user: currentUser.name,
-        role: currentUser.role,
-        action,
-        recordType: 'Exhibit',
-        recordId: intakeId,
-        details,
-      },
-      ...prev,
-    ]);
-  };
-
-  // Stage 1b: the Head of the Food & Drugs section signs off the submitted
-  // documents before an officer can be assigned.
-  const handleApproveFoodDrugIntake = (intakeId: string) => {
-    const intake = activeCase.foodDrugIntakes?.find((i) => i.id === intakeId);
-    if (!currentUser || !intake || intake.status !== 'Awaiting Approval') return;
-    if (currentUser.role !== 'HEAD_OF_DEPARTMENT' || currentUser.department !== 'Food & Drugs') {
-      showToast('Only the Head of the Food & Drugs section can approve these documents.');
-      return;
-    }
-    updateFoodDrugIntake(intakeId, {
-      status: 'Awaiting Assignment',
-      approvedBy: currentUser.name,
-      approvedDate: new Date().toISOString().split('T')[0],
+  // Registers a Food & Drugs sample in the database, then records it on the case
+  // file and custody trail. The server also clears the visitor's lab notification.
+  const handleRegisterFoodDrugIntake = async (
+    visitor: OfficerVisitor,
+    submission: Parameters<typeof handleRegisterSubmission>[0],
+  ): Promise<FoodDrugIntake> => {
+    const draft = submission.foodDrugIntake;
+    if (!draft) throw new Error('Food & Drugs sample details are missing.');
+    const { intake } = await apiRequest<{ intake: FoodDrugIntake }>('/api/food-drug/intakes', {
+      method: 'POST',
+      body: JSON.stringify({
+        receptionVisitId: visitor.id,
+        clientName: draft.clientName,
+        nationalId: draft.nationalId,
+        poBox: draft.poBox,
+        sampleType: draft.sampleType,
+        receiver: draft.receiver,
+        notes: submission.description,
+      }),
     });
-    logFoodDrugAudit('FD_DOCUMENTS_APPROVED', intakeId, `Approved the submitted documents for ${intakeId}.`);
-    setNotifications((prev) => [
-      {
-        id: `NOTIF-${Date.now()}`,
-        timestamp: 'Just now',
-        title: 'Food & Drugs documents approved',
-        message: `${intakeId} (${intake.sampleType}) documents were approved by ${currentUser.name} and the sample is ready for an officer.`,
-        recipientDepartment: 'Food & Drugs',
-        type: 'success',
-        read: false,
-        linkAction: 'LAB_WORKSPACE',
-      },
-      ...prev,
-    ]);
-    showToast(`${intakeId} documents approved.`);
+    const saved: FoodDrugIntake = { ...intake, caseId: draft.caseId };
+    handleRegisterSubmission({
+      ...submission,
+      exhibits: submission.exhibits.map((exhibit) => ({
+        ...exhibit,
+        id: saved.exhibitId,
+        sealNumber: saved.sealNumber ?? exhibit.sealNumber,
+        markings: `Marked "${saved.id} / ${saved.clientName}" on receipt`,
+      })),
+      foodDrugIntake: saved,
+    });
+    upsertFoodDrugIntake(saved);
+    void loadReceptionActivityNotifications();
+    void loadReceptionVisits(false);
+    return saved;
   };
+
+  const runFoodDrugAction = async (
+    path: string,
+    init: RequestInit,
+    success: (intake: FoodDrugIntake) => string,
+    failure: string,
+  ) => {
+    try {
+      const { intake } = await apiRequest<{ intake: FoodDrugIntake }>(path, init);
+      upsertFoodDrugIntake(intake);
+      showToast(success(intake));
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : failure);
+    }
+  };
+
+  // Stage 1b: the Head of the Food & Drugs section signs off the submitted documents.
+  const handleApproveFoodDrugIntake = (intakeId: string) =>
+    runFoodDrugAction(
+      `/api/food-drug/intakes/${encodeURIComponent(intakeId)}/approve`,
+      { method: 'POST', body: '{}' },
+      (intake) => `${intake.id} documents approved.`,
+      'Could not approve the sample documents.',
+    );
 
   // Stage 2: only the Head of the Food & Drugs section assigns an officer.
-  const handleAssignFoodDrugIntake = (intakeId: string, analyst: string) => {
-    const intake = activeCase.foodDrugIntakes?.find((i) => i.id === intakeId);
-    if (!currentUser || !intake || intake.status !== 'Awaiting Assignment') return;
-    if (currentUser.role !== 'HEAD_OF_DEPARTMENT' || currentUser.department !== 'Food & Drugs') {
-      showToast('Only the Head of the Food & Drugs section can assign officers.');
-      return;
-    }
-    updateFoodDrugIntake(intakeId, {
-      status: 'Under Analysis',
-      analystAssigned: analyst,
-      assignedBy: currentUser.name,
-      assignedDate: new Date().toISOString().split('T')[0],
-    });
-    logFoodDrugAudit('FD_SAMPLE_ASSIGNED', intakeId, `Assigned ${intakeId} to ${analyst} for analysis.`);
-    setNotifications((prev) => [
-      {
-        id: `NOTIF-${Date.now()}`,
-        timestamp: 'Just now',
-        title: 'Food & Drugs sample assigned',
-        message: `${intakeId} (${intake.sampleType}) has been assigned to ${analyst} by ${currentUser.name}.`,
-        recipientDepartment: 'Food & Drugs',
-        type: 'info',
-        read: false,
-        linkAction: 'LAB_WORKSPACE',
-      },
-      ...prev,
-    ]);
-    showToast(`${intakeId} assigned to ${analyst}.`);
+  const handleAssignFoodDrugIntake = async (intakeId: string, analystId: string, remarks: string): Promise<boolean> => {
+    const { intake } = await apiRequest<{ intake: FoodDrugIntake }>(
+      `/api/food-drug/intakes/${encodeURIComponent(intakeId)}/assign`,
+      { method: 'POST', body: JSON.stringify({ analystId, remarks }) },
+    );
+    upsertFoodDrugIntake(intake);
+    showToast(`${intake.id} allocated to ${intake.analystAssigned}. A copy of the allocation form was sent to them.`);
+    return true;
   };
 
   // Stage 3 (final): Reported By, once the assigned officer's analysis is done.
-  const handleReportFoodDrugIntake = (intakeId: string, reportedBy: string) => {
-    const intake = activeCase.foodDrugIntakes?.find((i) => i.id === intakeId);
-    if (!currentUser || !intake || intake.status !== 'Under Analysis') return;
-    const allowed =
-      currentUser.department === 'Food & Drugs' &&
-      (currentUser.role === 'HEAD_OF_DEPARTMENT' || currentUser.name === intake.analystAssigned);
-    if (!allowed) {
-      showToast('Only the assigned officer or the Head of Section can report this sample.');
-      return;
-    }
-    updateFoodDrugIntake(intakeId, {
-      status: 'Reported',
-      reportedBy,
-      reportedDate: new Date().toISOString().split('T')[0],
-    });
-    logFoodDrugAudit('FD_SAMPLE_REPORTED', intakeId, `Analysis of ${intakeId} completed and reported by ${reportedBy}.`);
-    showToast(`${intakeId} reported by ${reportedBy}.`);
-  };
+  const handleReportFoodDrugIntake = (intakeId: string, reportedBy: string) =>
+    runFoodDrugAction(
+      `/api/food-drug/intakes/${encodeURIComponent(intakeId)}/report`,
+      { method: 'POST', body: JSON.stringify({ reportedBy }) },
+      (intake) => `${intake.id} reported by ${intake.reportedBy}.`,
+      'Could not record the report.',
+    );
 
   // Only the Head of Water & Environment assigns the Analysis Officer. The
   // assignment, transfer and completion transitions are enforced by the API.
-  const handleAssignWaterIntake = async (intakeId: string, officerId: string) => {
+  const handleAssignWaterIntake = async (intakeId: string, officerId: string, remarks: string): Promise<boolean> => {
     try {
       const previousAssignee = waterIntakes.find((item) => item.id === intakeId)?.analysisOfficer;
       const { intake } = await apiRequest<{ intake: WaterIntake }>(`/api/water/intakes/${intakeId}/assign`, {
         method: 'POST',
-        body: JSON.stringify({ analysisOfficerId: officerId }),
+        body: JSON.stringify({ analysisOfficerId: officerId, remarks }),
       });
       setWaterIntakes((previous) => [intake, ...previous.filter((item) => item.id !== intake.id)]);
       const transferred = !!previousAssignee;
@@ -1198,8 +1219,10 @@ export default function App() {
       showToast(transferred
         ? `${intake.labReference} transferred from ${previousAssignee} to ${intake.analysisOfficer}.`
         : `${intake.labReference} assigned to ${intake.analysisOfficer}.`);
+      return true;
     } catch (error) {
-      showToast(error instanceof Error ? error.message : 'Could not assign the Water exhibit.');
+      // Shown inside the work allocation form so the Head can correct it.
+      throw error instanceof Error ? error : new Error('Could not assign the Water exhibit.');
     }
   };
 
@@ -1297,40 +1320,27 @@ export default function App() {
     }
   };
 
-  const handleEditFoodDrugIntake = (intakeId: string, edit: FoodDrugIntakeEdit) => {
-    const intake = activeCase.foodDrugIntakes?.find((i) => i.id === intakeId);
-    if (!currentUser || !intake) return;
-    if (intake.edited) {
-      showToast(`${intakeId} has already been edited once and cannot be edited again.`);
-      return;
-    }
-    if (intake.status !== 'Awaiting Approval' && intake.status !== 'Awaiting Assignment') {
-      showToast('An intake cannot be edited once analysis has started.');
-      return;
-    }
-    updateFoodDrugIntake(intakeId, {
-      ...edit,
-      edited: true,
-      editedDate: new Date().toISOString().split('T')[0],
-    });
-    logFoodDrugAudit('FD_SAMPLE_EDITED', intakeId, `Edited ${intakeId} (one-time edit used).`);
-    showToast(`${intakeId} updated. It can't be edited again.`);
-  };
+  // One edit per intake before analysis starts; enforced by the API.
+  const handleEditFoodDrugIntake = (intakeId: string, edit: FoodDrugIntakeEdit) =>
+    runFoodDrugAction(
+      `/api/food-drug/intakes/${encodeURIComponent(intakeId)}`,
+      { method: 'PATCH', body: JSON.stringify(edit) },
+      (intake) => `${intake.id} updated. It can't be edited again.`,
+      'Could not update the sample.',
+    );
 
-  const handleDeleteFoodDrugIntake = (intakeId: string) => {
-    const intake = activeCase.foodDrugIntakes?.find((i) => i.id === intakeId);
-    if (!currentUser || !intake) return;
-    if (currentUser.role !== 'HEAD_OF_DEPARTMENT' || currentUser.department !== 'Food & Drugs') {
-      showToast('Only the Head of the Food & Drugs section can delete an intake.');
-      return;
+  // Only the Head of the Food & Drugs section deletes an intake (enforced by the API).
+  const handleDeleteFoodDrugIntake = async (intakeId: string) => {
+    try {
+      const result = await apiRequest<{ message: string }>(
+        `/api/food-drug/intakes/${encodeURIComponent(intakeId)}`,
+        { method: 'DELETE' },
+      );
+      setFoodDrugIntakes((previous) => previous.filter((item) => item.id !== intakeId));
+      showToast(result.message);
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not delete the sample.');
     }
-    setActiveCase((prev) => ({
-      ...prev,
-      foodDrugIntakes: prev.foodDrugIntakes?.filter((i) => i.id !== intakeId),
-      exhibits: prev.exhibits.filter((exhibit) => exhibit.id !== intake.exhibitId),
-    }));
-    logFoodDrugAudit('FD_SAMPLE_DELETED', intakeId, `Deleted intake ${intakeId} (${intake.sampleType}, ${intake.clientName}).`);
-    showToast(`${intakeId} deleted.`);
   };
 
   const isFoodDrugUser = currentUser?.role === 'SUPER_ADMIN' || currentUser?.department === 'Food & Drugs';
@@ -1344,12 +1354,13 @@ export default function App() {
       handleNavigateView('water-intake');
       return;
     }
-    if (!intakeVisitor || intakeVisitor.status === 'Departed') {
-      showToast('A current visitor record is required before laboratory intake.');
-      return;
-    }
+    // Food & Drugs works the same way: fillable before a client is sent, registered once notified.
     if (isFoodDrugUser) {
       handleNavigateView('food-drug-intake');
+      return;
+    }
+    if (!intakeVisitor || intakeVisitor.status === 'Departed') {
+      showToast('A current visitor record is required before laboratory intake.');
       return;
     }
     if (isWaterUser) {
@@ -1481,6 +1492,9 @@ export default function App() {
                   waterIntakes={waterIntakes}
                   waterIntakesLoading={waterIntakesLoading}
                   waterIntakesError={waterIntakesError}
+                  foodDrugIntakes={foodDrugIntakes}
+                  foodDrugIntakesLoading={foodDrugIntakesLoading}
+                  foodDrugIntakesError={foodDrugIntakesError}
                   officerVerified={officerVerified}
                   onNavigate={handleNavigateView}
                   onOpenVerifyOfficer={openOfficerVerification}
@@ -1561,6 +1575,24 @@ export default function App() {
               />
             )}
 
+            {activeView === 'food-drug-case-file' && isFoodDrugUser && (() => {
+              const intake = foodDrugIntakes.find((item) => item.id === activeFoodDrugIntakeId);
+              return intake ? (
+                <FoodDrugCaseFile
+                  key={intake.id}
+                  intake={intake}
+                  currentUser={currentUser}
+                  onBack={() => setActiveView('laboratory')}
+                  onChanged={() => void loadFoodDrugIntakes()}
+                />
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center dark:border-slate-700 dark:bg-slate-900">
+                  <h2 className="text-sm font-bold text-slate-900 dark:text-white">{foodDrugIntakesLoading ? 'Loading the sample…' : 'Sample not found'}</h2>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Open a sample's case file from the Exhibit Laboratory register.</p>
+                </div>
+              );
+            })()}
+
             {activeView === 'exhibit-case-file' && activeWaterIntake && (
               <ExhibitCaseFile
                 intake={activeWaterIntake}
@@ -1621,10 +1653,11 @@ export default function App() {
               </div>
             )}
 
-            {activeView === 'laboratory' && canAccessLaboratoryWorkspace(currentUser) && intakeVisitor && currentUser.department !== 'Water' && (
+            {activeView === 'laboratory' && canAccessLaboratoryWorkspace(currentUser) && intakeVisitor && currentUser.department !== 'Water' && currentUser.department !== 'Food & Drugs' && (
               <LaboratoryWorkspace
                 currentDepartment={currentUser.department || 'Narcotics'}
                 activeCase={activeCase}
+                foodDrugIntakes={foodDrugIntakes}
                 visitor={intakeVisitor}
                 onOpenCaseFile={(id) => setActiveView('case-file')}
                 onVerifyOfficer={() => handleVerifyOfficer(intakeVisitor.id)}
@@ -1667,15 +1700,26 @@ export default function App() {
                 }}
               />
             )}
-            {activeView === 'laboratory' && canAccessLaboratoryWorkspace(currentUser) && !intakeVisitor && currentUser.department === 'Food & Drugs' && (
+            {activeView === 'laboratory' && canAccessLaboratoryWorkspace(currentUser) && currentUser.department === 'Food & Drugs' && (
               <FoodDrugLaboratoryView
-                intakes={activeCase.foodDrugIntakes ?? []}
+                intakes={foodDrugIntakes}
                 currentUser={currentUser}
                 officers={foodDrugOfficers}
                 onOpenIntake={openIntake}
+                clients={visitors.filter((v) => v.laboratory === 'Food & Drugs' && ((v.status === 'Awaiting Laboratory Reception' && !!v.labNotificationSentAt) || v.status === 'In Laboratory'))}
+                canReceiveClients={['ANALYST', 'SENIOR_CHEMIST', 'HEAD_OF_DEPARTMENT'].includes(currentUser.role)}
+                onAcceptClient={(visitId) => void transitionReceptionVisit(visitId, 'lab-received')}
+                onRegisterSample={(visit) => {
+                  setSelectedIntakeVisitId(visit.id);
+                  setActiveView('food-drug-intake');
+                }}
                 onApprove={handleApproveFoodDrugIntake}
                 onAssign={handleAssignFoodDrugIntake}
                 onReport={handleReportFoodDrugIntake}
+                onOpenCaseFile={(intake) => {
+                  setActiveFoodDrugIntakeId(intake.id);
+                  setActiveView('food-drug-case-file');
+                }}
                 onEdit={handleEditFoodDrugIntake}
                 onDelete={handleDeleteFoodDrugIntake}
               />
@@ -1688,29 +1732,24 @@ export default function App() {
               </div>
             )}
 
-            {activeView === 'food-drug-intake' && isFoodDrugUser && intakeVisitor && (
+            {activeView === 'food-drug-intake' && isFoodDrugUser && (
+              // Fillable even before a client is sent; registering stays disabled until reception has notified Food & Drugs.
               <FoodDrugIntakePage
-                key={intakeVisitor.id}
+                key={chosenFoodDrugVisitor?.id ?? 'no-client'}
                 activeCase={activeCase}
-                visitor={intakeVisitor}
+                visitor={chosenFoodDrugVisitor ?? null}
                 receivingAnalystName={currentUser.name}
                 staffNames={[currentUser.name, ...foodDrugOfficers.map((o) => o.name).filter((n) => n !== currentUser.name)]}
-                onSaveIntake={(data) => {
-                  const visit = intakeVisitor;
-                  handleRegisterSubmission(data);
+                intakes={foodDrugIntakes}
+                onSaveIntake={async (data) => {
+                  const visit = chosenFoodDrugVisitor;
+                  if (!visit) throw new Error('Choose a client sent to Food & Drugs before registering the sample.');
+                  await handleRegisterFoodDrugIntake(visit, data);
                   handleNavigateView('laboratory');
-                  void resolveVisitLabNotifications(visit.id).then((ok) => {
-                    if (ok) setIntakeHandoverVisit(visit);
-                  });
+                  setIntakeHandoverVisit(visit);
                 }}
                 onCancel={() => handleNavigateView('laboratory')}
               />
-            )}
-            {activeView === 'food-drug-intake' && isFoodDrugUser && !intakeVisitor && (
-              <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center dark:border-slate-700 dark:bg-slate-900">
-                <h2 className="text-sm font-bold text-slate-900 dark:text-white">No active reception visit</h2>
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">A Food &amp; Drugs arrival must be received at Reception &amp; Client Handover before intake.</p>
-              </div>
             )}
 
             {activeView === 'water-intake' && isWaterUser && (

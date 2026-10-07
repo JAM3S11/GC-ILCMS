@@ -488,16 +488,20 @@ const appendReceptionEvent = (db, visitId, eventType, actorId, fromStatus, toSta
 const createReceptionActivityNotification = (db, {
   recipientRole = null,
   recipientDepartment = null,
+  recipientUserId = null,
   title,
   message,
   type,
   linkAction,
-  visitId,
+  visitId = null,
+  relatedRecordType = null,
+  relatedRecordId = null,
 }) => db.query(
   `INSERT INTO reception_activity_notifications (
-     recipient_role, recipient_department, title, message, type, link_action, related_visit_id
-   ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-  [recipientRole, recipientDepartment, title, message, type, linkAction, visitId],
+     recipient_role, recipient_department, recipient_user_id, title, message, type, link_action,
+     related_visit_id, related_record_type, related_record_id
+   ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+  [recipientRole, recipientDepartment, recipientUserId, title, message, type, linkAction, visitId, relatedRecordType, relatedRecordId],
 );
 
 // Marks every lab notification for the visit (the first one and any resends)
@@ -510,6 +514,46 @@ const resolveLabNotificationsForVisit = (db, visitId, department, userId, resolu
        AND recipient_department = $2 AND resolved_at IS NULL`,
     [visitId, department, userId, resolution],
   );
+
+// A work allocation form: the Head keeps the stored original; the analyst gets
+// a copy with the task through a notification addressed only to them.
+const WORK_ALLOCATION_REMARKS_MIN = 20;
+const validAllocationRemarks = (remarks) =>
+  typeof remarks === 'string' &&
+  remarks.trim().length >= WORK_ALLOCATION_REMARKS_MIN &&
+  remarks.trim().length <= 2000;
+const recordWorkAllocation = async (db, {
+  department, recordType, recordId, labReference, subject, remarks, analystId, analystName, head,
+}) => {
+  await db.query(
+    `UPDATE work_allocations SET superseded_at = NOW()
+     WHERE record_type = $1 AND record_id = $2 AND superseded_at IS NULL`,
+    [recordType, recordId],
+  );
+  const { rows } = await db.query(
+    `INSERT INTO work_allocations (department, record_type, record_id, lab_reference, subject, remarks, analyst_id, allocated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     RETURNING id, form_number`,
+    [department, recordType, recordId, labReference, subject ?? '', remarks.trim(), analystId, head.id],
+  );
+  await createReceptionActivityNotification(db, {
+    recipientUserId: analystId,
+    title: `Work allocation ${rows[0].form_number} — ${labReference}`,
+    message: `${head.full_name ?? head.fullName ?? 'The Head of Department'} allocated ${labReference} to you, ${analystName}. Instructions: ${remarks.trim()}`,
+    type: 'info',
+    linkAction: 'WORK_ALLOCATION',
+    relatedRecordType: recordType,
+    relatedRecordId: recordId,
+  });
+  await audit(db, head.id, head.email, 'WORK_ALLOCATION_ISSUED', 'work_allocation', rows[0].id, {
+    formNumber: rows[0].form_number,
+    recordType,
+    recordId,
+    labReference,
+    analystId,
+  });
+  return rows[0];
+};
 
 const receptionNotificationAudience = (user) => ({
   role: user.role,
@@ -524,6 +568,8 @@ app.get('/api/notifications', requireSession, asyncHandler(async (req, res, next
               n.related_visit_id AS "relatedVisitorId",
               n.recipient_role AS "recipientRole",
               n.recipient_department AS "recipientDepartment",
+              n.related_record_type AS "relatedRecordType",
+              n.related_record_id AS "relatedRecordId",
               n.created_at AS "createdAt",
               (r.read_at IS NOT NULL OR n.resolved_at IS NOT NULL) AS read,
               n.resolved_at AS "resolvedAt", resolver.full_name AS "resolvedBy"
@@ -532,7 +578,7 @@ app.get('/api/notifications', requireSession, asyncHandler(async (req, res, next
          ON r.notification_id = n.id AND r.user_id = $1
        LEFT JOIN users resolver ON resolver.id = n.resolved_by
        WHERE r.dismissed_at IS NULL
-         AND (n.recipient_role = $2 OR n.recipient_department = $3)
+         AND (n.recipient_role = $2 OR n.recipient_department = $3 OR n.recipient_user_id = $1)
        ORDER BY n.created_at DESC
        LIMIT 200`,
       [req.user.id, audience.role, audience.department],
@@ -550,7 +596,7 @@ app.patch('/api/notifications/read-all', requireSession, asyncHandler(async (req
       `INSERT INTO reception_activity_notification_reads (notification_id, user_id, read_at)
        SELECT n.id, $1, NOW()
        FROM reception_activity_notifications n
-       WHERE n.recipient_role = $2 OR n.recipient_department = $3
+       WHERE n.recipient_role = $2 OR n.recipient_department = $3 OR n.recipient_user_id = $1
        ON CONFLICT (notification_id, user_id)
        DO UPDATE SET read_at = NOW()`,
       [req.user.id, audience.role, audience.department],
@@ -571,7 +617,7 @@ app.patch('/api/notifications/:id/read', requireSession, asyncHandler(async (req
         `INSERT INTO reception_activity_notification_reads (notification_id, user_id, read_at)
          SELECT n.id, $2, NOW()
          FROM reception_activity_notifications n
-         WHERE n.id = $1 AND (n.recipient_role = $3 OR n.recipient_department = $4)
+         WHERE n.id = $1 AND (n.recipient_role = $3 OR n.recipient_department = $4 OR n.recipient_user_id = $2)
          ON CONFLICT (notification_id, user_id)
          DO UPDATE SET read_at = NOW(), dismissed_at = NULL`,
         [req.params.id, req.user.id, audience.role, audience.department],
@@ -582,7 +628,7 @@ app.patch('/api/notifications/:id/read', requireSession, asyncHandler(async (req
         `DELETE FROM reception_activity_notification_reads r
          USING reception_activity_notifications n
          WHERE r.notification_id = n.id AND n.id = $1 AND r.user_id = $2
-           AND (n.recipient_role = $3 OR n.recipient_department = $4)`,
+           AND (n.recipient_role = $3 OR n.recipient_department = $4 OR n.recipient_user_id = $2)`,
         [req.params.id, req.user.id, audience.role, audience.department],
       );
     }
@@ -599,7 +645,7 @@ app.delete('/api/notifications/:id', requireSession, asyncHandler(async (req, re
       `INSERT INTO reception_activity_notification_reads (notification_id, user_id, read_at, dismissed_at)
        SELECT n.id, $2, NOW(), NOW()
        FROM reception_activity_notifications n
-       WHERE n.id = $1 AND (n.recipient_role = $3 OR n.recipient_department = $4)
+       WHERE n.id = $1 AND (n.recipient_role = $3 OR n.recipient_department = $4 OR n.recipient_user_id = $2)
        ON CONFLICT (notification_id, user_id)
        DO UPDATE SET read_at = COALESCE(reception_activity_notification_reads.read_at, NOW()),
                      dismissed_at = NOW()`,
@@ -1447,15 +1493,19 @@ app.post('/api/water/intakes/:id/assign', requireSession, requireWaterLab, async
       !(req.user.role === 'HEAD_OF_DEPARTMENT' && req.user.department === 'Water')) {
     return res.status(403).json({ error: 'Only the Head of Water & Environment can assign an Analysis Officer.' });
   }
-  const { analysisOfficerId } = req.body ?? {};
+  const { analysisOfficerId, remarks } = req.body ?? {};
   if (!/^[0-9a-f-]{36}$/i.test(analysisOfficerId ?? '')) {
     return res.status(400).json({ error: 'Choose a valid Water & Environment Analysis Officer.' });
+  }
+  if (!validAllocationRemarks(remarks)) {
+    return res.status(400).json({ error: `Fill in the work allocation remarks: describe what the analyst must do (at least ${WORK_ALLOCATION_REMARKS_MIN} characters).` });
   }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const { rows: current } = await client.query(
-      `SELECT w.id, w.status, w.lab_reference, w.analysis_officer_id,
+      `SELECT w.id, w.status, w.lab_reference, w.analysis_officer_id, w.test_type, w.source_category,
+              w.source_type, w.location_from, w.sender_name,
               assigned.full_name AS analysis_officer
        FROM water_exhibit_intakes w
        LEFT JOIN users assigned ON assigned.id = w.analysis_officer_id
@@ -1496,6 +1546,17 @@ app.post('/api/water/intakes/:id/assign', requireSession, requireWaterLab, async
        WHERE id = $1`,
       [req.params.id, analysisOfficerId, req.user.id],
     );
+    const allocation = await recordWorkAllocation(client, {
+      department: 'Water',
+      recordType: 'WATER_INTAKE',
+      recordId: req.params.id,
+      labReference: current[0].lab_reference,
+      subject: `${current[0].test_type} · ${current[0].source_category}, ${current[0].source_type} (${current[0].location_from}) · from ${current[0].sender_name}`,
+      remarks,
+      analystId: analysisOfficerId,
+      analystName: officer[0].full_name,
+      head: { id: req.user.id, email: req.user.email, full_name: req.user.fullName ?? req.user.full_name ?? req.user.name },
+    });
     const eventType = isTransfer ? 'TRANSFERRED' : 'ASSIGNED';
     await appendWaterIntakeEvent(
       client,
@@ -1508,6 +1569,7 @@ app.post('/api/water/intakes/:id/assign', requireSession, requireWaterLab, async
         ...(isTransfer ? { previousOfficer: current[0].analysis_officer } : {}),
         analysisOfficer: officer[0].full_name,
         analysisOfficerId,
+        allocationForm: allocation.form_number,
       },
     );
     await audit(client, req.user.id, req.user.email, isTransfer ? 'WATER_EXHIBIT_TRANSFERRED' : 'WATER_EXHIBIT_ASSIGNED', 'water_exhibit_intake', req.params.id, {
@@ -2478,6 +2540,694 @@ app.delete('/api/water/intakes/:id', requireSession, requireWaterLab, asyncHandl
     return next(error);
   } finally {
     client.release();
+  }
+}));
+
+/* ------------------------------------------------------------------ */
+/*  Food & Drugs sample register                                       */
+/* ------------------------------------------------------------------ */
+
+const FOOD_DRUG = 'Food & Drugs';
+const foodDrugSampleTypes = new Set(['Aflatoxin', 'Miscellaneous', 'Mycotoxins']);
+const FOOD_DRUG_STORAGE_LOCATION = 'Food & Drugs Sample Store — Store R-01';
+
+const requireFoodDrugLab = (req, res, next) => {
+  if (req.user?.role !== 'SUPER_ADMIN' &&
+      (req.user?.department !== FOOD_DRUG || !waterLabRoles.has(req.user?.role))) {
+    return res.status(403).json({ error: 'Food & Drugs laboratory access is required.' });
+  }
+  next();
+};
+const isFoodDrugHead = (user) =>
+  user.role === 'SUPER_ADMIN' || (user.role === 'HEAD_OF_DEPARTMENT' && user.department === FOOD_DRUG);
+
+// Shaped like the FoodDrugIntake type the browser already uses. The National ID
+// is masked the same way the reception register masks it.
+const foodDrugIntakeProjection = `
+  f.id,
+  f.exhibit_number AS "exhibitId",
+  f.seal_number AS "sealNumber",
+  f.reception_visit_id AS "receptionVisitId",
+  f.client_name AS "clientName",
+  CONCAT(REPEAT('•', GREATEST(LENGTH(f.national_id) - 4, 0)), RIGHT(f.national_id, 4)) AS "nationalId",
+  f.po_box AS "poBox",
+  f.sample_type AS "sampleType",
+  f.notes,
+  f.receiver,
+  TO_CHAR(f.intake_date, 'YYYY-MM-DD') AS "intakeDate",
+  f.status,
+  approver.full_name AS "approvedBy",
+  TO_CHAR(f.approved_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "approvedDate",
+  analyst.full_name AS "analystAssigned",
+  f.analyst_id AS "analystId",
+  assigner.full_name AS "assignedBy",
+  TO_CHAR(f.assigned_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "assignedDate",
+  f.reported_by AS "reportedBy",
+  TO_CHAR(f.reported_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "reportedDate",
+  EXISTS (SELECT 1 FROM food_drug_receipt_forms rf WHERE rf.intake_id = f.id) AS "receiptFormSaved",
+  (SELECT CASE
+            WHEN ws.checked_at IS NOT NULL THEN 'Checked'
+            WHEN ws.analysed_at IS NOT NULL THEN 'Awaiting check'
+            ELSE 'Draft'
+          END
+     FROM food_drug_worksheets ws WHERE ws.intake_id = f.id) AS "worksheetStatus",
+  (f.edited_at IS NOT NULL) AS edited,
+  TO_CHAR(f.edited_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "editedDate",
+  f.created_at AS "createdAt"`;
+const foodDrugIntakeJoins = `
+  LEFT JOIN users approver ON approver.id = f.approved_by
+  LEFT JOIN users analyst ON analyst.id = f.analyst_id
+  LEFT JOIN users assigner ON assigner.id = f.assigned_by`;
+
+const selectFoodDrugIntake = async (db, id) => {
+  const { rows } = await db.query(
+    `SELECT ${foodDrugIntakeProjection} FROM food_drug_intakes f ${foodDrugIntakeJoins} WHERE f.id = $1`,
+    [id],
+  );
+  return rows[0];
+};
+
+// Locks one live (not deleted) intake for a state change.
+const lockFoodDrugIntake = async (db, id) => {
+  const { rows } = await db.query(
+    `SELECT * FROM food_drug_intakes WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+    [id],
+  );
+  return rows[0];
+};
+
+app.get('/api/food-drug/intakes', requireSession, requireFoodDrugLab, asyncHandler(async (req, res, next) => {
+  try {
+    const [intakes, officers] = await Promise.all([
+      pool.query(
+        `SELECT ${foodDrugIntakeProjection}
+         FROM food_drug_intakes f ${foodDrugIntakeJoins}
+         WHERE f.deleted_at IS NULL
+         ORDER BY f.created_at DESC, f.id DESC
+         LIMIT 500`,
+      ),
+      pool.query(
+        `SELECT id, full_name AS name, role
+         FROM users
+         WHERE department = $1 AND status = 'ACTIVE' AND role = ANY($2::text[])
+         ORDER BY full_name`,
+        [FOOD_DRUG, [...waterLabRoles]],
+      ),
+    ]);
+    res.json({ intakes: intakes.rows, officers: officers.rows });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+app.post('/api/food-drug/intakes', requireSession, requireFoodDrugLab, asyncHandler(async (req, res, next) => {
+  const { receptionVisitId, clientName, nationalId, poBox, sampleType, receiver, notes } = req.body ?? {};
+  if (
+    !/^[0-9a-f-]{36}$/i.test(receptionVisitId ?? '') ||
+    typeof clientName !== 'string' || clientName.trim().length < 2 || clientName.trim().length > 150 ||
+    typeof nationalId !== 'string' || nationalId.trim().length < 2 || nationalId.trim().length > 100 ||
+    typeof poBox !== 'string' || !/^\s*p\.?\s*o\.?\s*box\.?\s*\d{1,6}(\s*-\s*\d{1,6})?\s*$/i.test(poBox) ||
+    !foodDrugSampleTypes.has(sampleType) ||
+    typeof receiver !== 'string' || receiver.trim().length < 2 || receiver.trim().length > 150 ||
+    (notes != null && (typeof notes !== 'string' || notes.length > 2000))
+  ) {
+    return res.status(400).json({ error: 'Provide a valid client, National ID, P.O Box, sample type and receiver for the Food & Drugs sample.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: visits } = await client.query(
+      `SELECT id FROM reception_visits
+       WHERE id = $1 AND deleted_at IS NULL AND destination_department = $2
+         AND status IN ('AWAITING_LAB_RECEPTION', 'IN_LABORATORY')
+         AND lab_notification_sent_at IS NOT NULL
+       FOR UPDATE`,
+      [receptionVisitId, FOOD_DRUG],
+    );
+    if (!visits.length) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'No client has been sent to Food & Drugs for this visit. Reception must notify the laboratory before the sample can be registered.' });
+    }
+    const { rows: yearRows } = await client.query(
+      `SELECT EXTRACT(YEAR FROM (NOW() AT TIME ZONE 'Africa/Nairobi'))::int AS year`,
+    );
+    const year = yearRows[0].year;
+    const { rows: sequenceRows } = await client.query(
+      `INSERT INTO food_drug_intake_sequences (intake_year, last_value)
+       VALUES ($1, 1)
+       ON CONFLICT (intake_year) DO UPDATE SET last_value = food_drug_intake_sequences.last_value + 1
+       RETURNING last_value`,
+      [year],
+    );
+    const sequence = String(sequenceRows[0].last_value).padStart(3, '0');
+    const id = `FDI-${year}-${sequence}`;
+    const exhibitNumber = `FD-${year}-${sequence}`;
+    const sealNumber = `FD-SEAL-${randomBytes(5).toString('hex').toUpperCase()}`;
+    await client.query(
+      `INSERT INTO food_drug_intakes (
+         id, exhibit_number, seal_number, reception_visit_id, client_name, national_id, po_box,
+         sample_type, notes, receiver, registered_by
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        id, exhibitNumber, sealNumber, receptionVisitId, clientName.trim(), nationalId.trim(), poBox.trim(),
+        sampleType, typeof notes === 'string' ? notes.trim() : '', receiver.trim(), req.user.id,
+      ],
+    );
+    await audit(client, req.user.id, req.user.email, 'FD_SAMPLE_REGISTERED', 'food_drug_intake', id, {
+      exhibitNumber,
+      receptionVisitId,
+      sampleType,
+    });
+    // The visitor's lab notification now reads as seen for the whole department.
+    await resolveLabNotificationsForVisit(client, receptionVisitId, FOOD_DRUG, req.user.id);
+    const intake = await selectFoodDrugIntake(client, id);
+    await client.query('COMMIT');
+    res.status(201).json({ intake, storageLocation: FOOD_DRUG_STORAGE_LOCATION });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return next(error);
+  } finally {
+    client.release();
+  }
+}));
+
+// Runs one guarded state change on an intake inside a transaction and returns
+// the refreshed record. "change" returns either { error, status } or nothing.
+const changeFoodDrugIntake = (change) => asyncHandler(async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const intake = await lockFoodDrugIntake(client, req.params.id);
+    if (!intake) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Food & Drugs sample not found.' });
+    }
+    const refusal = await change(client, intake, req);
+    if (refusal) {
+      await client.query('ROLLBACK');
+      return res.status(refusal.status).json({ error: refusal.error });
+    }
+    const updated = await selectFoodDrugIntake(client, intake.id);
+    await client.query('COMMIT');
+    res.json({ intake: updated });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return next(error);
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/food-drug/intakes/:id/approve', requireSession, requireFoodDrugLab, changeFoodDrugIntake(async (db, intake, req) => {
+  if (!isFoodDrugHead(req.user)) return { status: 403, error: 'Only the Head of the Food & Drugs section can approve these documents.' };
+  if (intake.status !== 'Awaiting Approval') return { status: 409, error: 'This sample is not awaiting document approval. Refresh the register.' };
+  await db.query(
+    `UPDATE food_drug_intakes
+     SET status = 'Awaiting Assignment', approved_by = $2, approved_at = NOW(), updated_at = NOW()
+     WHERE id = $1`,
+    [intake.id, req.user.id],
+  );
+  await audit(db, req.user.id, req.user.email, 'FD_DOCUMENTS_APPROVED', 'food_drug_intake', intake.id);
+}));
+
+app.post('/api/food-drug/intakes/:id/assign', requireSession, requireFoodDrugLab, changeFoodDrugIntake(async (db, intake, req) => {
+  if (!isFoodDrugHead(req.user)) return { status: 403, error: 'Only the Head of the Food & Drugs section can assign officers.' };
+  if (intake.status !== 'Awaiting Assignment') {
+    return {
+      status: 409,
+      error: intake.status === 'Awaiting Approval'
+        ? 'Approve the submitted documents before assigning an officer.'
+        : 'This sample has already been assigned. Refresh the register.',
+    };
+  }
+  const analystId = req.body?.analystId;
+  if (!/^[0-9a-f-]{36}$/i.test(analystId ?? '')) return { status: 400, error: 'Choose a valid Food & Drugs officer.' };
+  if (!validAllocationRemarks(req.body?.remarks)) {
+    return { status: 400, error: `Fill in the work allocation remarks: describe what the analyst must do (at least ${WORK_ALLOCATION_REMARKS_MIN} characters).` };
+  }
+  const { rows: officer } = await db.query(
+    `SELECT id, full_name FROM users
+     WHERE id = $1 AND department = $2 AND status = 'ACTIVE' AND role = ANY($3::text[])`,
+    [analystId, FOOD_DRUG, [...waterLabRoles].filter((role) => role !== 'HEAD_OF_DEPARTMENT')],
+  );
+  if (!officer.length) return { status: 400, error: 'Choose an active Food & Drugs officer.' };
+  await db.query(
+    `UPDATE food_drug_intakes
+     SET status = 'Under Analysis', analyst_id = $2, assigned_by = $3, assigned_at = NOW(), updated_at = NOW()
+     WHERE id = $1`,
+    [intake.id, analystId, req.user.id],
+  );
+  const allocation = await recordWorkAllocation(db, {
+    department: FOOD_DRUG,
+    recordType: 'FOOD_DRUG_INTAKE',
+    recordId: intake.id,
+    labReference: intake.id,
+    subject: `${intake.sample_type} sample · from ${intake.client_name}${intake.notes ? ` · ${intake.notes}` : ''}`,
+    remarks: req.body.remarks,
+    analystId,
+    analystName: officer[0].full_name,
+    head: { id: req.user.id, email: req.user.email, full_name: req.user.fullName ?? req.user.full_name ?? req.user.name },
+  });
+  await audit(db, req.user.id, req.user.email, 'FD_SAMPLE_ASSIGNED', 'food_drug_intake', intake.id, {
+    analystId,
+    allocationForm: allocation.form_number,
+  });
+}));
+
+app.post('/api/food-drug/intakes/:id/report', requireSession, requireFoodDrugLab, changeFoodDrugIntake(async (db, intake, req) => {
+  if (intake.status !== 'Under Analysis') return { status: 409, error: 'This sample is not under analysis.' };
+  if (!isFoodDrugHead(req.user) && intake.analyst_id !== req.user.id) {
+    return { status: 403, error: 'Only the assigned officer or the Head of Section can report this sample.' };
+  }
+  const { rows: receiptForm } = await db.query('SELECT 1 FROM food_drug_receipt_forms WHERE intake_id = $1', [intake.id]);
+  if (!receiptForm.length) {
+    return { status: 409, error: 'Open the case file and save the analytical sample receipt form before reporting this sample.' };
+  }
+  const reportedBy = typeof req.body?.reportedBy === 'string' ? req.body.reportedBy.trim() : '';
+  if (reportedBy.length < 2 || reportedBy.length > 150) return { status: 400, error: 'Enter who reported the analysis.' };
+  await db.query(
+    `UPDATE food_drug_intakes
+     SET status = 'Reported', reported_by = $2, reported_at = NOW(), updated_at = NOW()
+     WHERE id = $1`,
+    [intake.id, reportedBy],
+  );
+  await audit(db, req.user.id, req.user.email, 'FD_SAMPLE_REPORTED', 'food_drug_intake', intake.id, { reportedBy });
+}));
+
+
+/* ---------------- Food & Drugs analytical sample receipt form ---------------- */
+
+const receiptFormProjection = `
+  r.intake_id AS "intakeId",
+  TO_CHAR(r.form_date, 'YYYY-MM-DD') AS "formDate",
+  r.sender_name AS "senderName",
+  r.sender_physical_address AS "senderPhysicalAddress",
+  r.sender_postal_address AS "senderPostalAddress",
+  r.sender_telephone AS "senderTelephone",
+  r.submitter_name AS "submitterName",
+  r.submitter_id_number AS "submitterIdNumber",
+  r.sample_description AS "sampleDescription",
+  r.examination_required AS "examinationRequired",
+  r.fee_kes::float AS "feeKes",
+  r.invoice_number AS "invoiceNumber",
+  r.receipt_number AS "receiptNumber",
+  r.analyst_receiving_id AS "analystReceivingId",
+  analyst.full_name AS "analystReceiving",
+  TO_CHAR(r.analyst_received_date, 'YYYY-MM-DD') AS "analystReceivedDate",
+  editor.full_name AS "updatedBy",
+  TO_CHAR(r.updated_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD HH24:MI') AS "updatedAt"`;
+
+// What the form starts with: sender and submitter come from the intake and its
+// reception visit; the analyst receiving is the officer the Head allocated.
+const receiptFormPrefill = async (db, intakeId) => {
+  const { rows } = await db.query(
+    `SELECT f.id, f.status, f.analyst_id, f.client_name, f.national_id, f.po_box, f.sample_type, f.notes,
+            v.station_or_organization, v.phone, v.visitor_type,
+            analyst.full_name AS analyst_name,
+            TO_CHAR((NOW() AT TIME ZONE 'Africa/Nairobi')::date, 'YYYY-MM-DD') AS today
+     FROM food_drug_intakes f
+     JOIN reception_visits v ON v.id = f.reception_visit_id
+     LEFT JOIN users analyst ON analyst.id = f.analyst_id
+     WHERE f.id = $1 AND f.deleted_at IS NULL`,
+    [intakeId],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    row,
+    prefill: {
+      intakeId: row.id,
+      formDate: row.today,
+      senderName: row.station_or_organization || row.client_name,
+      senderPhysicalAddress: '',
+      senderPostalAddress: row.po_box,
+      senderTelephone: row.phone,
+      submitterName: row.client_name,
+      submitterIdNumber: row.national_id,
+      sampleDescription: row.notes || '',
+      examinationRequired: `${row.sample_type} analysis`,
+      feeKes: null,
+      invoiceNumber: '',
+      receiptNumber: '',
+      analystReceivingId: row.analyst_id,
+      analystReceiving: row.analyst_name,
+      analystReceivedDate: row.today,
+    },
+  };
+};
+
+const canFillReceiptForm = (user, row) =>
+  row.status === 'Under Analysis' && (isFoodDrugHead(user) || row.analyst_id === user.id);
+
+app.get('/api/food-drug/intakes/:id/receipt-form', requireSession, requireFoodDrugLab, asyncHandler(async (req, res, next) => {
+  try {
+    const base = await receiptFormPrefill(pool, req.params.id);
+    if (!base) return res.status(404).json({ error: 'Food & Drugs sample not found.' });
+    const { rows } = await pool.query(
+      `SELECT ${receiptFormProjection}
+       FROM food_drug_receipt_forms r
+       JOIN users analyst ON analyst.id = r.analyst_receiving_id
+       JOIN users editor ON editor.id = r.updated_by
+       WHERE r.intake_id = $1`,
+      [req.params.id],
+    );
+    res.json({ form: rows[0] ?? null, prefill: base.prefill, canEdit: canFillReceiptForm(req.user, base.row) });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+app.put('/api/food-drug/intakes/:id/receipt-form', requireSession, requireFoodDrugLab, asyncHandler(async (req, res, next) => {
+  const { senderPhysicalAddress, sampleDescription, examinationRequired, feeKes, invoiceNumber, receiptNumber } = req.body ?? {};
+  const fee = Number(feeKes);
+  const text = (value, min, max) => typeof value === 'string' && value.trim().length >= min && value.trim().length <= max;
+  if (
+    !text(senderPhysicalAddress, 2, 300) ||
+    !text(sampleDescription, 5, 2000) ||
+    !text(examinationRequired, 3, 1000) ||
+    !Number.isFinite(fee) || fee < 0 || fee > 10_000_000 ||
+    !text(invoiceNumber, 1, 100) ||
+    !text(receiptNumber, 1, 100)
+  ) {
+    return res.status(400).json({ error: 'Fill in the physical address, sample description, examination required, fee, invoice number and receipt number.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT id FROM food_drug_intakes WHERE id = $1 FOR UPDATE', [req.params.id]);
+    const base = await receiptFormPrefill(client, req.params.id);
+    if (!base) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Food & Drugs sample not found.' });
+    }
+    if (!canFillReceiptForm(req.user, base.row)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({
+        error: base.row.status === 'Under Analysis'
+          ? 'Only the analyst allocated this sample or the Head of Section can fill in its receipt form.'
+          : 'The receipt form can only be changed while the sample is under analysis.',
+      });
+    }
+    const p = base.prefill;
+    // Sender, submitter and analyst details are taken from the record, never from the request.
+    await client.query(
+      `INSERT INTO food_drug_receipt_forms (
+         intake_id, sender_name, sender_physical_address, sender_postal_address, sender_telephone,
+         submitter_name, submitter_id_number, sample_description, examination_required, fee_kes,
+         invoice_number, receipt_number, analyst_receiving_id, created_by, updated_by
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)
+       ON CONFLICT (intake_id) DO UPDATE SET
+         sender_physical_address = EXCLUDED.sender_physical_address,
+         sample_description = EXCLUDED.sample_description,
+         examination_required = EXCLUDED.examination_required,
+         fee_kes = EXCLUDED.fee_kes,
+         invoice_number = EXCLUDED.invoice_number,
+         receipt_number = EXCLUDED.receipt_number,
+         updated_by = EXCLUDED.updated_by,
+         updated_at = NOW()`,
+      [
+        req.params.id, p.senderName, senderPhysicalAddress.trim(), p.senderPostalAddress, p.senderTelephone,
+        p.submitterName, p.submitterIdNumber, sampleDescription.trim(), examinationRequired.trim(), fee,
+        invoiceNumber.trim(), receiptNumber.trim(), p.analystReceivingId, req.user.id,
+      ],
+    );
+    await audit(client, req.user.id, req.user.email, 'FD_RECEIPT_FORM_SAVED', 'food_drug_intake', req.params.id, {
+      invoiceNumber: invoiceNumber.trim(),
+      receiptNumber: receiptNumber.trim(),
+      feeKes: fee,
+    });
+    const { rows } = await client.query(
+      `SELECT ${receiptFormProjection}
+       FROM food_drug_receipt_forms r
+       JOIN users analyst ON analyst.id = r.analyst_receiving_id
+       JOIN users editor ON editor.id = r.updated_by
+       WHERE r.intake_id = $1`,
+      [req.params.id],
+    );
+    await client.query('COMMIT');
+    res.json({ form: rows[0] });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return next(error);
+  } finally {
+    client.release();
+  }
+}));
+
+
+/* ---------------- Food & Drugs laboratory worksheet ---------------- */
+
+const worksheetProjection = `
+  ws.intake_id AS "intakeId",
+  TO_CHAR(ws.analysis_started_on, 'YYYY-MM-DD') AS "analysisStartedOn",
+  ws.test_methods AS "testMethods",
+  ws.results,
+  analysed.full_name AS "analysedBy",
+  TO_CHAR(ws.analysed_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "analysedDate",
+  checker.full_name AS "checkedBy",
+  TO_CHAR(ws.checked_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "checkedDate",
+  editor.full_name AS "updatedBy",
+  TO_CHAR(ws.updated_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD HH24:MI') AS "updatedAt"`;
+
+const selectWorksheet = async (db, intakeId) => {
+  const { rows } = await db.query(
+    `SELECT ${worksheetProjection}
+     FROM food_drug_worksheets ws
+     LEFT JOIN users analysed ON analysed.id = ws.analysed_by
+     LEFT JOIN users checker ON checker.id = ws.checked_by
+     JOIN users editor ON editor.id = ws.updated_by
+     WHERE ws.intake_id = $1`,
+    [intakeId],
+  );
+  return rows[0] ?? null;
+};
+
+// Everything the worksheet rules need about a sample, locked when "lock" is set.
+const worksheetContext = async (db, intakeId, lock = false) => {
+  if (lock) await db.query('SELECT id FROM food_drug_intakes WHERE id = $1 FOR UPDATE', [intakeId]);
+  const { rows } = await db.query(
+    `SELECT f.id, f.status, f.analyst_id, TO_CHAR(f.intake_date, 'YYYY-MM-DD') AS intake_date,
+            r.sample_description, TO_CHAR(r.form_date, 'YYYY-MM-DD') AS receipt_date,
+            ws.analysed_at, ws.checked_at,
+            TO_CHAR((NOW() AT TIME ZONE 'Africa/Nairobi')::date, 'YYYY-MM-DD') AS today
+     FROM food_drug_intakes f
+     LEFT JOIN food_drug_receipt_forms r ON r.intake_id = f.id
+     LEFT JOIN food_drug_worksheets ws ON ws.intake_id = f.id
+     WHERE f.id = $1 AND f.deleted_at IS NULL`,
+    [intakeId],
+  );
+  return rows[0] ?? null;
+};
+
+// The allocated analyst fills it in (the Head may help) until it is submitted.
+const canFillWorksheet = (user, ctx) =>
+  ctx.status === 'Under Analysis' && !!ctx.sample_description && !ctx.analysed_at &&
+  (isFoodDrugHead(user) || ctx.analyst_id === user.id);
+const canCheckWorksheet = (user, ctx) =>
+  ctx.status === 'Under Analysis' && !!ctx.analysed_at && !ctx.checked_at &&
+  user.role === 'HEAD_OF_DEPARTMENT' && user.department === FOOD_DRUG;
+
+app.get('/api/food-drug/intakes/:id/worksheet', requireSession, requireFoodDrugLab, asyncHandler(async (req, res, next) => {
+  try {
+    const ctx = await worksheetContext(pool, req.params.id);
+    if (!ctx) return res.status(404).json({ error: 'Food & Drugs sample not found.' });
+    res.json({
+      worksheet: await selectWorksheet(pool, req.params.id),
+      sampleDescription: ctx.sample_description ?? null,
+      receiptDate: ctx.receipt_date ?? null,
+      intakeDate: ctx.intake_date,
+      canEdit: canFillWorksheet(req.user, ctx),
+      canSubmit: canFillWorksheet(req.user, ctx) && ctx.analyst_id === req.user.id,
+      canCheck: canCheckWorksheet(req.user, ctx),
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+const validWorksheetBody = (body, ctx) => {
+  const { analysisStartedOn, testMethods, results } = body ?? {};
+  if (typeof analysisStartedOn !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(analysisStartedOn) ||
+      Number.isNaN(Date.parse(`${analysisStartedOn}T00:00:00Z`))) {
+    return 'Enter the date the analysis started.';
+  }
+  if (analysisStartedOn < ctx.intake_date) return 'The analysis cannot start before the sample was received.';
+  if (analysisStartedOn > ctx.today) return 'The analysis start date cannot be in the future.';
+  if (typeof testMethods !== 'string' || testMethods.trim().length < 3 || testMethods.trim().length > 2000) {
+    return 'Describe the test methods used.';
+  }
+  if (results != null && (typeof results !== 'string' || results.length > 10000)) return 'Results are limited to 10,000 characters.';
+  return null;
+};
+
+const saveWorksheetRow = (db, intakeId, body, userId) =>
+  db.query(
+    `INSERT INTO food_drug_worksheets (intake_id, analysis_started_on, test_methods, results, created_by, updated_by)
+     VALUES ($1, $2::date, $3, $4, $5, $5)
+     ON CONFLICT (intake_id) DO UPDATE SET
+       analysis_started_on = EXCLUDED.analysis_started_on,
+       test_methods = EXCLUDED.test_methods,
+       results = EXCLUDED.results,
+       updated_by = EXCLUDED.updated_by,
+       updated_at = NOW()`,
+    [intakeId, body.analysisStartedOn, body.testMethods.trim(),
+     typeof body.results === 'string' && body.results.trim() ? body.results.trim() : null, userId],
+  );
+
+// Runs one worksheet change in a transaction with the sample locked.
+const worksheetChange = (change) => asyncHandler(async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const ctx = await worksheetContext(client, req.params.id, true);
+    if (!ctx) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Food & Drugs sample not found.' });
+    }
+    const refusal = await change(client, ctx, req);
+    if (refusal) {
+      await client.query('ROLLBACK');
+      return res.status(refusal.status).json({ error: refusal.error });
+    }
+    const worksheet = await selectWorksheet(client, req.params.id);
+    await client.query('COMMIT');
+    res.json({ worksheet });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return next(error);
+  } finally {
+    client.release();
+  }
+});
+
+const worksheetFillRefusal = (user, ctx) => {
+  if (ctx.status !== 'Under Analysis') return { status: 409, error: 'The worksheet can only be filled in while the sample is under analysis.' };
+  if (!ctx.sample_description) return { status: 409, error: 'Save the analytical sample receipt form before the laboratory worksheet.' };
+  if (ctx.analysed_at) return { status: 409, error: 'This worksheet has been submitted and can no longer be changed.' };
+  if (!(isFoodDrugHead(user) || ctx.analyst_id === user.id)) {
+    return { status: 403, error: 'Only the analyst allocated this sample or the Head of Section can fill in its worksheet.' };
+  }
+  return null;
+};
+
+app.put('/api/food-drug/intakes/:id/worksheet', requireSession, requireFoodDrugLab, worksheetChange(async (db, ctx, req) => {
+  const refusal = worksheetFillRefusal(req.user, ctx);
+  if (refusal) return refusal;
+  const invalid = validWorksheetBody(req.body, ctx);
+  if (invalid) return { status: 400, error: invalid };
+  await saveWorksheetRow(db, ctx.id, req.body, req.user.id);
+  await audit(db, req.user.id, req.user.email, 'FD_WORKSHEET_SAVED', 'food_drug_intake', ctx.id);
+}));
+
+// The analyst submits: saves the latest entries and stamps "Analysed by" + date.
+app.post('/api/food-drug/intakes/:id/worksheet/submit', requireSession, requireFoodDrugLab, worksheetChange(async (db, ctx, req) => {
+  const refusal = worksheetFillRefusal(req.user, ctx);
+  if (refusal) return refusal;
+  if (ctx.analyst_id !== req.user.id) return { status: 403, error: 'Only the analyst allocated this sample can submit its worksheet as analysed.' };
+  const invalid = validWorksheetBody(req.body, ctx);
+  if (invalid) return { status: 400, error: invalid };
+  await saveWorksheetRow(db, ctx.id, req.body, req.user.id);
+  await db.query(
+    'UPDATE food_drug_worksheets SET analysed_by = $2, analysed_at = NOW(), updated_at = NOW() WHERE intake_id = $1',
+    [ctx.id, req.user.id],
+  );
+  await audit(db, req.user.id, req.user.email, 'FD_WORKSHEET_SUBMITTED', 'food_drug_intake', ctx.id);
+}));
+
+// The Head checks the submitted worksheet: "Checked by" + date.
+app.post('/api/food-drug/intakes/:id/worksheet/check', requireSession, requireFoodDrugLab, worksheetChange(async (db, ctx, req) => {
+  if (!(req.user.role === 'HEAD_OF_DEPARTMENT' && req.user.department === FOOD_DRUG)) {
+    return { status: 403, error: 'Only the Head of the Food & Drugs section can check a worksheet.' };
+  }
+  if (!ctx.analysed_at) return { status: 409, error: 'The analyst has not submitted this worksheet yet.' };
+  if (ctx.checked_at) return { status: 409, error: 'This worksheet has already been checked.' };
+  await db.query(
+    'UPDATE food_drug_worksheets SET checked_by = $2, checked_at = NOW(), updated_at = NOW() WHERE intake_id = $1',
+    [ctx.id, req.user.id],
+  );
+  await audit(db, req.user.id, req.user.email, 'FD_WORKSHEET_CHECKED', 'food_drug_intake', ctx.id);
+}));
+
+// One correction per intake, before analysis starts. Client details stay as reception recorded them.
+app.patch('/api/food-drug/intakes/:id', requireSession, requireFoodDrugLab, changeFoodDrugIntake(async (db, intake, req) => {
+  const { sampleType, receiver } = req.body ?? {};
+  if (!foodDrugSampleTypes.has(sampleType) || typeof receiver !== 'string' || receiver.trim().length < 2 || receiver.trim().length > 150) {
+    return { status: 400, error: 'Choose a sample type and enter the receiver.' };
+  }
+  if (intake.edited_at) return { status: 409, error: 'This intake has already been edited once and cannot be edited again.' };
+  if (!['Awaiting Approval', 'Awaiting Assignment'].includes(intake.status)) {
+    return { status: 409, error: 'An intake cannot be edited once analysis has started.' };
+  }
+  await db.query(
+    `UPDATE food_drug_intakes
+     SET sample_type = $2, receiver = $3, edited_at = NOW(), edited_by = $4, updated_at = NOW()
+     WHERE id = $1`,
+    [intake.id, sampleType, receiver.trim(), req.user.id],
+  );
+  await audit(db, req.user.id, req.user.email, 'FD_SAMPLE_EDITED', 'food_drug_intake', intake.id);
+}));
+
+// Head of Section only; a soft delete so the audit trail stays intact.
+app.delete('/api/food-drug/intakes/:id', requireSession, requireFoodDrugLab, asyncHandler(async (req, res, next) => {
+  if (!(req.user.role === 'HEAD_OF_DEPARTMENT' && req.user.department === FOOD_DRUG)) {
+    return res.status(403).json({ error: 'Only the Head of the Food & Drugs section can delete an intake.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const intake = await lockFoodDrugIntake(client, req.params.id);
+    if (!intake) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Food & Drugs sample not found.' });
+    }
+    await client.query(
+      `UPDATE food_drug_intakes SET deleted_at = NOW(), deleted_by = $2, updated_at = NOW() WHERE id = $1`,
+      [intake.id, req.user.id],
+    );
+    await audit(client, req.user.id, req.user.email, 'FD_SAMPLE_DELETED', 'food_drug_intake', intake.id, {
+      statusWhenDeleted: intake.status,
+    });
+    await client.query('COMMIT');
+    res.json({ message: `${intake.id} was deleted.` });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return next(error);
+  } finally {
+    client.release();
+  }
+}));
+
+const WORK_ALLOCATION_DEPARTMENT = { WATER_INTAKE: 'Water', FOOD_DRUG_INTAKE: FOOD_DRUG };
+app.get('/api/work-allocations', requireSession, asyncHandler(async (req, res, next) => {
+  const { recordType, recordId } = req.query;
+  const department = WORK_ALLOCATION_DEPARTMENT[recordType];
+  if (!department || typeof recordId !== 'string' || !recordId.trim()) {
+    return res.status(400).json({ error: 'Choose a valid exhibit or sample.' });
+  }
+  const isHead = req.user.role === 'SUPER_ADMIN' ||
+    (req.user.role === 'HEAD_OF_DEPARTMENT' && req.user.department === department);
+  if (!isHead && req.user.department !== department) {
+    return res.status(403).json({ error: 'You do not have access to this work allocation.' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `SELECT a.id, a.form_number AS "formNumber", a.department, a.record_type AS "recordType",
+              a.record_id AS "recordId", a.lab_reference AS "labReference", a.subject, a.remarks,
+              a.analyst_id AS "analystId", analyst.full_name AS "analystName",
+              head.full_name AS "headName",
+              TO_CHAR(a.allocated_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD HH24:MI') AS "allocatedAt",
+              TO_CHAR(a.superseded_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD HH24:MI') AS "supersededAt"
+       FROM work_allocations a
+       JOIN users analyst ON analyst.id = a.analyst_id
+       JOIN users head ON head.id = a.allocated_by
+       WHERE a.record_type = $1 AND a.record_id = $2
+         AND ($3::boolean OR a.analyst_id = $4)
+       ORDER BY a.allocated_at DESC`,
+      [recordType, recordId, isHead, req.user.id],
+    );
+    res.json({ allocations: rows, view: isHead ? 'ORIGINAL' : 'COPY' });
+  } catch (error) {
+    next(error);
   }
 }));
 

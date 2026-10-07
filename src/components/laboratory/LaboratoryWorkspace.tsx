@@ -25,8 +25,8 @@ import {
 import { ForensicCase, OfficerVisitor, LaboratoryDepartment, ExhibitItem, ExaminationRecord, FoodDrugIntake, User, UserRole, WaterIntake } from '../../types';
 import { OfficerVerificationModal } from './OfficerVerificationModal';
 import { SubmissionIntakeModal } from './SubmissionIntakeModal';
-import { FoodDrugRegisterPanel } from './FoodDrugRegisterPanel';
 import { WaterLaboratoryView } from './WaterLaboratoryView';
+import { FoodDrugLaboratoryView } from './FoodDrugLaboratoryView';
 import { FoodDrugIntakeEdit } from './FoodDrugIntakeEditModal';
 import {
   Avatar,
@@ -60,14 +60,16 @@ interface LaboratoryWorkspaceProps {
   /** Food & Drugs officers the Head of Section can assign samples to. */
   foodDrugOfficers?: Pick<User, 'id' | 'name'>[];
   onApproveFoodDrugIntake?: (intakeId: string) => void;
-  onAssignFoodDrugIntake?: (intakeId: string, analyst: string) => void;
+  onAssignFoodDrugIntake?: (intakeId: string, analystId: string, remarks: string) => Promise<boolean>;
   onReportFoodDrugIntake?: (intakeId: string, reportedBy: string) => void;
   onEditFoodDrugIntake?: (intakeId: string, edit: FoodDrugIntakeEdit) => void;
+  /** Live Food & Drugs register from the database. */
+  foodDrugIntakes?: FoodDrugIntake[];
   onDeleteFoodDrugIntake?: (intakeId: string) => void;
   /** Water & Environment officers the Head can assign exhibits to. */
   waterOfficers?: Pick<User, 'id' | 'name'>[];
   waterIntakes?: WaterIntake[];
-  onAssignWaterIntake?: (intakeId: string, officer: string) => void;
+  onAssignWaterIntake?: (intakeId: string, officerId: string, remarks: string) => Promise<boolean>;
   onOpenWaterCaseFile?: (intake: WaterIntake) => void;
   onEditWaterIntake?: (intake: WaterIntake) => void;
   onDeleteWaterIntake?: (intakeId: string) => void;
@@ -151,6 +153,7 @@ export const LaboratoryWorkspace: React.FC<LaboratoryWorkspaceProps> = ({
   onAssignFoodDrugIntake,
   onReportFoodDrugIntake,
   onEditFoodDrugIntake,
+  foodDrugIntakes = [],
   onDeleteFoodDrugIntake,
   waterOfficers = [],
   waterIntakes = activeCase.waterIntakes ?? [],
@@ -193,10 +196,28 @@ export const LaboratoryWorkspace: React.FC<LaboratoryWorkspaceProps> = ({
         currentUser={{ id: currentUserId ?? '', name: currentUserName ?? '', role: currentUserRole ?? 'ANALYST' }}
         officers={waterOfficers}
         onOpenIntake={onOpenIntake}
-        onAssign={(id, officer) => onAssignWaterIntake?.(id, officer)}
+        onAssign={(id, officer, remarks) => onAssignWaterIntake?.(id, officer, remarks) ?? Promise.resolve(false)}
         onOpenCaseFile={onOpenWaterCaseFile}
         onEdit={onEditWaterIntake}
         onDelete={onDeleteWaterIntake}
+      />
+    );
+  }
+
+  // Food & Drugs likewise shows only its own live register — stat cards, bench
+  // work, instruments, case progress and storage — never the demo case data.
+  if (currentDepartment === 'Food & Drugs') {
+    return (
+      <FoodDrugLaboratoryView
+        intakes={foodDrugIntakes}
+        currentUser={{ id: currentUserId ?? '', name: currentUserName ?? '', role: currentUserRole ?? 'ANALYST' }}
+        officers={foodDrugOfficers}
+        onOpenIntake={onOpenIntake}
+        onApprove={(id) => onApproveFoodDrugIntake?.(id)}
+        onAssign={(id, analystId, remarks) => onAssignFoodDrugIntake?.(id, analystId, remarks) ?? Promise.resolve(false)}
+        onReport={(id, reportedBy) => onReportFoodDrugIntake?.(id, reportedBy)}
+        onEdit={onEditFoodDrugIntake}
+        onDelete={onDeleteFoodDrugIntake}
       />
     );
   }
@@ -354,7 +375,7 @@ export const LaboratoryWorkspace: React.FC<LaboratoryWorkspaceProps> = ({
         actions={
           <>
             <Button icon={Plus} onClick={openIntake} id="btn-open-intake-modal">
-              {currentDepartment === 'Food & Drugs' ? 'Register sample' : 'Exhibit intake'}
+              Exhibit intake
             </Button>
             <Button variant="primary" icon={FileText} onClick={() => onOpenCaseFile(activeCase.id)} id="btn-open-active-case">
               Open case file
@@ -483,19 +504,6 @@ export const LaboratoryWorkspace: React.FC<LaboratoryWorkspaceProps> = ({
           </ol>
         </div>
       </Panel>
-
-      {currentDepartment === 'Food & Drugs' && (
-        <FoodDrugRegisterPanel
-          intakes={activeCase.foodDrugIntakes ?? []}
-          currentUser={{ name: currentUserName, role: currentUserRole }}
-          officers={foodDrugOfficers}
-          onApprove={(id) => onApproveFoodDrugIntake?.(id)}
-          onAssign={(id, analyst) => onAssignFoodDrugIntake?.(id, analyst)}
-          onReport={(id, reportedBy) => onReportFoodDrugIntake?.(id, reportedBy)}
-          onEdit={onEditFoodDrugIntake}
-          onDelete={onDeleteFoodDrugIntake}
-        />
-      )}
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
         {/* Bench work */}

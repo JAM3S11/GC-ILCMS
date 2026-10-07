@@ -7,8 +7,6 @@ import {
   FileText,
   FlaskConical,
   History,
-  IdCard,
-  MapPin,
   PackageCheck,
   TestTube,
   User,
@@ -26,10 +24,7 @@ import {
 } from '../../types';
 import {
   FOOD_DRUG_SAMPLE_TYPES,
-  NATIONAL_ID_MAX,
-  isValidNationalId,
   isValidPoBox,
-  sanitizeNationalId,
 } from '../../foodDrugIntake';
 import { Button, DashboardHeader, DashboardPage, Panel, StatusPill, Tone } from '../common/Dashboard';
 import { Field, Meta, Section, inputCls } from './IntakeFormParts';
@@ -58,11 +53,15 @@ export interface FoodDrugIntakeSubmission {
 
 interface FoodDrugIntakePageProps {
   activeCase: ForensicCase;
-  visitor: OfficerVisitor;
+  /** The visitor sent to Food & Drugs, or null while nobody has been sent. */
+  visitor: OfficerVisitor | null;
   receivingAnalystName: string;
   /** Food & Drugs staff offered as suggestions for the Receiver field. */
   staffNames?: string[];
-  onSaveIntake: (submission: FoodDrugIntakeSubmission) => void;
+  /** Saves the sample; reject to keep the form open with the error shown. */
+  onSaveIntake: (submission: FoodDrugIntakeSubmission) => void | Promise<unknown>;
+  /** Live Food & Drugs register, for the "Recent registrations" list. */
+  intakes?: FoodDrugIntake[];
   onCancel: () => void;
 }
 
@@ -100,36 +99,51 @@ export const FoodDrugIntakePage: React.FC<FoodDrugIntakePageProps> = ({
   staffNames = [],
   onSaveIntake,
   onCancel,
+  intakes = [],
 }) => {
-  // Prefill from a visitor the receptionist routed to Food & Drugs.
-  const fromVisitor = visitor.laboratory === 'Food & Drugs';
-  const [clientName, setClientName] = useState(fromVisitor ? visitor.officerName : '');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
+  // Client details always come from the reception record and are read only.
+  // Without a visitor sent to Food & Drugs they stay empty; only the P.O Box can
+  // be typed, and only when reception left it empty. The sample details can be
+  // filled in at any time, but registering waits for reception's notification.
+  const reception = visitor && visitor.laboratory === 'Food & Drugs' ? visitor : null;
+  const notified = !!reception?.labNotificationSentAt;
+  const clientName = reception?.officerName ?? '';
   const [nationalId, setNationalId] = useState('');
-  const [poBox, setPoBox] = useState(fromVisitor ? visitor.poBox || '' : '');
+  const [poBoxInput, setPoBoxInput] = useState('');
+  const poBox = reception?.poBox?.trim() ? reception.poBox : poBoxInput;
   const [sampleType, setSampleType] = useState<FoodDrugSampleType | ''>('');
   const [receiver, setReceiver] = useState(receivingAnalystName);
-  const [notes, setNotes] = useState(visitor.exhibitsPresented || visitor.purposeOfVisit || '');
+  const [notes, setNotes] = useState('');
 
-  const intakes = activeCase.foodDrugIntakes ?? [];
-  const nextId = `FDI-${String(intakes.length + 1).padStart(4, '0')}`;
+  // A different client clears what belonged to the previous one.
+  useEffect(() => {
+    setNationalId('');
+    setPoBoxInput('');
+    setNotes(reception ? reception.exhibitsPresented || reception.purposeOfVisit || '' : '');
+  }, [reception?.id]);
+
+  // The sample number is issued by the database when the record is saved.
+  const nextId = 'Issued on save';
   const today = new Date().toISOString().split('T')[0];
 
   const checks = [
-    { label: 'Full name', value: clientName.trim(), ok: clientName.trim() !== '' },
-    // Reception already vetted the ID (it may be a passport number), so a routed visitor only needs it present.
-    { label: 'National ID', value: nationalId, ok: fromVisitor ? nationalId.trim() !== '' : isValidNationalId(nationalId) },
+    { label: 'Client', value: clientName.trim(), ok: !!reception },
+    // Reception already vetted the ID (it may be a passport number), so it only needs to be present.
+    { label: 'National ID', value: reception ? (nationalId ? 'Recorded at reception' : '') : '', ok: !!reception && nationalId.trim() !== '' },
     { label: 'P.O Box', value: poBox.trim(), ok: isValidPoBox(poBox) },
+    { label: 'Lab notified', value: notified ? 'Yes' : 'Not yet', ok: notified },
     { label: 'Sample type', value: sampleType, ok: sampleType !== '' },
     { label: 'Receiver', value: receiver.trim(), ok: receiver.trim() !== '' },
   ];
   const doneCount = checks.filter((c) => c.ok).length;
   const canSubmit = doneCount === checks.length;
   const poBoxInvalid = poBox.trim() !== '' && !isValidPoBox(poBox);
-  const idTooShort = nationalId !== '' && nationalId.length < 7;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canSubmit || !sampleType) return;
+    if (!canSubmit || !reception || !sampleType || saving) return;
 
     const exhibitId = `EXH-${String(activeCase.exhibits.length + 1).padStart(4, '0')}`;
     const name = clientName.trim();
@@ -156,7 +170,10 @@ export const FoodDrugIntakePage: React.FC<FoodDrugIntakePageProps> = ({
       remarks: `Sample type: ${sampleType}. Awaiting officer assignment.`,
     };
 
-    onSaveIntake({
+    setSaving(true);
+    setSaveError('');
+    try {
+    await onSaveIntake({
       caseNumber: activeCase.caseNumber,
       submissionType: 'Regulatory Sample (Food & Drugs)',
       description,
@@ -165,7 +182,7 @@ export const FoodDrugIntakePage: React.FC<FoodDrugIntakePageProps> = ({
       receivedBy,
       department: 'Food & Drugs',
       storageLocation: FD_STORAGE_LOCATION,
-      supportingDocuments: (fromVisitor && visitor.documentsPresented) || '',
+      supportingDocuments: reception.documentsPresented || '',
       remarks: `Sample type: ${sampleType}. Received by ${receivedBy}.`,
       exhibits: [exhibit],
       foodDrugIntake: {
@@ -181,6 +198,11 @@ export const FoodDrugIntakePage: React.FC<FoodDrugIntakePageProps> = ({
         status: 'Awaiting Approval',
       },
     });
+    } catch (cause) {
+      setSaveError(cause instanceof Error ? cause.message : 'The sample could not be saved.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -203,69 +225,30 @@ export const FoodDrugIntakePage: React.FC<FoodDrugIntakePageProps> = ({
           onSubmit={handleSubmit}
           className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:col-span-8 dark:border-slate-800 dark:bg-slate-900"
         >
-          {fromVisitor && (
+          {reception && notified ? (
             <div className="flex items-center gap-2 border-b border-sky-500/20 bg-sky-500/5 px-5 py-2.5 text-xs text-sky-700 dark:text-sky-300">
               <FileText className="h-3.5 w-3.5 shrink-0" />
-              Client details come from reception record {visitor.visitNumber} and cannot be edited here.
+              Client details come from reception record {reception.visitNumber}, registered by {reception.receptionistName}, and cannot be edited here.
+            </div>
+          ) : (
+            <div role="status" className="flex items-center gap-2 border-b border-amber-500/20 bg-amber-500/5 px-5 py-2.5 text-xs text-amber-700 dark:text-amber-300">
+              <FileText className="h-3.5 w-3.5 shrink-0" />
+              No client has been sent to Food &amp; Drugs yet. You can fill in the sample details now, but the sample can only be registered once reception has notified this laboratory.
             </div>
           )}
 
           <Section
             icon={User}
             title="Submitter"
-            description="The person or organisation bringing the sample."
+            description="The person or organisation bringing the sample, as recorded at reception."
           >
-            {fromVisitor ? (
-              <ReceptionClientDetails
-                visitor={visitor}
-                onNationalId={setNationalId}
-                poBox={poBox}
-                onPoBoxChange={setPoBox}
-                poBoxInvalid={poBoxInvalid}
-              />
-            ) : (
-            <>
-            <Field label="Full name" required className="sm:col-span-2">
-              <input
-                autoFocus
-                value={clientName}
-                onChange={(e) => setClientName(e.target.value)}
-                placeholder="e.g. Jane Wambui"
-                autoComplete="off"
-                className={inputCls}
-              />
-            </Field>
-            <Field
-              label="ID number (National ID)"
-              required
-              icon={IdCard}
-              hint={idTooShort ? 'Most national IDs are 7–8 digits' : `Numbers only · ${nationalId.length}/${NATIONAL_ID_MAX}`}
-            >
-              <input
-                inputMode="numeric"
-                maxLength={NATIONAL_ID_MAX}
-                value={nationalId}
-                onChange={(e) => setNationalId(sanitizeNationalId(e.target.value))}
-                placeholder="24891034"
-                className={`${inputCls} font-mono tracking-wider`}
-              />
-            </Field>
-            <Field
-              label="P.O Box"
-              required
-              icon={MapPin}
-              error={poBoxInvalid}
-              hint={poBoxInvalid ? 'Use the format P.O Box 40245-00100' : 'Box number, then postal code'}
-            >
-              <input
-                value={poBox}
-                onChange={(e) => setPoBox(e.target.value)}
-                placeholder="P.O Box 40245-00100"
-                className={inputCls}
-              />
-            </Field>
-            </>
-            )}
+            <ReceptionClientDetails
+              visitor={reception}
+              onNationalId={setNationalId}
+              poBox={poBox}
+              onPoBoxChange={setPoBoxInput}
+              poBoxInvalid={poBoxInvalid}
+            />
           </Section>
 
           <Section
@@ -380,11 +363,16 @@ export const FoodDrugIntakePage: React.FC<FoodDrugIntakePageProps> = ({
             </div>
             <div className="flex gap-2">
               <Button onClick={onCancel}>Cancel</Button>
-              <Button type="submit" variant="primary" icon={Check} disabled={!canSubmit}>
-                Add record
+              <Button type="submit" variant="primary" icon={Check} disabled={!canSubmit || saving}>
+                {saving ? 'Saving…' : 'Add record'}
               </Button>
             </div>
           </div>
+          {saveError && (
+            <div role="alert" className="border-t border-rose-200 bg-rose-50 px-5 py-3 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-300">
+              {saveError}
+            </div>
+          )}
         </form>
 
         {/* ------------------------------ Aside ----------------------------- */}
@@ -432,7 +420,7 @@ export const FoodDrugIntakePage: React.FC<FoodDrugIntakePageProps> = ({
             </ol>
           </Panel>
 
-          <Panel icon={History} title="Recent registrations" description={`${intakes.length} on ${activeCase.caseNumber}`} flush>
+          <Panel icon={History} title="Recent registrations" description={`${intakes.length} in the Food & Drugs register`} flush>
             {intakes.length === 0 ? (
               <p className="px-4 py-5 text-center text-xs text-slate-400">No samples registered yet.</p>
             ) : (

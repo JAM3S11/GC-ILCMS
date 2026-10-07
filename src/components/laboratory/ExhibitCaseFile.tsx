@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  ClipboardSignature,
   ArrowLeft,
   Ban,
   ExternalLink,
@@ -32,6 +33,7 @@ import { ProcessTracker } from '../case/DigitalCaseFile';
 import { Portal } from '../common/Portal';
 import { ExhibitProcessTimeline, PROCESS_STEPS } from './ExhibitProcessTimeline';
 import { WaterTestResultsForm } from './WaterTestResultsForm';
+import { WorkAllocationViewer } from './WorkAllocationForm';
 import { WaterTestEntry } from '../../lib/waterTestParameters';
 import { CertificateIssue, WaterCertificatePreview } from './WaterCertificatePreview';
 import { WaterCertificate, WaterCertificateState, fieldsFromSnapshot } from '../../lib/waterCertificates';
@@ -93,6 +95,8 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
     remarks: intake.findingsResults?.remarks ?? '',
   });
   const [fullscreen, setFullscreen] = useState(false);
+  // The Head keeps the original work allocation form; the assigned analyst has a copy.
+  const [viewingAllocation, setViewingAllocation] = useState(false);
   const [issuing, setIssuing] = useState(false);
   const [issueError, setIssueError] = useState<string | null>(null);
   // The signed certificates for this exhibit (current version plus history).
@@ -427,6 +431,15 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
             <Button icon={ArrowLeft} onClick={onBack}>
               {backLabel}
             </Button>
+            {intake.analysisOfficerId &&
+              (intake.analysisOfficerId === currentUser.id || currentUser.role === 'HEAD_OF_DEPARTMENT') && (
+                <Button icon={ClipboardSignature} onClick={() => setViewingAllocation(true)}>
+                  {currentUser.role === 'HEAD_OF_DEPARTMENT' ? 'Allocation form' : 'Allocation form (copy)'}
+                </Button>
+              )}
+            {viewingAllocation && (
+              <WorkAllocationViewer recordType="WATER_INTAKE" recordId={intake.id} onClose={() => setViewingAllocation(false)} />
+            )}
             <Button variant="primary" icon={Printer} onClick={() => window.print()}>
               Print case file
             </Button>

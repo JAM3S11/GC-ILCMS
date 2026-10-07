@@ -21,7 +21,7 @@ interface WaterLaboratoryViewProps {
   currentUser: Pick<User, 'id' | 'name' | 'role'>;
   officers: Pick<User, 'id' | 'name'>[];
   onOpenIntake?: () => void;
-  onAssign: (intakeId: string, officerId: string) => void;
+  onAssign: (intakeId: string, officerId: string, remarks: string) => Promise<boolean>;
   onOpenCaseFile?: (intake: WaterIntake) => void;
   onEdit?: (intake: WaterIntake) => void;
   onDelete?: (intakeId: string) => void;

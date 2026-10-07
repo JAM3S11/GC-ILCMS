@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { CheckCircle2, ClipboardList, Pencil, TestTube, Trash2 } from 'lucide-react';
+import { CheckCircle2, ClipboardList, ClipboardSignature, FolderOpen, Pencil, TestTube, Trash2 } from 'lucide-react';
 import { FoodDrugIntake, FoodDrugIntakeStatus, User } from '../../types';
 import { Button, EmptyState, Panel, StatusPill, Tone } from '../common/Dashboard';
-import { Select } from '../common/Select';
+import { WorkAllocationDialog, WorkAllocationViewer } from './WorkAllocationForm';
 import { FoodDrugIntakeEdit, FoodDrugIntakeEditModal } from './FoodDrugIntakeEditModal';
 
 /**
@@ -14,16 +14,26 @@ import { FoodDrugIntakeEdit, FoodDrugIntakeEditModal } from './FoodDrugIntakeEdi
 
 interface FoodDrugRegisterPanelProps {
   intakes: FoodDrugIntake[];
-  currentUser: Pick<User, 'name' | 'role'>;
+  currentUser: Pick<User, 'id' | 'name' | 'role'>;
   /** Food & Drugs officers the Head can assign a sample to. */
   officers: Pick<User, 'id' | 'name'>[];
   onApprove: (intakeId: string) => void;
-  onAssign: (intakeId: string, analyst: string) => void;
+  /** Assigns the sample with a completed work allocation form; resolves true when saved. */
+  onAssign: (intakeId: string, analystId: string, remarks: string) => Promise<boolean>;
   onReport: (intakeId: string, reportedBy: string) => void;
+  /** Opens the sample's case file (receipt form and reporting). */
+  onOpenCaseFile?: (intake: FoodDrugIntake) => void;
   /** Saves the one allowed edit. */
   onEdit?: (intakeId: string, edit: FoodDrugIntakeEdit) => void;
   /** Head of Section only. */
   onDelete?: (intakeId: string) => void;
+  /** Panel framing, so the same list can serve as the laboratory's Bench work. */
+  title?: string;
+  description?: string;
+  actions?: React.ReactNode;
+  /** Rendered above the list, e.g. filter tabs. */
+  toolbar?: React.ReactNode;
+  emptyTitle?: string;
 }
 
 const STATUS_TONE: Record<FoodDrugIntakeStatus, Tone> = {
@@ -43,12 +53,19 @@ export const FoodDrugRegisterPanel: React.FC<FoodDrugRegisterPanelProps> = ({
   onApprove,
   onAssign,
   onReport,
+  onOpenCaseFile,
   onEdit,
   onDelete,
+  title = 'Food & Drugs samples',
+  description,
+  actions,
+  toolbar,
+  emptyTitle = 'No samples registered yet',
 }) => (
-  <Panel icon={ClipboardList} tone="amber" title="Food & Drugs samples" flush>
+  <Panel icon={ClipboardList} tone="amber" title={title} description={description} actions={actions} flush>
+    {toolbar}
     {intakes.length === 0 ? (
-      <EmptyState icon={TestTube} title="No samples registered yet" />
+      <EmptyState icon={TestTube} title={emptyTitle} />
     ) : (
       <ul className="divide-y divide-slate-100 dark:divide-slate-800">
         {intakes.map((intake) => (
@@ -60,6 +77,7 @@ export const FoodDrugRegisterPanel: React.FC<FoodDrugRegisterPanelProps> = ({
             onApprove={onApprove}
             onAssign={onAssign}
             onReport={onReport}
+            onOpenCaseFile={onOpenCaseFile}
             onEdit={onEdit}
             onDelete={onDelete}
           />
@@ -76,19 +94,24 @@ const RegisterRow: React.FC<Omit<FoodDrugRegisterPanelProps, 'intakes'> & { inta
   onApprove,
   onAssign,
   onReport,
+  onOpenCaseFile,
   onEdit,
   onDelete,
 }) => {
-  const [analyst, setAnalyst] = useState('');
+  const [allocating, setAllocating] = useState(false);
+  const [viewingAllocation, setViewingAllocation] = useState(false);
   const [editing, setEditing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [reportedBy, setReportedBy] = useState(currentUser.name);
 
   const isHead = currentUser.role === 'HEAD_OF_DEPARTMENT';
-  const canReport = isHead || intake.analystAssigned === currentUser.name;
+  const canReport = isHead || (intake.analystId ? intake.analystId === currentUser.id : intake.analystAssigned === currentUser.name);
   const canEdit =
     !!onEdit && !intake.edited && (intake.status === 'Awaiting Approval' || intake.status === 'Awaiting Assignment');
   const canDelete = !!onDelete && isHead;
+  // The Head holds the original allocation form; the assigned analyst holds a copy.
+  const isAssignedToMe = !!intake.analystId && intake.analystId === currentUser.id;
+  const canViewAllocation = !!intake.analystId && (isHead || isAssignedToMe);
 
   const detail =
     intake.status === 'Awaiting Approval'
@@ -134,38 +157,57 @@ const RegisterRow: React.FC<Omit<FoodDrugRegisterPanelProps, 'intakes'> & { inta
       )}
 
       {intake.status === 'Awaiting Assignment' && isHead && (
-        <div className="flex gap-2">
-          <Select
-            size="xs"
-            className="min-w-0 flex-1"
-            aria-label={`Assign officer to ${intake.id}`}
-            value={analyst}
-            onChange={setAnalyst}
-            placeholder="Assign officer…"
-            options={officers.map((o) => ({ value: o.name, label: o.name }))}
-          />
-          <Button size="sm" variant="primary" disabled={!analyst} onClick={() => onAssign(intake.id, analyst)}>
-            Assign
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">Fill in a work allocation form to assign this sample to an analyst.</p>
+          <Button size="sm" variant="primary" icon={ClipboardSignature} onClick={() => setAllocating(true)}>
+            Allocate work
           </Button>
         </div>
       )}
 
-      {intake.status === 'Under Analysis' && canReport && (
-        <div className="flex gap-2">
-          <input
-            aria-label={`Reported by for ${intake.id}`}
-            value={reportedBy}
-            onChange={(e) => setReportedBy(e.target.value)}
-            placeholder="Reported by"
-            className={fieldCls}
-          />
+      {canViewAllocation && (
+        <div className="flex justify-end">
+          <Button size="xs" icon={ClipboardSignature} onClick={() => setViewingAllocation(true)}>
+            {isHead ? 'Allocation form' : 'Allocation form (copy)'}
+          </Button>
+        </div>
+      )}
+
+      {allocating && (
+        <WorkAllocationDialog
+          department="Food & Drugs"
+          labReference={intake.id}
+          subject={`${intake.sampleType} sample · from ${intake.clientName}${intake.notes ? ` · ${intake.notes}` : ''}`}
+          officers={officers}
+          headName={currentUser.name}
+          onSubmit={(analystId, remarks) => onAssign(intake.id, analystId, remarks)}
+          onClose={() => setAllocating(false)}
+        />
+      )}
+      {viewingAllocation && (
+        <WorkAllocationViewer recordType="FOOD_DRUG_INTAKE" recordId={intake.id} onClose={() => setViewingAllocation(false)} />
+      )}
+
+      {(intake.status === 'Under Analysis' || intake.status === 'Reported') && canReport && onOpenCaseFile && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+            {intake.status !== 'Under Analysis'
+              ? 'The receipt form and laboratory worksheet are in the case file.'
+              : !intake.receiptFormSaved
+                ? 'Next: fill in the analytical sample receipt form in the case file.'
+                : intake.worksheetStatus === 'Checked'
+                  ? `Worksheet checked by the Head of Section.`
+                  : intake.worksheetStatus === 'Awaiting check'
+                    ? 'Worksheet submitted — waiting for the Head of Section to check it.'
+                    : 'Next: fill in the laboratory worksheet in the case file.'}
+          </p>
           <Button
             size="sm"
-            variant="primary"
-            disabled={!reportedBy.trim()}
-            onClick={() => onReport(intake.id, reportedBy.trim())}
+            variant={intake.status === 'Under Analysis' ? 'primary' : 'secondary'}
+            icon={FolderOpen}
+            onClick={() => onOpenCaseFile(intake)}
           >
-            Mark reported
+            Case file
           </Button>
         </div>
       )}
