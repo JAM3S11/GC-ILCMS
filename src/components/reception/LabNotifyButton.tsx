@@ -27,21 +27,27 @@ export const LabNotifyButton: React.FC<LabNotifyButtonProps> = ({
   const [sending, setSending] = useState(false);
   const countdown = useResendCountdown(visit.labNotificationSentAt);
   const sent = !!visit.labNotificationSentAt;
+  // Reading the notification no longer stops resends; only a registered intake does.
+  const registered = sent && !!visit.labIntakeRegistered;
   const seen = sent && !!visit.labNotificationSeen;
-  const waiting = sent && !seen && countdown > 0;
+  const waiting = sent && !registered && countdown > 0;
 
   let label = notifyLabel ?? `Notify ${visit.laboratory}`;
   let title = `Notify ${visit.laboratory} about this visitor`;
   if (sending) label = 'Notifying…';
-  else if (seen) {
-    label = 'Seen by lab';
-    title = `${visit.laboratory} has seen the notification`;
+  else if (registered) {
+    label = 'Intake registered';
+    title = `${visit.laboratory} has registered this visitor's exhibit intake`;
   } else if (waiting) {
     label = `Resend in ${countdown}s`;
-    title = `${visit.laboratory} has not seen it yet — you can resend after the countdown`;
+    title = seen
+      ? `Seen by ${visit.laboratory}, but the intake is not registered yet — you can resend after the countdown`
+      : `${visit.laboratory} has not registered the intake yet — you can resend after the countdown`;
   } else if (sent) {
     label = 'Resend notification';
-    title = `${visit.laboratory} has not seen the notification — send it again`;
+    title = seen
+      ? `Seen by ${visit.laboratory}, but the intake is not registered yet — send it again`
+      : `${visit.laboratory} has not registered the intake yet — send it again`;
   }
 
   return (
@@ -49,7 +55,7 @@ export const LabNotifyButton: React.FC<LabNotifyButtonProps> = ({
       size={size}
       variant={sent ? 'ghost' : 'primary'}
       icon={sent ? Check : UserPlus}
-      disabled={sending || seen || waiting}
+      disabled={sending || registered || waiting}
       title={title}
       onClick={async (event: React.MouseEvent) => {
         if (stopPropagation) event.stopPropagation();

@@ -18,6 +18,7 @@ import {
   LogOut,
   Package,
   Printer,
+  Send,
   Shield,
   Users,
   UserPlus,
@@ -75,6 +76,8 @@ interface LabBayViewProps {
   /** Opens this visit's Water exhibit in the intake form to change its details; reception and the Water Head. */
   onEditClientDetails?: (visitor: OfficerVisitor) => void;
   onSendLabNotification?: (visitor: OfficerVisitor, resend: boolean) => Promise<void>;
+  /** Lab staff: tell reception the visitor's intake is registered and they can be checked out. */
+  onNotifyIntakeComplete?: (visitorId: string) => Promise<void>;
 }
 
 interface CheckOutViewProps {
@@ -166,6 +169,7 @@ export const LabBayView: React.FC<LabBayViewProps> = ({
   currentUserName,
   onEditClientDetails,
   onSendLabNotification,
+  onNotifyIntakeComplete,
 }) => {
   const [stageFilter, setStageFilter] = useState<VisitorProcessFilter>('all');
   const [labFilter, setLabFilter] = useState<QueueFilter>('all');
@@ -195,6 +199,19 @@ export const LabBayView: React.FC<LabBayViewProps> = ({
   // The one thing this person can do for the selected client right now.
   const nextStep = (() => {
     if (!selected) return null;
+    // Once the lab has registered the exhibit intake, the visitor can be released.
+    if (
+      onNotifyIntakeComplete &&
+      selected.labIntakeRegistered &&
+      (selected.status === 'Awaiting Laboratory Reception' || selected.status === 'In Laboratory')
+    ) {
+      return {
+        label: 'Notify reception — ready for checkout',
+        icon: Send,
+        variant: 'primary' as const,
+        run: () => void onNotifyIntakeComplete(selected.id),
+      };
+    }
     if (selected.status === 'Awaiting Laboratory Reception') {
       return canReceiveVisits
         ? { label: 'Accept at laboratory', icon: CheckCircle2, variant: 'primary' as const, run: () => void onLabReceive(selected.id) }

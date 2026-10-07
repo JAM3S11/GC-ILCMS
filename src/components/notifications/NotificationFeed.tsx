@@ -98,6 +98,11 @@ export const NotificationRow: React.FC<{
             {n.recipientDepartment && (
               <span className="mt-1 block text-[11px] text-slate-400">To: {departmentLabel(n.recipientDepartment)}</span>
             )}
+            {n.resolvedAt && (
+              <span className="mt-1 block text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                Intake registered{n.resolvedBy ? ` by ${n.resolvedBy}` : ''} — marked read for the department
+              </span>
+            )}
           </span>
         </button>
 

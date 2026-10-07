@@ -88,6 +88,8 @@ export interface OfficerVisitor {
   laboratory: LaboratoryDepartment;
   labNotificationSentAt?: string | null;
   labNotificationSeen?: boolean;
+  /** The lab has registered this visitor's exhibit intake; reception can no longer resend. */
+  labIntakeRegistered?: boolean;
   timeIn: string;
   timeOut?: string;
   purposeOfVisit: string;
@@ -242,6 +244,8 @@ export type WaterIntakeEventType =
   | 'ANALYSIS_COMPLETED'
   | 'FINDINGS_RECORDED'
   | 'CERTIFICATE_ISSUED'
+  | 'CERTIFICATE_REISSUED'
+  | 'CERTIFICATE_REVOKED'
   | 'EDITED'
   | 'DELETED';
 
@@ -456,6 +460,9 @@ export interface AppNotification {
   relatedRecordType?: string;
   relatedRecordId?: string;
   persisted?: boolean;
+  /** Set when the department resolved it, e.g. by registering the visitor's intake. */
+  resolvedAt?: string | null;
+  resolvedBy?: string | null;
 }
 
 export interface AuditEvent {

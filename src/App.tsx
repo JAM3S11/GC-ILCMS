@@ -23,6 +23,7 @@ import {
 import { LandingPage } from './components/landing/LandingPage';
 import { FoodDrugIntakePage } from './components/laboratory/FoodDrugIntakePage';
 import { WaterIntakePage } from './components/laboratory/WaterIntakePage';
+import { IntakeHandoverDialog } from './components/laboratory/IntakeHandoverDialog';
 import { Header } from './components/common/Header';
 import { AppShell } from './components/layout/AppShell';
 import { PrototypeToolbar } from './components/common/PrototypeToolbar';
@@ -729,6 +730,20 @@ export default function App() {
         }
         return;
       }
+      if (notification.linkAction === 'RECEPTION_CHECK_OUT') {
+        if (notification.relatedVisitorId) {
+          try {
+            const { visit } = await apiRequest<{ visit: OfficerVisitor }>(
+              `/api/reception/visits/${notification.relatedVisitorId}`,
+            );
+            setVisitors((previous) => [visit, ...previous.filter((current) => current.id !== visit.id)]);
+          } catch (cause) {
+            showToast(cause instanceof Error ? cause.message : 'Could not load the visitor record.');
+          }
+        }
+        setActiveView('check-out');
+        return;
+      }
       if (notification.linkAction === 'RECEPTION_REGISTER' && notification.relatedVisitorId) {
         try {
           const { visit } = await apiRequest<{ visit: OfficerVisitor }>(
@@ -1003,7 +1018,50 @@ export default function App() {
       waterIntake: savedIntake,
     });
     setWaterIntakes((previous) => [savedIntake, ...previous.filter((intake) => intake.id !== savedIntake.id)]);
+    // The server resolved this visit's lab notification for the whole department.
+    void loadReceptionActivityNotifications();
+    void loadReceptionVisits(false);
     return savedIntake;
+  };
+
+  // Labs whose intake is recorded in the browser tell the server the visitor's
+  // intake is registered, so the lab notification reads as seen for the whole
+  // department and reception stops resending.
+  const resolveVisitLabNotifications = async (visitId: string): Promise<boolean> => {
+    try {
+      await apiRequest<{ resolved: number }>(`/api/reception/visits/${visitId}/lab-notifications/resolve`, {
+        method: 'POST',
+        body: '{}',
+      });
+      void loadReceptionActivityNotifications();
+      void loadReceptionVisits(false);
+      return true;
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not mark the lab notification as handled.');
+      return false;
+    }
+  };
+
+  // After an intake is registered, the officer who did it can tell reception the
+  // visitor may be checked out and released.
+  const [intakeHandoverVisit, setIntakeHandoverVisit] = useState<OfficerVisitor | null>(null);
+
+  const handleNotifyReceptionIntakeComplete = async (visitId: string): Promise<boolean> => {
+    try {
+      const result = await apiRequest<{ message: string; visit: OfficerVisitor }>(
+        `/api/reception/visits/${visitId}/intake-complete`,
+        { method: 'POST', body: '{}' },
+      );
+      setVisitors((previous) => previous.map((visit) => (visit.id === result.visit.id ? result.visit : visit)));
+      void loadReceptionVisits(false);
+      void loadReceptionVisitStats();
+      void loadReceptionActivityNotifications();
+      showToast(result.message);
+      return true;
+    } catch (cause) {
+      showToast(cause instanceof Error ? cause.message : 'Could not notify reception.');
+      return false;
+    }
   };
 
   const updateFoodDrugIntake = (intakeId: string, patch: Partial<FoodDrugIntake>) =>
@@ -1490,6 +1548,11 @@ export default function App() {
                     ? (visit) => void openVisitIntakeEdit(visit)
                     : undefined
                 }
+                onNotifyIntakeComplete={
+                  ['ANALYST', 'SENIOR_CHEMIST', 'HEAD_OF_DEPARTMENT'].includes(currentUser.role)
+                    ? (visitorId) => handleNotifyReceptionIntakeComplete(visitorId).then(() => undefined)
+                    : undefined
+                }
                 onSendLabNotification={
                   currentUser.role === 'RECEPTIONIST' || currentUser.department === 'Food & Drugs' || currentUser.department === 'Water'
                     ? handleSendLabNotification
@@ -1633,8 +1696,12 @@ export default function App() {
                 receivingAnalystName={currentUser.name}
                 staffNames={[currentUser.name, ...foodDrugOfficers.map((o) => o.name).filter((n) => n !== currentUser.name)]}
                 onSaveIntake={(data) => {
+                  const visit = intakeVisitor;
                   handleRegisterSubmission(data);
                   handleNavigateView('laboratory');
+                  void resolveVisitLabNotifications(visit.id).then((ok) => {
+                    if (ok) setIntakeHandoverVisit(visit);
+                  });
                 }}
                 onCancel={() => handleNavigateView('laboratory')}
               />
@@ -1657,6 +1724,7 @@ export default function App() {
                 onSaveIntake={async (data) => {
                   const intake = await handleRegisterWaterIntake(data);
                   handleNavigateView('laboratory');
+                  if (chosenWaterVisitor) setIntakeHandoverVisit(chosenWaterVisitor);
                   return intake;
                 }}
                 onCancel={() => handleNavigateView('laboratory')}
@@ -1756,10 +1824,22 @@ export default function App() {
             visitor={intakeVisitor}
             receivingAnalystName={currentUser.name}
             onSaveIntake={(data) => {
+              const visit = intakeVisitor;
               handleRegisterSubmission(data);
               setShowIntakeModal(false);
+              void resolveVisitLabNotifications(visit.id).then((ok) => {
+                if (ok) setIntakeHandoverVisit(visit);
+              });
             }}
           />}
+
+          {intakeHandoverVisit && (
+            <IntakeHandoverDialog
+              visitor={intakeHandoverVisit}
+              onNotifyReception={handleNotifyReceptionIntakeComplete}
+              onClose={() => setIntakeHandoverVisit(null)}
+            />
+          )}
 
           {/* Notifications Drawer */}
           <NotificationDrawer

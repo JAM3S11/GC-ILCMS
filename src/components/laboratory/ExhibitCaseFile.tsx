@@ -1,6 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowLeft,
+  Ban,
+  ExternalLink,
+  RotateCcw,
+  ShieldCheck,
   CheckCircle2,
   CircleDashed,
   ClipboardCheck,
@@ -29,7 +33,8 @@ import { Portal } from '../common/Portal';
 import { ExhibitProcessTimeline, PROCESS_STEPS } from './ExhibitProcessTimeline';
 import { WaterTestResultsForm } from './WaterTestResultsForm';
 import { WaterTestEntry } from '../../lib/waterTestParameters';
-import { WaterCertificatePreview } from './WaterCertificatePreview';
+import { CertificateIssue, WaterCertificatePreview } from './WaterCertificatePreview';
+import { WaterCertificate, WaterCertificateState, fieldsFromSnapshot } from '../../lib/waterCertificates';
 import { canEditWaterIntake, canEditWaterResults, canPrintWaterCertificate, waterEditAccess } from '../../lib/waterIntakeAccess';
 
 const STATUS_TONE: Record<WaterIntake['status'], Tone> = {
@@ -90,6 +95,24 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
   const [fullscreen, setFullscreen] = useState(false);
   const [issuing, setIssuing] = useState(false);
   const [issueError, setIssueError] = useState<string | null>(null);
+  // The signed certificates for this exhibit (current version plus history).
+  const [certState, setCertState] = useState<WaterCertificateState | null>(null);
+  const [certBusy, setCertBusy] = useState(false);
+  const [certError, setCertError] = useState<string | null>(null);
+  const [reasonMode, setReasonMode] = useState<'reissue' | 'revoke' | null>(null);
+  const [reason, setReason] = useState('');
+  // The reprint number shown on the printed copy (0 for the original).
+  const [copyNumber, setCopyNumber] = useState(0);
+  const loadCertificates = useCallback(async () => {
+    try {
+      setCertState(await apiRequest<WaterCertificateState>(`/api/water/intakes/${intake.id}/certificates`));
+    } catch {
+      setCertState(null);
+    }
+  }, [intake.id]);
+  useEffect(() => {
+    void loadCertificates();
+  }, [loadCertificates, intake.certificateIssuedAt, intake.findingsResults]);
   const handleDraftChange = useCallback(
     (entries: Record<string, WaterTestEntry>, remarks: string) => setDraft({ entries, remarks }),
     [],
@@ -236,7 +259,36 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
           : !intake.documentsConfirmedAt
             ? 'Tick "Intake documents are approved" first.'
             : '';
-  const printBlocker = !issued ? 'Approve the memo first; it can be printed once approved.' : unsavedChanges ? 'Save your changes to the results before printing.' : '';
+  const currentCertificate = certState?.current ?? null;
+  const latestCertificate = certState?.history[0] ?? null;
+  const printBlocker = !issued
+    ? 'Approve the memo first; it can be printed once approved.'
+    : unsavedChanges
+      ? 'Save your changes to the results before printing.'
+      : !currentCertificate
+        ? latestCertificate?.status === 'REVOKED'
+          ? 'The certificate was revoked. Reissue it to print a valid copy.'
+          : 'Sign the certificate before printing it.'
+        : certState?.outdated
+          ? 'The results changed after this certificate was signed. Reissue it to print the new figures.'
+          : '';
+  // Once signed, the preview and the print show the signed snapshot, not the live form, unless the
+  // results are being changed (then the draft shows, watermarked, until it is reissued).
+  const showSigned = !!currentCertificate && !unsavedChanges && !certState?.outdated;
+  const issueOf = (certificate: WaterCertificate): CertificateIssue => ({
+    serial: certificate.serial,
+    version: certificate.version,
+    shortCode: certificate.shortCode,
+    verifyUrl: certificate.verifyUrl,
+  });
+  const previewProps = showSigned && currentCertificate
+    ? {
+        intake: fieldsFromSnapshot(currentCertificate.snapshot),
+        entries: currentCertificate.snapshot.document.results,
+        remarks: currentCertificate.snapshot.document.remarks,
+        issue: issueOf(currentCertificate),
+      }
+    : { intake, entries: draft.entries, remarks: draft.remarks };
 
   const focusResults = () => {
     document.getElementById('file-section-2')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -287,10 +339,11 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
     setIssuing(true);
     setIssueError(null);
     try {
-      const { intake: updated } = await apiRequest<{ intake: WaterIntake }>(`/api/water/intakes/${intake.id}/certificate`, {
+      const { intake: updated, ...state } = await apiRequest<{ intake: WaterIntake } & WaterCertificateState>(`/api/water/intakes/${intake.id}/certificate`, {
         method: 'POST',
         body: '{}',
       });
+      setCertState(state);
       onIntakeUpdated(updated);
       await loadEvents();
     } catch (cause) {
@@ -300,7 +353,46 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
     }
   };
 
-  const printMemo = () => {
+  // Reissue (a new signed version) or revoke the current certificate, with the reason recorded.
+  const submitReason = async () => {
+    if (!reasonMode) return;
+    setCertBusy(true);
+    setCertError(null);
+    try {
+      const state = await apiRequest<WaterCertificateState>(`/api/water/intakes/${intake.id}/certificate/${reasonMode}`, {
+        method: 'POST',
+        body: JSON.stringify({ reason }),
+      });
+      setCertState(state);
+      setReasonMode(null);
+      setReason('');
+      await loadEvents();
+    } catch (cause) {
+      setCertError(cause instanceof Error ? cause.message : 'Could not update the certificate.');
+    } finally {
+      setCertBusy(false);
+    }
+  };
+
+  // Every print is counted; prints after the first carry a COPY mark.
+  const printMemo = async () => {
+    setCertError(null);
+    try {
+      const { printNumber, ...state } = await apiRequest<{ printNumber: number } & WaterCertificateState>(
+        `/api/water/intakes/${intake.id}/certificate/printed`,
+        { method: 'POST', body: '{}' },
+      );
+      setCertState(state);
+      setCopyNumber(printNumber > 1 ? printNumber - 1 : 0);
+    } catch (cause) {
+      setCertError(cause instanceof Error ? cause.message : 'Could not record the print.');
+      return;
+    }
+    // Let the print copy re-render with its COPY mark before the dialog opens.
+    window.setTimeout(openPrintDialog, 120);
+  };
+
+  const openPrintDialog = () => {
     document.body.dataset.printTarget = 'certificate';
     // The browser only honours an unnamed @page size reliably, so A4 is set for the length of this print.
     const pageStyle = document.createElement('style');
@@ -454,7 +546,7 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
                   </Button>
                 )}
                 {canPrint && (
-                  <Button size="sm" variant={issued ? 'primary' : 'secondary'} icon={Printer} disabled={!!printBlocker} onClick={printMemo}>
+                  <Button size="sm" variant={issued ? 'primary' : 'secondary'} icon={Printer} disabled={!!printBlocker} onClick={() => void printMemo()}>
                     Print / Save as PDF
                   </Button>
                 )}
@@ -474,11 +566,26 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
             {issueError && (
               <p role="alert" className="mb-3 text-[11px] text-rose-600 dark:text-rose-400 print:hidden">{issueError}</p>
             )}
+            {issued && (
+              <CertificatePanel
+                state={certState}
+                canManage={canPrint}
+                busy={certBusy || issuing}
+                error={certError}
+                reasonMode={reasonMode}
+                reason={reason}
+                onReasonChange={setReason}
+                onStart={(mode) => { setReasonMode(mode); setReason(''); setCertError(null); }}
+                onCancel={() => setReasonMode(null)}
+                onSubmit={() => void submitReason()}
+                onSign={() => void approveMemo()}
+              />
+            )}
             {fullscreen ? (
               <p className="py-6 text-center text-xs text-slate-500 dark:text-slate-400">Shown in full screen.</p>
             ) : (
               <div className="overflow-x-auto rounded-lg bg-slate-100 p-3 dark:bg-slate-950/50">
-                <WaterCertificatePreview intake={intake} entries={draft.entries} remarks={draft.remarks} />
+                <WaterCertificatePreview {...previewProps} />
               </div>
             )}
           </FileSection>
@@ -555,10 +662,17 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
           )}
         </aside>
       </div>
-      {canPrint && (
+      {canPrint && currentCertificate && (
         <Portal>
           <div className="certificate-print-root" aria-hidden="true">
-            <WaterCertificatePreview intake={intake} entries={draft.entries} remarks={draft.remarks} printMode />
+            <WaterCertificatePreview
+              intake={fieldsFromSnapshot(currentCertificate.snapshot)}
+              entries={currentCertificate.snapshot.document.results}
+              remarks={currentCertificate.snapshot.document.remarks}
+              issue={issueOf(currentCertificate)}
+              copyNumber={copyNumber}
+              printMode
+            />
           </div>
         </Portal>
       )}
@@ -579,7 +693,7 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
                 </Button>
               )}
               {canPrint && (
-                <Button size="sm" variant={issued ? 'primary' : 'secondary'} icon={Printer} disabled={!!printBlocker} onClick={printMemo}>
+                <Button size="sm" variant={issued ? 'primary' : 'secondary'} icon={Printer} disabled={!!printBlocker} onClick={() => void printMemo()}>
                   Print / Save as PDF
                 </Button>
               )}
@@ -589,12 +703,149 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
             </div>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-8 print:overflow-visible print:p-0">
-            <WaterCertificatePreview intake={intake} entries={draft.entries} remarks={draft.remarks} />
+            <WaterCertificatePreview {...previewProps} />
           </div>
         </div>
         </Portal>
       )}
     </DashboardPage>
+  );
+};
+
+const CERT_STATUS: Record<WaterCertificate['status'], { label: string; tone: Tone }> = {
+  CURRENT: { label: 'Valid', tone: 'emerald' },
+  SUPERSEDED: { label: 'Superseded', tone: 'amber' },
+  REVOKED: { label: 'Revoked', tone: 'rose' },
+};
+
+const formatStamp = (value: string | null) => (value ? new Date(value).toLocaleString() : '—');
+
+/**
+ * The signed certificate behind the memo: its serial, short code and verify link, how often it was
+ * printed, and (for the Head) reissue and revoke, each with a recorded reason.
+ */
+const CertificatePanel: React.FC<{
+  state: WaterCertificateState | null;
+  canManage: boolean;
+  busy: boolean;
+  error: string | null;
+  reasonMode: 'reissue' | 'revoke' | null;
+  reason: string;
+  onReasonChange: (value: string) => void;
+  onStart: (mode: 'reissue' | 'revoke') => void;
+  onCancel: () => void;
+  onSubmit: () => void;
+  onSign: () => void;
+}> = ({ state, canManage, busy, error, reasonMode, reason, onReasonChange, onStart, onCancel, onSubmit, onSign }) => {
+  const current = state?.current ?? null;
+  const latest = state?.history[0] ?? null;
+  const shown = current ?? latest;
+  return (
+    <div className="mb-3 overflow-hidden rounded-lg border border-slate-200 print:hidden dark:border-slate-800">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-800 dark:bg-slate-950/50">
+        <h3 className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+          <ShieldCheck className="h-3.5 w-3.5 text-slate-400" /> Signed certificate
+        </h3>
+        {shown && <StatusPill tone={CERT_STATUS[shown.status].tone}>{CERT_STATUS[shown.status].label}</StatusPill>}
+      </div>
+      {!shown ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-3 text-[12px] text-slate-600 dark:text-slate-300">
+          <span>This memo was approved before certificates were signed. Sign it to give it a serial and QR code.</span>
+          {canManage && (
+            <Button size="sm" variant="primary" icon={ShieldCheck} disabled={busy} onClick={onSign}>
+              Sign certificate
+            </Button>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-3 px-3 py-3">
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-[12px] sm:grid-cols-4">
+            <div>
+              <dt className="text-[11px] text-slate-500 dark:text-slate-400">Serial</dt>
+              <dd className="font-mono font-medium text-slate-900 dark:text-white">{shown.serial}</dd>
+            </div>
+            <div>
+              <dt className="text-[11px] text-slate-500 dark:text-slate-400">Short code</dt>
+              <dd className="font-mono font-medium text-slate-900 dark:text-white">{shown.shortCode}</dd>
+            </div>
+            <div>
+              <dt className="text-[11px] text-slate-500 dark:text-slate-400">Version</dt>
+              <dd className="font-medium text-slate-900 dark:text-white">{shown.version}</dd>
+            </div>
+            <div>
+              <dt className="text-[11px] text-slate-500 dark:text-slate-400">Printed</dt>
+              <dd className="font-medium text-slate-900 dark:text-white">
+                {shown.printCount ? `${shown.printCount} ${shown.printCount === 1 ? 'time' : 'times'}` : 'Not yet'}
+              </dd>
+            </div>
+          </dl>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400">
+            Signed {formatStamp(shown.issuedAt)} by {shown.issuedBy}
+            {shown.reissueReason ? ` · Reissued: ${shown.reissueReason}` : ''}
+            {shown.status === 'REVOKED' ? ` · Revoked ${formatStamp(shown.revokedAt)}${shown.revokedBy ? ` by ${shown.revokedBy}` : ''}: ${shown.revokeReason}` : ''}
+          </p>
+          {state?.outdated && (
+            <p className="flex items-start gap-1.5 rounded-md bg-amber-50 px-2.5 py-2 text-[11px] text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+              <TriangleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
+              The results or exhibit details changed after this certificate was signed. The verify page still shows the signed figures; reissue to sign the new ones.
+            </p>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <a
+              href={shown.verifyUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-md border border-slate-200 px-2.5 py-1.5 text-[12px] font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              <ExternalLink className="h-3.5 w-3.5" /> Open verify page
+            </a>
+            {canManage && reasonMode === null && (
+              <>
+                <Button size="sm" icon={RotateCcw} disabled={busy} onClick={() => onStart('reissue')}>
+                  Reissue
+                </Button>
+                {current && (
+                  <Button size="sm" variant="danger" icon={Ban} disabled={busy} onClick={() => onStart('revoke')}>
+                    Revoke
+                  </Button>
+                )}
+              </>
+            )}
+          </div>
+          {canManage && reasonMode && (
+            <div className="space-y-2 rounded-md border border-slate-200 p-2.5 dark:border-slate-700">
+              <label htmlFor="certificate-reason" className="block text-[12px] font-medium text-slate-700 dark:text-slate-200">
+                {reasonMode === 'reissue'
+                  ? 'Why is it being reissued? The current version is marked superseded.'
+                  : 'Why is it being revoked? The verify page shows it as invalid at once.'}
+              </label>
+              <textarea
+                id="certificate-reason"
+                value={reason}
+                onChange={(event) => onReasonChange(event.target.value)}
+                rows={2}
+                maxLength={500}
+                className="w-full rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-[13px] text-slate-900 outline-none focus:border-sky-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+              />
+              <div className="flex justify-end gap-2">
+                <Button size="sm" variant="ghost" onClick={onCancel} disabled={busy}>
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  variant={reasonMode === 'revoke' ? 'danger' : 'primary'}
+                  disabled={busy || reason.trim().length < 3}
+                  onClick={onSubmit}
+                >
+                  {busy ? 'Saving…' : reasonMode === 'revoke' ? 'Revoke certificate' : 'Reissue certificate'}
+                </Button>
+              </div>
+            </div>
+          )}
+          {error && <p role="alert" className="text-[11px] text-rose-600 dark:text-rose-400">{error}</p>}
+        </div>
+      )}
+    </div>
   );
 };
 

@@ -10,6 +10,16 @@ import {
   timingSafeEqual,
 } from 'node:crypto';
 import { promisify } from 'node:util';
+import {
+  buildSnapshot,
+  canonicalJson,
+  contentHash,
+  loadSigningKey,
+  sha256Hex,
+  shortCode,
+  signHash,
+  verifyHash,
+} from './certificates.js';
 
 const scrypt = promisify(scryptCallback);
 const app = express();
@@ -415,7 +425,17 @@ const appendWaterIntakeEvent = (db, intakeId, eventType, actorId, fromStatus, to
 const LAB_NOTIFICATION_RESEND_AFTER_SECONDS = 60;
 // True once any lab-side user of the destination department has read the
 // latest lab notification for the visit (reception staff reads don't count).
-const labNotificationSeenSql = `EXISTS (
+// True once anyone in the destination department has registered the visitor's
+// exhibit intake: the visit's lab notifications are then resolved for the whole
+// department, and reception can no longer resend.
+const labIntakeRegisteredSql = `EXISTS (
+    SELECT 1
+    FROM reception_activity_notifications n
+    WHERE n.related_visit_id = reception_visits.id
+      AND n.link_action = 'RECEPTION_LAB_BAY'
+      AND n.resolved_at IS NOT NULL
+  )`;
+const labNotificationSeenSql = `(EXISTS (
     SELECT 1
     FROM reception_activity_notifications n
     JOIN reception_activity_notification_reads r ON r.notification_id = n.id
@@ -426,7 +446,7 @@ const labNotificationSeenSql = `EXISTS (
       AND r.read_at IS NOT NULL
       AND u.department = reception_visits.destination_department
       AND u.role IN (${[...receptionLabRoles].map((role) => `'${role}'`).join(', ')})
-  )`;
+  ) OR ${labIntakeRegisteredSql})`;
 const receptionVisitProjection = `
   id,
   visit_number AS "visitNumber",
@@ -441,6 +461,7 @@ const receptionVisitProjection = `
   destination_department AS laboratory,
   lab_notification_sent_at AS "labNotificationSentAt",
   ${labNotificationSeenSql} AS "labNotificationSeen",
+  ${labIntakeRegisteredSql} AS "labIntakeRegistered",
   TO_CHAR(arrived_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS date,
   arrived_at AS "arrivedAt",
   TO_CHAR(arrived_at AT TIME ZONE 'Africa/Nairobi', 'HH12:MI AM') AS "timeIn",
@@ -479,6 +500,17 @@ const createReceptionActivityNotification = (db, {
   [recipientRole, recipientDepartment, title, message, type, linkAction, visitId],
 );
 
+// Marks every lab notification for the visit (the first one and any resends)
+// as resolved, so it reads as seen for the whole department.
+const resolveLabNotificationsForVisit = (db, visitId, department, userId, resolution = 'INTAKE_REGISTERED') =>
+  db.query(
+    `UPDATE reception_activity_notifications
+     SET resolved_at = NOW(), resolved_by = $3, resolution = $4
+     WHERE related_visit_id = $1 AND link_action = 'RECEPTION_LAB_BAY'
+       AND recipient_department = $2 AND resolved_at IS NULL`,
+    [visitId, department, userId, resolution],
+  );
+
 const receptionNotificationAudience = (user) => ({
   role: user.role,
   department: user.department ?? null,
@@ -492,10 +524,13 @@ app.get('/api/notifications', requireSession, asyncHandler(async (req, res, next
               n.related_visit_id AS "relatedVisitorId",
               n.recipient_role AS "recipientRole",
               n.recipient_department AS "recipientDepartment",
-              n.created_at AS "createdAt", (r.read_at IS NOT NULL) AS read
+              n.created_at AS "createdAt",
+              (r.read_at IS NOT NULL OR n.resolved_at IS NOT NULL) AS read,
+              n.resolved_at AS "resolvedAt", resolver.full_name AS "resolvedBy"
        FROM reception_activity_notifications n
        LEFT JOIN reception_activity_notification_reads r
          ON r.notification_id = n.id AND r.user_id = $1
+       LEFT JOIN users resolver ON resolver.id = n.resolved_by
        WHERE r.dismissed_at IS NULL
          AND (n.recipient_role = $2 OR n.recipient_department = $3)
        ORDER BY n.created_at DESC
@@ -795,6 +830,40 @@ app.delete('/api/reception/visits/:id', requireSession, asyncHandler(async (req,
   }
 }));
 
+app.post('/api/reception/visits/:id/lab-notifications/resolve', requireSession, asyncHandler(async (req, res, next) => {
+  if (!receptionLabRoles.has(req.user.role)) {
+    return res.status(403).json({ error: 'Only laboratory staff can mark a visitor as received at intake.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `SELECT id, visit_number, destination_department
+       FROM reception_visits WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+      [req.params.id],
+    );
+    const visit = rows[0];
+    if (!visit || visit.destination_department !== req.user.department) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Visitor record not found.' });
+    }
+    const result = await resolveLabNotificationsForVisit(client, visit.id, visit.destination_department, req.user.id);
+    if (result.rowCount) {
+      await audit(client, req.user.id, req.user.email, 'LAB_NOTIFICATION_RESOLVED', 'reception_visit', visit.id, {
+        visitNumber: visit.visit_number,
+        destinationDepartment: visit.destination_department,
+      });
+    }
+    await client.query('COMMIT');
+    res.json({ resolved: result.rowCount });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return next(error);
+  } finally {
+    client.release();
+  }
+}));
+
 app.post('/api/reception/visits/:id/notify-lab', requireSession, asyncHandler(async (req, res, next) => {
   const client = await pool.connect();
   try {
@@ -802,7 +871,7 @@ app.post('/api/reception/visits/:id/notify-lab', requireSession, asyncHandler(as
     const { rows } = await client.query(
       `SELECT id, visit_number, visitor_name, destination_department, status, lab_notification_sent_at,
               EXTRACT(EPOCH FROM (NOW() - lab_notification_sent_at)) AS seconds_since_notified,
-              ${labNotificationSeenSql} AS lab_notification_seen
+              ${labIntakeRegisteredSql} AS lab_intake_registered
        FROM reception_visits WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
       [req.params.id],
     );
@@ -827,9 +896,9 @@ app.post('/api/reception/visits/:id/notify-lab', requireSession, asyncHandler(as
       return res.status(409).json({ error: `The ${visit.destination_department} laboratory has already been notified.` });
     }
     if (visit.lab_notification_sent_at) {
-      if (visit.lab_notification_seen) {
+      if (visit.lab_intake_registered) {
         await client.query('ROLLBACK');
-        return res.status(409).json({ error: `${visit.destination_department} has already seen the notification.` });
+        return res.status(409).json({ error: `${visit.destination_department} has already registered this visitor's exhibit intake.` });
       }
       const waitSeconds = Math.ceil(LAB_NOTIFICATION_RESEND_AFTER_SECONDS - Number(visit.seconds_since_notified));
       if (waitSeconds > 0) {
@@ -981,6 +1050,79 @@ app.post(
   requireSession,
   transitionReceptionVisit('SERVICE_COMPLETED', 'IN_LABORATORY', 'COMPLETED', (user) => receptionLabRoles.has(user.role)),
 );
+// The lab officer who registered a visitor's exhibit intake tells reception the
+// visitor can go: the visit moves to Completed (the only status Check Out takes)
+// and the receptionists get a notification that opens Check Out.
+app.post('/api/reception/visits/:id/intake-complete', requireSession, asyncHandler(async (req, res, next) => {
+  if (!receptionLabRoles.has(req.user.role)) {
+    return res.status(403).json({ error: 'Only laboratory staff can tell reception an intake is complete.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `SELECT id, visit_number, visitor_name, destination_department, status,
+              ${labIntakeRegisteredSql} AS lab_intake_registered
+       FROM reception_visits WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+      [req.params.id],
+    );
+    const visit = rows[0];
+    if (!visit || visit.destination_department !== req.user.department) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Visitor record not found.' });
+    }
+    if (!['AWAITING_LAB_RECEPTION', 'IN_LABORATORY'].includes(visit.status)) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        error: visit.status === 'COMPLETED'
+          ? 'Reception has already been told this visitor can be checked out.'
+          : 'This visitor has already left.',
+      });
+    }
+    if (!visit.lab_intake_registered) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: "Register the visitor's exhibit intake before notifying reception." });
+    }
+    // Keep the visit history complete when the lab never formally received the visitor.
+    if (visit.status === 'AWAITING_LAB_RECEPTION') {
+      await appendReceptionEvent(client, visit.id, 'LAB_RECEIVED', req.user.id, 'AWAITING_LAB_RECEPTION', 'IN_LABORATORY', {
+        reason: 'INTAKE_REGISTERED',
+      });
+    }
+    const { rows: updated } = await client.query(
+      `UPDATE reception_visits SET status = 'COMPLETED', updated_at = NOW()
+       WHERE id = $1
+       RETURNING ${receptionVisitProjection}`,
+      [visit.id],
+    );
+    await appendReceptionEvent(client, visit.id, 'SERVICE_COMPLETED', req.user.id, 'IN_LABORATORY', 'COMPLETED', {
+      reason: 'INTAKE_REGISTERED',
+    });
+    await audit(client, req.user.id, req.user.email, 'VISITOR_INTAKE_COMPLETED', 'reception_visit', visit.id, {
+      visitNumber: visit.visit_number,
+      destinationDepartment: visit.destination_department,
+    });
+    await createReceptionActivityNotification(client, {
+      recipientRole: 'RECEPTIONIST',
+      title: 'Exhibit intake complete — ready for checkout',
+      message: `${visit.destination_department} registered the exhibit intake for ${visit.visitor_name} (${visit.visit_number}). The client can be checked out and released.`,
+      type: 'success',
+      linkAction: 'RECEPTION_CHECK_OUT',
+      visitId: visit.id,
+    });
+    await client.query('COMMIT');
+    res.json({
+      message: `Reception has been told ${visit.visitor_name} can be checked out.`,
+      visit: updated[0],
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return next(error);
+  } finally {
+    client.release();
+  }
+}));
+
 app.post(
   '/api/reception/visits/:id/check-out',
   requireSession,
@@ -1043,6 +1185,8 @@ const WATER_INTAKE_EVENT_LABELS = {
   ANALYSIS_COMPLETED: 'Analysis completed',
   FINDINGS_RECORDED: 'Findings recorded',
   CERTIFICATE_ISSUED: 'Memo approved by the Head',
+  CERTIFICATE_REISSUED: 'Certificate reissued by the Head',
+  CERTIFICATE_REVOKED: 'Certificate revoked by the Head',
   EDITED: 'Details edited',
   DELETED: 'Deleted',
 };
@@ -1229,6 +1373,7 @@ app.post('/api/water/intakes', requireSession, requireWaterLab, asyncHandler(asy
       labReference,
       receptionVisitId,
     });
+    await resolveLabNotificationsForVisit(client, receptionVisitId, 'Water', req.user.id);
     const intake = await client.query(
       `SELECT ${waterIntakeProjection}
        FROM water_exhibit_intakes w ${waterIntakeJoins}
@@ -1453,6 +1598,354 @@ app.post('/api/water/intakes/:id/documents-check', requireSession, requireWaterL
   }
 }));
 
+/* ------------------------- Signed certificates ------------------------- */
+
+const isWaterHead = (user) => user.role === 'HEAD_OF_DEPARTMENT' && user.department === 'Water';
+
+/** Where the QR code points: PUBLIC_BASE_URL, else the address the app is being used on. */
+const certificateVerifyUrl = (req, verificationId) => {
+  const base = (process.env.PUBLIC_BASE_URL || resolveAppUrl(req)).replace(/\/+$/, '');
+  return `${base}/verify/${verificationId}`;
+};
+
+const certificateColumns = `
+  c.id, c.intake_id, c.version, c.serial, c.verification_id, c.snapshot, c.snapshot_hash, c.content_hash,
+  c.signature, c.key_id, c.issued_at, c.status, c.superseded_at, c.revoked_at, c.revoke_reason,
+  c.reissue_reason, c.print_count, c.last_printed_at,
+  issuer.full_name AS issued_by_name, revoker.full_name AS revoked_by_name,
+  next.serial AS superseded_by_serial, next.verification_id AS superseded_by_verification_id`;
+const certificateJoins = `
+  JOIN users issuer ON issuer.id = c.issued_by
+  LEFT JOIN users revoker ON revoker.id = c.revoked_by
+  LEFT JOIN water_certificates next ON next.id = c.superseded_by`;
+
+/** A certificate as staff see it in the case file. */
+const certificateForStaff = (req, row) => ({
+  id: row.id,
+  serial: row.serial,
+  version: row.version,
+  verificationId: row.verification_id,
+  verifyUrl: certificateVerifyUrl(req, row.verification_id),
+  status: row.status,
+  issuedAt: row.issued_at,
+  issuedBy: row.issued_by_name,
+  shortCode: shortCode(row.snapshot_hash),
+  snapshotHash: row.snapshot_hash,
+  keyId: row.key_id,
+  printCount: row.print_count,
+  lastPrintedAt: row.last_printed_at,
+  revokedAt: row.revoked_at,
+  revokedBy: row.revoked_by_name,
+  revokeReason: row.revoke_reason,
+  reissueReason: row.reissue_reason,
+  supersededAt: row.superseded_at,
+  supersededBy: row.superseded_by_serial ?? null,
+  snapshot: row.snapshot,
+});
+
+const loadIntakeForCertificate = async (db, intakeId) => {
+  const { rows } = await db.query(
+    `SELECT ${waterIntakeProjection} FROM water_exhibit_intakes w ${waterIntakeJoins} WHERE w.id = $1 AND w.deleted_at IS NULL`,
+    [intakeId],
+  );
+  return rows[0] ?? null;
+};
+
+/**
+ * Freezes, hashes and signs the certificate for an intake as it stands now, as the next version.
+ * Runs inside the caller's transaction; the caller has already checked the Head may issue it.
+ */
+const issueSignedCertificate = async (db, req, intakeId, { reissueReason = null } = {}) => {
+  const key = loadSigningKey();
+  await db.query(
+    `INSERT INTO certificate_signing_keys (key_id, public_key_pem) VALUES ($1, $2) ON CONFLICT (key_id) DO NOTHING`,
+    [key.keyId, key.publicKeyPem],
+  );
+  const intake = await loadIntakeForCertificate(db, intakeId);
+  const { rows: meta } = await db.query(
+    `SELECT
+       COALESCE((SELECT MAX(version) FROM water_certificates WHERE intake_id = $1), 0) + 1 AS version,
+       NEXTVAL('water_certificate_serial_seq') AS seq,
+       gen_random_uuid() AS verification_id,
+       NOW() AS issued_at,
+       TO_CHAR(NOW() AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS issued_date,
+       TO_CHAR(NOW() AT TIME ZONE 'Africa/Nairobi', 'YYYY') AS year`,
+    [intakeId],
+  );
+  const { version, seq, verification_id: verificationId, issued_at: issuedAt, issued_date: issuedDate, year } = meta[0];
+  const serial = `GC-WAT-${year}-${String(seq).padStart(6, '0')}`;
+  const snapshot = buildSnapshot({
+    intake,
+    serial,
+    version,
+    verificationId,
+    issuedAt: new Date(issuedAt).toISOString(),
+    issuedDate,
+    approvedBy: req.user.name ?? req.user.full_name ?? req.user.email,
+  });
+  const snapshotHash = sha256Hex(canonicalJson(snapshot));
+  const { rows } = await db.query(
+    `INSERT INTO water_certificates (
+       intake_id, version, serial, verification_id, snapshot, snapshot_hash, content_hash,
+       signature, key_id, issued_by, issued_at, reissue_reason
+     ) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, $10, $11, $12)
+     RETURNING id`,
+    [
+      intakeId, version, serial, verificationId, JSON.stringify(snapshot), snapshotHash, contentHash(intake),
+      signHash(snapshotHash), key.keyId, req.user.id, issuedAt, reissueReason,
+    ],
+  );
+  await audit(db, req.user.id, req.user.email, reissueReason ? 'WATER_CERTIFICATE_REISSUED' : 'WATER_CERTIFICATE_SIGNED', 'water_certificate', rows[0].id, {
+    serial, version, labReference: intake.labReference, snapshotHash, keyId: key.keyId, reason: reissueReason,
+  });
+  return rows[0].id;
+};
+
+const certificateState = async (db, req, intakeId) => {
+  const { rows } = await db.query(
+    `SELECT ${certificateColumns} FROM water_certificates c ${certificateJoins}
+     WHERE c.intake_id = $1 ORDER BY c.version DESC`,
+    [intakeId],
+  );
+  const intake = await loadIntakeForCertificate(db, intakeId);
+  const current = rows.find((row) => row.status === 'CURRENT') ?? null;
+  return {
+    current: current ? certificateForStaff(req, current) : null,
+    history: rows.map((row) => certificateForStaff(req, row)),
+    // The results or exhibit details changed after the current certificate was issued.
+    outdated: !!(current && intake && current.content_hash !== contentHash(intake)),
+  };
+};
+
+const validIntakeParam = (req, res) => {
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.id ?? '')) {
+    res.status(400).json({ error: 'That is not a valid Water exhibit reference.' });
+    return false;
+  }
+  return true;
+};
+
+app.get('/api/water/intakes/:id/certificates', requireSession, requireWaterLab, asyncHandler(async (req, res, next) => {
+  if (!validIntakeParam(req, res)) return;
+  try {
+    res.json(await certificateState(pool, req, req.params.id));
+  } catch (error) {
+    next(error);
+  }
+}));
+
+const validReason = (reason) => typeof reason === 'string' && reason.trim().length >= 3 && reason.trim().length <= 500;
+
+// The Head corrects an issued certificate: the current one is superseded and a new signed version issued.
+app.post('/api/water/intakes/:id/certificate/reissue', requireSession, requireWaterLab, asyncHandler(async (req, res, next) => {
+  if (!isWaterHead(req.user)) return res.status(403).json({ error: 'Only the Head of Water & Environment can reissue a certificate.' });
+  if (!validIntakeParam(req, res)) return;
+  const reason = req.body?.reason;
+  if (!validReason(reason)) return res.status(400).json({ error: 'Give a reason for reissuing (3 to 500 characters).' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: intakeRows } = await client.query(
+      `SELECT id, status, findings_results, certificate_issued_at FROM water_exhibit_intakes WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+      [req.params.id],
+    );
+    const intake = intakeRows[0];
+    if (!intake) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Water exhibit intake not found.' });
+    }
+    if (!intake.certificate_issued_at || intake.status !== 'Analysis Complete' || !Object.keys(intake.findings_results?.results ?? {}).length) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Approve the memo before reissuing its certificate.' });
+    }
+    const { rows: currentRows } = await client.query(
+      `SELECT id, serial FROM water_certificates WHERE intake_id = $1 AND status = 'CURRENT' FOR UPDATE`,
+      [req.params.id],
+    );
+    const previous = currentRows[0];
+    if (previous) {
+      await client.query(
+        `UPDATE water_certificates SET status = 'SUPERSEDED', superseded_at = NOW() WHERE id = $1`,
+        [previous.id],
+      );
+    }
+    const newId = await issueSignedCertificate(client, req, req.params.id, { reissueReason: reason.trim() });
+    if (previous) await client.query('UPDATE water_certificates SET superseded_by = $2 WHERE id = $1', [previous.id, newId]);
+    await appendWaterIntakeEvent(client, req.params.id, 'CERTIFICATE_REISSUED', req.user.id, intake.status, intake.status, {
+      reason: reason.trim(), replaces: previous?.serial ?? null,
+    });
+    await client.query('COMMIT');
+    res.json(await certificateState(pool, req, req.params.id));
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return next(error);
+  } finally {
+    client.release();
+  }
+}));
+
+// The Head withdraws the current certificate; the verify page shows it as revoked at once.
+app.post('/api/water/intakes/:id/certificate/revoke', requireSession, requireWaterLab, asyncHandler(async (req, res, next) => {
+  if (!isWaterHead(req.user)) return res.status(403).json({ error: 'Only the Head of Water & Environment can revoke a certificate.' });
+  if (!validIntakeParam(req, res)) return;
+  const reason = req.body?.reason;
+  if (!validReason(reason)) return res.status(400).json({ error: 'Give a reason for revoking (3 to 500 characters).' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `UPDATE water_certificates
+       SET status = 'REVOKED', revoked_at = NOW(), revoked_by = $2, revoke_reason = $3
+       WHERE intake_id = $1 AND status = 'CURRENT'
+       RETURNING id, serial`,
+      [req.params.id, req.user.id, reason.trim()],
+    );
+    if (!rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'There is no current certificate to revoke.' });
+    }
+    await appendWaterIntakeEvent(client, req.params.id, 'CERTIFICATE_REVOKED', req.user.id, null, null, {
+      reason: reason.trim(), serial: rows[0].serial,
+    });
+    await audit(client, req.user.id, req.user.email, 'WATER_CERTIFICATE_REVOKED', 'water_certificate', rows[0].id, {
+      serial: rows[0].serial, reason: reason.trim(),
+    });
+    await client.query('COMMIT');
+    res.json(await certificateState(pool, req, req.params.id));
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return next(error);
+  } finally {
+    client.release();
+  }
+}));
+
+// Counts every print of the current certificate; prints after the first carry a COPY mark.
+app.post('/api/water/intakes/:id/certificate/printed', requireSession, requireWaterLab, asyncHandler(async (req, res, next) => {
+  if (!isWaterHead(req.user)) return res.status(403).json({ error: 'Only the Head of Water & Environment can print the certificate.' });
+  if (!validIntakeParam(req, res)) return;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `UPDATE water_certificates SET print_count = print_count + 1, last_printed_at = NOW()
+       WHERE intake_id = $1 AND status = 'CURRENT'
+       RETURNING id, serial, print_count`,
+      [req.params.id],
+    );
+    if (!rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'There is no current signed certificate to print. Approve or reissue it first.' });
+    }
+    await audit(client, req.user.id, req.user.email, 'WATER_CERTIFICATE_PRINTED', 'water_certificate', rows[0].id, {
+      serial: rows[0].serial, printNumber: rows[0].print_count,
+    });
+    await client.query('COMMIT');
+    res.json({ printNumber: rows[0].print_count, ...(await certificateState(pool, req, req.params.id)) });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return next(error);
+  } finally {
+    client.release();
+  }
+}));
+
+/* ---------------- Public verification (no sign-in) ---------------- */
+
+const verifyLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 30,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many verification requests. Wait a minute and try again.' },
+});
+
+const logVerification = (req, certificateId, lookup, result) =>
+  pool.query(
+    `INSERT INTO certificate_verifications (certificate_id, lookup, result, ip_address, user_agent) VALUES ($1, $2, $3, $4, $5)`,
+    [certificateId, String(lookup).slice(0, 200), result, req.ip ?? null, (req.get('user-agent') ?? '').slice(0, 300)],
+  );
+
+const publicCertificate = async (req, res, where, params, lookup) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const { rows } = await pool.query(
+    `SELECT ${certificateColumns}, k.public_key_pem
+     FROM water_certificates c ${certificateJoins}
+     JOIN certificate_signing_keys k ON k.key_id = c.key_id
+     WHERE ${where}`,
+    params,
+  );
+  const row = rows[0];
+  if (!row) {
+    await logVerification(req, null, lookup, 'NOT_FOUND');
+    return res.status(404).json({ status: 'NOT_FOUND', error: 'No certificate matches this code. The paper may not be genuine.' });
+  }
+  // The stored snapshot must still hash to the signed value, and the signature must match the key.
+  const hashMatches = sha256Hex(canonicalJson(row.snapshot)) === row.snapshot_hash;
+  const signatureValid = hashMatches && verifyHash(row.snapshot_hash, row.signature, row.public_key_pem);
+  const status = signatureValid ? row.status : 'INVALID_SIGNATURE';
+  await logVerification(req, row.id, lookup, status);
+  res.json({
+    status,
+    serial: row.serial,
+    version: row.version,
+    verificationId: row.verification_id,
+    issuedAt: row.issued_at,
+    shortCode: shortCode(row.snapshot_hash),
+    snapshotHash: row.snapshot_hash,
+    signature: row.signature,
+    keyId: row.key_id,
+    signatureValid,
+    revokedAt: row.revoked_at,
+    revokeReason: row.revoke_reason,
+    supersededAt: row.superseded_at,
+    supersededBy: row.superseded_by_serial
+      ? { serial: row.superseded_by_serial, verificationId: row.superseded_by_verification_id }
+      : null,
+    snapshot: row.snapshot,
+  });
+};
+
+app.get('/api/public/certificates/:verificationId', verifyLimiter, asyncHandler(async (req, res, next) => {
+  const id = req.params.verificationId ?? '';
+  try {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+      await logVerification(req, null, id, 'NOT_FOUND');
+      return res.status(404).json({ status: 'NOT_FOUND', error: 'That is not a valid verification code.' });
+    }
+    await publicCertificate(req, res, 'c.verification_id = $1', [id], id);
+  } catch (error) {
+    next(error);
+  }
+}));
+
+// Typed lookup for someone without a phone: the serial and short code printed on the paper.
+app.get('/api/public/certificates', verifyLimiter, asyncHandler(async (req, res, next) => {
+  const serial = typeof req.query.serial === 'string' ? req.query.serial.trim().toUpperCase() : '';
+  const code = typeof req.query.code === 'string' ? req.query.code.replace(/[^0-9a-f]/gi, '').toLowerCase() : '';
+  try {
+    if (!/^GC-WAT-\d{4}-\d{6}$/.test(serial) || code.length !== 10) {
+      await logVerification(req, null, `${serial} ${code}`, 'NOT_FOUND');
+      return res.status(400).json({ status: 'NOT_FOUND', error: 'Enter the serial (GC-WAT-YYYY-NNNNNN) and the 10-character code exactly as printed.' });
+    }
+    await publicCertificate(req, res, 'c.serial = $1 AND LEFT(c.snapshot_hash, 10) = $2', [serial, code], `${serial} ${code}`);
+  } catch (error) {
+    next(error);
+  }
+}));
+
+// The public keys, so anyone can check a certificate's signature independently.
+app.get('/api/public/certificate-keys', verifyLimiter, asyncHandler(async (_req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT key_id AS "keyId", algorithm, public_key_pem AS "publicKeyPem", created_at AS "createdAt" FROM certificate_signing_keys ORDER BY created_at`,
+    );
+    res.json({ keys: rows });
+  } catch (error) {
+    next(error);
+  }
+}));
+
 // The Head approves the memo (the Certificate of Analysis) once the analysis officer's work is counter-checked.
 app.post('/api/water/intakes/:id/certificate', requireSession, requireWaterLab, asyncHandler(async (req, res, next) => {
   if (!(req.user.role === 'HEAD_OF_DEPARTMENT' && req.user.department === 'Water')) {
@@ -1505,6 +1998,9 @@ app.post('/api/water/intakes/:id/certificate', requireSession, requireWaterLab, 
         labReference: intake.lab_reference,
       });
     }
+    // The signed record of what is printed. A memo approved before signing existed gets version 1 now.
+    const { rows: existing } = await client.query('SELECT 1 FROM water_certificates WHERE intake_id = $1 LIMIT 1', [req.params.id]);
+    if (!existing.length) await issueSignedCertificate(client, req, req.params.id);
     const { rows: updated } = await client.query(
       `SELECT ${waterIntakeProjection}
        FROM water_exhibit_intakes w ${waterIntakeJoins}
@@ -1512,7 +2008,7 @@ app.post('/api/water/intakes/:id/certificate', requireSession, requireWaterLab, 
       [req.params.id],
     );
     await client.query('COMMIT');
-    res.json({ intake: updated[0] });
+    res.json({ intake: updated[0], ...(await certificateState(pool, req, req.params.id)) });
   } catch (error) {
     await client.query('ROLLBACK');
     return next(error);

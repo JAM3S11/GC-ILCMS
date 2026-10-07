@@ -21,6 +21,8 @@ const EVENT_ICON_TONE: Partial<Record<WaterIntakeEventType, Tone>> = {
   ANALYSIS_COMPLETED: 'violet',
   FINDINGS_RECORDED: 'cyan',
   CERTIFICATE_ISSUED: 'emerald',
+  CERTIFICATE_REISSUED: 'amber',
+  CERTIFICATE_REVOKED: 'rose',
   EDITED: 'amber',
   DELETED: 'rose',
 };

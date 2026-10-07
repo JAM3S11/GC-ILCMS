@@ -1,16 +1,32 @@
-import React, { useLayoutEffect, useRef, useState } from 'react';
-import { WaterIntake } from '../../types';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import QRCode from 'qrcode';
+import { CertificateFields } from '../../lib/waterCertificates';
 import coatOfArms from '../../assets/COURTOFARMS-removebg-preview.png';
 import { CERTIFICATE_LETTERHEAD, certificateInitials } from '../../lib/certificateLetterhead';
 import { WATER_TEST_GROUPS, WaterTestEntry, WaterTestParameter, certificateReport } from '../../lib/waterTestParameters';
 
+/** The signed record behind an issued certificate: printed as a QR code, serial and short code. */
+export interface CertificateIssue {
+  serial: string;
+  version: number;
+  shortCode: string;
+  verifyUrl: string;
+}
+
 interface WaterCertificatePreviewProps {
-  intake: WaterIntake;
+  /** The printed exhibit fields: the live exhibit for a draft, the signed snapshot once issued. */
+  intake: CertificateFields;
   /** The results as currently typed, saved or not. */
   entries: Record<string, WaterTestEntry>;
   remarks: string;
   /** The copy that gets printed: full A4 size, no scaling and no on-screen ribbons. */
   printMode?: boolean;
+  /** Set once the certificate is issued; without it the pages carry a DRAFT – NOT VALID watermark. */
+  issue?: CertificateIssue;
+  /** Overrides the watermark, e.g. COPY on a reprint or REVOKED on the verify page. */
+  watermark?: string;
+  /** A reprint's number (1 for the first copy after the original). */
+  copyNumber?: number;
 }
 
 // A4 at 96 dpi; the pages are laid out at this size and scaled to fit on screen.
@@ -83,22 +99,64 @@ const ResultsTable: React.FC<{
   </div>
 );
 
-const PageFooter: React.FC<{ labNo: string; page: number }> = ({ labNo, page }) => (
-  <footer className="absolute inset-x-[16mm] bottom-[10mm] text-center text-[10px]" style={{ fontFamily: SERIF }}>
-    <p className="text-left font-bold">Lab No:{labNo}</p>
-    <p className="text-left italic">{CERTIFICATE_LETTERHEAD.footerDisclaimer}</p>
-    <p>
+const PageFooter: React.FC<{ labNo: string; page: number; issue?: CertificateIssue; qr: string; copyNumber?: number }> = ({
+  labNo,
+  page,
+  issue,
+  qr,
+  copyNumber,
+}) => (
+  <footer className="absolute inset-x-[16mm] bottom-[8mm] text-[10px]" style={{ fontFamily: SERIF }}>
+    <div className="flex items-end justify-between gap-4">
+      <div className="min-w-0">
+        <p className="font-bold">Lab No:{labNo}</p>
+        <p className="italic">{CERTIFICATE_LETTERHEAD.footerDisclaimer}</p>
+        {issue && (
+          <p className="mt-1 text-[9px]">
+            Certificate No. <strong>{issue.serial}</strong>
+            {issue.version > 1 ? ` (version ${issue.version})` : ''} · Code <strong>{issue.shortCode}</strong>
+            {copyNumber ? ` · COPY ${copyNumber}` : ''}
+            <br />
+            Verify this certificate by scanning the QR code or at {verifyHost(issue.verifyUrl)}/verify
+          </p>
+        )}
+      </div>
+      {issue && qr && <img src={qr} alt={`QR code to verify certificate ${issue.serial}`} className="h-[18mm] w-[18mm] shrink-0" />}
+    </div>
+    <p className="mt-1 text-center">
       Page {page} of {PAGES}
     </p>
   </footer>
 );
 
+/** gc-ilcms.go.ke from https://gc-ilcms.go.ke/verify/…, as printed under the QR code. */
+const verifyHost = (url: string) => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+};
+
+/** A faint diagonal word across the page: DRAFT – NOT VALID before issue, COPY on reprints. */
+const Watermark: React.FC<{ text: string }> = ({ text }) => (
+  <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden">
+    <span
+      className="whitespace-nowrap text-[64px] font-bold tracking-[0.2em] text-slate-400/25"
+      style={{ transform: 'rotate(-35deg)', fontFamily: SERIF }}
+    >
+      {text}
+    </span>
+  </div>
+);
+
 /** One A4 sheet. */
-const Sheet: React.FC<{ children: React.ReactNode; last?: boolean }> = ({ children, last }) => (
+const Sheet: React.FC<{ children: React.ReactNode; last?: boolean; watermark?: string }> = ({ children, last, watermark }) => (
   <section
     className="certificate-page relative overflow-hidden bg-white text-black shadow-md"
     style={{ width: PAGE_WIDTH, height: PAGE_HEIGHT, padding: '14mm 16mm', fontFamily: SERIF, marginBottom: last ? 0 : PAGE_GAP }}
   >
+    {watermark && <Watermark text={watermark} />}
     {children}
   </section>
 );
@@ -109,7 +167,15 @@ const Sheet: React.FC<{ children: React.ReactNode; last?: boolean }> = ({ childr
  * typed; the letterhead wording comes from `certificateLetterhead.ts`. It is always a white page with
  * black ink (never themed), and on screen it is scaled to the width it is given.
  */
-export const WaterCertificatePreview: React.FC<WaterCertificatePreviewProps> = ({ intake, entries, remarks, printMode = false }) => {
+export const WaterCertificatePreview: React.FC<WaterCertificatePreviewProps> = ({
+  intake,
+  entries,
+  remarks,
+  printMode = false,
+  issue,
+  watermark,
+  copyNumber,
+}) => {
   const frame = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
 
@@ -123,7 +189,28 @@ export const WaterCertificatePreview: React.FC<WaterCertificatePreviewProps> = (
     return () => observer.disconnect();
   }, [printMode]);
 
-  const issued = !!intake.certificateIssuedAt;
+  // The QR code comes from the issued record only, never from the editable form.
+  const [qr, setQr] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    if (!issue) {
+      setQr('');
+      return undefined;
+    }
+    QRCode.toDataURL(issue.verifyUrl, { margin: 0, width: 320, errorCorrectionLevel: 'M' })
+      .then((url) => {
+        if (!cancelled) setQr(url);
+      })
+      .catch(() => {
+        if (!cancelled) setQr('');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [issue?.verifyUrl]);
+
+  const issued = !!issue;
+  const mark = watermark ?? (issued ? (copyNumber ? 'COPY' : undefined) : 'DRAFT – NOT VALID');
   // The date is the day the Head approved the analysis officer's work (printing the certificate approves it).
   const documentDate = formatDate(intake.certificateIssuedAt);
   const source = [intake.sourceType, intake.locationFrom, intake.dischargeTo ? `→ ${intake.dischargeTo}` : '']
@@ -136,13 +223,13 @@ export const WaterCertificatePreview: React.FC<WaterCertificatePreviewProps> = (
     <div className={printMode ? 'w-full' : 'print-area w-full'} aria-label="Certificate of Analysis of Water">
       {!issued && !printMode && (
         <div className="mb-3 rounded border border-dashed border-amber-400 bg-amber-50 px-3 py-1.5 text-center text-[11px] font-semibold uppercase tracking-wider text-amber-700 print:hidden">
-          Draft preview — not yet approved by the Head
+          Draft preview — not valid until the Head approves and signs it
         </div>
       )}
       <div ref={frame} className="certificate-frame w-full" style={{ height: totalHeight * scale }}>
         <div className="certificate-scale" style={{ width: PAGE_WIDTH, transform: `scale(${scale})`, transformOrigin: 'top left' }}>
           {/* ------------------------------ Page 1 ------------------------------ */}
-          <Sheet>
+          <Sheet watermark={mark}>
             <div className="flex justify-center">
               <img src={coatOfArms} alt="Coat of arms of Kenya" className="h-[26mm] w-auto object-contain" />
             </div>
@@ -200,11 +287,11 @@ export const WaterCertificatePreview: React.FC<WaterCertificatePreviewProps> = (
             <ResultsTable title="PHYSICAL TESTS" rows={physicalRows} entries={entries} />
             <ResultsTable title="CHEMICAL TESTS" rows={chemicalPage1} entries={entries} />
             <p className="mt-3 text-[11px] font-bold">P.T.O</p>
-            <PageFooter labNo={intake.exhibitId} page={1} />
+            <PageFooter labNo={intake.exhibitId} page={1} issue={issue} qr={qr} copyNumber={copyNumber} />
           </Sheet>
 
           {/* ------------------------------ Page 2 ------------------------------ */}
-          <Sheet last>
+          <Sheet last watermark={mark}>
             <ResultsTable rows={chemicalPage2} entries={entries} />
 
             <div className="mt-6 space-y-0.5 text-[12px]">
@@ -238,7 +325,7 @@ export const WaterCertificatePreview: React.FC<WaterCertificatePreviewProps> = (
               </div>
             </div>
             <p className="mt-3 text-center text-[12px] font-bold">‘END’</p>
-            <PageFooter labNo={intake.exhibitId} page={2} />
+            <PageFooter labNo={intake.exhibitId} page={2} issue={issue} qr={qr} copyNumber={copyNumber} />
           </Sheet>
         </div>
       </div>
