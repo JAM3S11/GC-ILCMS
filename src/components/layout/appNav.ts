@@ -123,3 +123,30 @@ export const canSeeNavItem = (user: Pick<User, 'role' | 'department'>, item: Nav
   const inDepartment = !!user.department && !!item.departments?.includes(user.department);
   return inDepartment || !!item.roles?.includes(user.role);
 };
+
+// Pages reached from inside another page rather than the sidebar.
+const DETAIL_VIEWS: Record<string, { section: string; label: string }> = {
+  'exhibit-case-file': { section: 'Exhibit Laboratory', label: 'Exhibit case file' },
+  'food-drug-case-file': { section: 'Exhibit Laboratory', label: 'Sample case file' },
+  'water-intake-edit': { section: 'Exhibit Intake', label: 'Edit submission' },
+  'register-visitor': { section: 'Reception & Client Handover', label: 'Register visitor' },
+  'lab-bay': { section: 'Operations', label: 'Laboratory bay' },
+  reception: { section: 'Operations', label: 'Reception & Client Handover' },
+  references: { section: 'Operations', label: 'Reference database' },
+  executive: { section: 'Operations', label: 'Executive overview' },
+  audit: { section: 'Operations', label: 'Audit trail' },
+  settings: { section: 'Account', label: 'Settings' },
+};
+
+/** Breadcrumb trail ([section, page]) for the top bar. */
+export const viewBreadcrumb = (user: Pick<User, 'role' | 'department'>, view: string): [string, string] => {
+  const groups = user.role === 'SUPER_ADMIN' ? SUPER_ADMIN_NAV_GROUPS : APP_NAV_GROUPS;
+  for (const group of groups) {
+    const item = group.items.find((entry) => entry.id === view && canSeeNavItem(user, entry));
+    if (item) return [group.title, item.label];
+  }
+  const detail = DETAIL_VIEWS[view];
+  if (detail) return [detail.section, detail.label];
+  const words = view.replace(/[-:]/g, ' ');
+  return ['Workspace', words.charAt(0).toUpperCase() + words.slice(1)];
+};

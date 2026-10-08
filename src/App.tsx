@@ -40,7 +40,7 @@ import { formatKes } from './waterIntake';
 import { LaboratoryWorkspace } from './components/laboratory/LaboratoryWorkspace';
 import { WaterLaboratoryView } from './components/laboratory/WaterLaboratoryView';
 import { ExhibitCaseFile } from './components/laboratory/ExhibitCaseFile';
-import { ExhibitCaseFileIndex } from './components/laboratory/ExhibitCaseFileIndex';
+import { ExhibitCaseFileIndex, Laboratory as CaseFileLaboratory } from './components/laboratory/ExhibitCaseFileIndex';
 import { WaterEditAccess, WaterIntakeEdit, WaterSenderEdit, canEditWaterIntake, waterEditAccess } from './lib/waterIntakeAccess';
 import { FoodDrugIntakeEdit } from './components/laboratory/FoodDrugIntakeEditModal';
 import { FoodDrugLaboratoryView } from './components/laboratory/FoodDrugLaboratoryView';
@@ -56,8 +56,12 @@ import { AuditTrailView } from './components/audit/AuditTrailView';
 import { SettingsView, readUserSettings } from './components/settings/SettingsView';
 import { useTheme } from './theme/ThemeProvider';
 import { ApiError, apiRequest } from './lib/api';
+import { useViewRoute, viewFromLocation } from './lib/useViewRoute';
 import { SuperAdminPage } from './components/admin/SuperAdminPage';
 import { SuperAdminDashboard } from './components/dashboard/SuperAdminDashboard';
+
+// Demo aids (prototype toolbar, guided tour) appear only in demo builds.
+const DEMO_MODE = import.meta.env.VITE_DEMO_MODE === 'true';
 
 const LABORATORY_WORKSPACE_ROLES: UserRole[] = ['ANALYST', 'SENIOR_CHEMIST', 'HEAD_OF_DEPARTMENT'];
 const RECEPTIONIST_VIEWS = new Set(['dashboard', 'register-visitor', 'lab-bay', 'check-out', 'notifications', 'audit', 'settings', 'water-intake-edit']);
@@ -97,10 +101,15 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [checkingSession, setCheckingSession] = useState(true);
   const [activeView, setActiveView] = useState<string>('landing');
+  // A deep link (/app/<view>) opened before sign-in; honoured once a user is known.
+  const pendingRouteView = useRef<string | null>(viewFromLocation());
   const [activeCase, setActiveCase] = useState<ForensicCase>(DEMO_CASE);
   const [waterIntakes, setWaterIntakes] = useState<WaterIntake[]>([]);
   // The Food & Drugs sample whose case file is open, when activeView is 'food-drug-case-file'.
   const [activeFoodDrugIntakeId, setActiveFoodDrugIntakeId] = useState<string | null>(null);
+  // Super Admin case files page: which laboratory's list is shown, and the open Food & Drugs case file.
+  const [caseFileLaboratory, setCaseFileLaboratory] = useState<CaseFileLaboratory>('water');
+  const [caseFileFoodDrugId, setCaseFileFoodDrugId] = useState<string | null>(null);
   // The exhibit whose case file is open, when activeView is 'exhibit-case-file'.
   const [activeWaterIntakeId, setActiveWaterIntakeId] = useState<string | null>(null);
   const [waterIntakesLoading, setWaterIntakesLoading] = useState(false);
@@ -624,10 +633,28 @@ export default function App() {
     if (view === 'water-intake' || view === 'food-drug-intake') setSelectedIntakeVisitId(null);
 
     // Opening Case File from the sidebar starts at the list, not the last exhibit.
-    if (view === 'case-file' && isSuperAdmin) setActiveWaterIntakeId(null);
+    if (view === 'case-file' && isSuperAdmin) {
+      setActiveWaterIntakeId(null);
+      setCaseFileFoodDrugId(null);
+    }
 
     setActiveView(view);
   };
+
+  // Keep a ref to the latest guarded navigation so browser history moves use
+  // the current user's rules without re-binding the popstate listener.
+  const navigateRef = useRef(handleNavigateView);
+  navigateRef.current = handleNavigateView;
+  const navigateFromHistory = useCallback((view: string) => navigateRef.current(view), []);
+  useViewRoute(activeView, navigateFromHistory);
+
+  useEffect(() => {
+    const view = pendingRouteView.current;
+    if (!currentUser || !view) return;
+    pendingRouteView.current = null;
+    if (view !== activeView) handleNavigateView(view);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id]);
 
   const markNotificationRead = async (id: string, read: boolean) => {
     const notification = visibleNotifications.find((item) => item.id === id);
@@ -770,6 +797,9 @@ export default function App() {
         if (notification.relatedRecordType === 'WATER_INTAKE' && notification.relatedRecordId) {
           setActiveWaterIntakeId(notification.relatedRecordId);
           setActiveView('exhibit-case-file');
+        } else if (notification.relatedRecordType === 'FOOD_DRUG_INTAKE' && notification.relatedRecordId) {
+          setActiveFoodDrugIntakeId(notification.relatedRecordId);
+          setActiveView('food-drug-case-file');
         } else {
           setActiveView('laboratory');
         }
@@ -1412,12 +1442,18 @@ export default function App() {
            As a fixed, full-height app frame: toolbar + header stay pinned,
            only the main content region scrolls. */
         <div className="h-[100dvh] flex flex-col overflow-hidden">
-          {/* Persistent Prototype Demonstration Toolbar */}
-          <PrototypeToolbar onOpenTour={() => setTourOpen(true)} />
+          <a
+            href="#main-content"
+            className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[100] focus:rounded-md focus:bg-white focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-slate-900 focus:shadow-lg focus:ring-2 focus:ring-amber-500"
+          >
+            Skip to main content
+          </a>
+          {DEMO_MODE && <PrototypeToolbar onOpenTour={() => setTourOpen(true)} />}
 
           {/* Main Authenticated Header */}
           <Header
             currentUser={currentUser}
+            activeView={activeView}
             onSignOut={handleSignOut}
             onNavigate={handleNavigateView}
             unreadNotificationsCount={unreadCount}
@@ -1786,7 +1822,22 @@ export default function App() {
               />
             )}
             {activeView === 'case-file' && currentUser.role === 'SUPER_ADMIN' && (
-              activeWaterIntake ? (
+              caseFileFoodDrugId ? (() => {
+                const intake = foodDrugIntakes.find((item) => item.id === caseFileFoodDrugId);
+                return intake ? (
+                  <FoodDrugCaseFile
+                    key={intake.id}
+                    intake={intake}
+                    currentUser={currentUser}
+                    onBack={() => setCaseFileFoodDrugId(null)}
+                    onChanged={() => void loadFoodDrugIntakes()}
+                  />
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900">
+                    {foodDrugIntakesLoading ? 'Loading the sample…' : 'Sample not found.'}
+                  </div>
+                );
+              })() : activeWaterIntake ? (
                 <ExhibitCaseFile
                   intake={activeWaterIntake}
                   currentUser={currentUser}
@@ -1801,6 +1852,11 @@ export default function App() {
                   isLoading={waterIntakesLoading}
                   error={waterIntakesError}
                   onOpenCaseFile={(intake) => setActiveWaterIntakeId(intake.id)}
+                  foodDrugIntakes={foodDrugIntakes}
+                  foodDrugLoading={foodDrugIntakesLoading}
+                  onOpenFoodDrugCaseFile={(intake) => setCaseFileFoodDrugId(intake.id)}
+                  laboratory={caseFileLaboratory}
+                  onLaboratoryChange={setCaseFileLaboratory}
                 />
               )
             )}
@@ -1908,7 +1964,7 @@ export default function App() {
 
       {/* Interactive Prototype Guided Tour Modal */}
       <PrototypeTourModal
-        isOpen={tourOpen}
+        isOpen={DEMO_MODE && tourOpen}
         onClose={() => setTourOpen(false)}
         onNavigate={handleNavigateView}
       />

@@ -148,13 +148,6 @@ export const AppShell: React.FC<AppShellProps> = ({
     .join('')
     .toUpperCase();
 
-  const instruments = [
-    { name: 'Agilent 7890B / 5977B GC-MS', status: 'RUNNING', color: 'text-emerald-600 bg-emerald-500/15 border-emerald-500/30 dark:text-emerald-300', live: true },
-    { name: 'Shimadzu Prominence HPLC', status: 'FLUSH', color: 'text-amber-600 bg-amber-500/15 border-amber-500/30 dark:text-amber-300' },
-    { name: 'PerkinElmer Spectrum Two FTIR', status: 'STANDBY', color: 'text-slate-600 bg-slate-100 border-slate-300 dark:text-slate-300 dark:bg-slate-800 dark:border-slate-700' },
-    { name: 'Cary 60 UV-Vis', status: 'CAL.', color: 'text-sky-600 bg-sky-500/15 border-sky-500/30 dark:text-sky-300' },
-  ];
-
   // Shared sidebar renderer: used for the fixed desktop rail (lg+) and the
   // slide-in mobile drawer (below lg). On mobile the rail is always expanded
   // and the collapse toggle is replaced by a close button.
@@ -294,7 +287,6 @@ export const AppShell: React.FC<AppShellProps> = ({
             <div className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-slate-400">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
               All systems operational
-              <span className="ml-auto tabular-nums">v3.4.2</span>
             </div>
           )}
 
@@ -326,7 +318,7 @@ export const AppShell: React.FC<AppShellProps> = ({
   };
 
   return (
-    <div className="relative flex flex-1 min-h-0 items-stretch w-full max-w-[1700px] mx-auto animate-fade-in">
+    <div className="relative flex flex-1 min-h-0 items-stretch w-full animate-fade-in">
       {/* ======================= LEFT SIDEBAR (desktop rail) ======================= */}
       <aside
         className={`hidden lg:flex flex-col shrink-0 min-h-0 overflow-hidden bg-slate-50 border-r border-slate-200 dark:bg-slate-950/60 dark:border-slate-800 transition-[width] duration-300 ${
@@ -361,221 +353,8 @@ export const AppShell: React.FC<AppShellProps> = ({
       </div>
 
       {/* ======================= MAIN CONTENT ======================= */}
-      <main className="flex-1 min-w-0 min-h-0 overflow-y-auto p-3 md:p-5">{children}</main>
+      <main id="main-content" tabIndex={-1} className="flex-1 min-w-0 min-h-0 overflow-y-auto bg-slate-50/60 focus:outline-none dark:bg-slate-950"><div className="mx-auto w-full max-w-screen-2xl px-4 py-4 md:px-6 md:py-6">{children}</div></main>
 
-      {/* Command Center temporarily disabled — remove these comment markers to re-enable.
-      <button
-        onClick={() => setRightSidebarCollapsed(false)}
-        aria-label="Show command center"
-        title="Show command center"
-        className={`absolute right-4 top-3 z-40 hidden xl:flex items-center justify-center h-9 w-9 rounded-lg transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] cursor-pointer ${
-          rightSidebarCollapsed
-            ? 'opacity-100 scale-100 text-slate-500 hover:text-amber-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-amber-300 dark:hover:bg-slate-800'
-            : 'opacity-0 scale-50 pointer-events-none'
-        }`}
-      >
-        <PanelRightOpen className="w-4 h-4" />
-      </button>
-
-      <aside
-        className={`absolute right-4 top-3 bottom-3 z-30 hidden xl:flex flex-col rounded-2xl transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] will-change-transform ${
-          rightSidebarCollapsed
-            ? 'w-[300px] 2xl:w-[320px] translate-x-[calc(100%+2rem)] opacity-0 pointer-events-none'
-            : 'w-[300px] 2xl:w-[320px] shadow-2xl shadow-slate-900/10 origin-top-right animate-scale-in'
-        }`}
-      >
-        <button
-          onClick={() => setRightSidebarCollapsed(true)}
-          aria-label="Hide command center"
-          title="Hide command center"
-          className={`absolute -left-9 top-3 z-20 flex items-center justify-center h-9 w-9 rounded-r-none rounded-tl-lg rounded-bl-lg transition-all duration-300 cursor-pointer ${
-            rightSidebarCollapsed
-              ? 'opacity-0 pointer-events-none'
-              : 'text-slate-600 dark:text-slate-300 hover:text-amber-600 dark:hover:text-amber-300 hover:border-amber-500/40'
-          }`}
-        >
-          <PanelRightClose className="w-4 h-4" />
-        </button>
-        <div className="flex flex-col flex-1 min-h-0 p-4 bg-slate-50 dark:bg-slate-900/95 rounded-md">
-            <div className="shrink-0 flex items-center gap-2">
-              <h2 className="text-[13px] font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Activity className="w-4 h-4 text-amber-500 dark:text-amber-400" />
-                Command Center
-              </h2>
-              <span className="flex items-center gap-1.5 text-[9px] font-mono text-emerald-600 dark:text-emerald-400">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                LIVE
-              </span>
-            </div>
-
-            <div className="flex flex-col flex-1 min-h-0 overflow-y-auto space-y-4 mt-4 pr-1">
-
-        {!officerVerified && waitingVisitor && currentUser.role !== 'RECEPTIONIST' && (
-          <div className="p-3 rounded-xl bg-gradient-to-r from-amber-500/15 to-white border border-amber-500/40 space-y-2.5 dark:to-slate-950">
-            <div className="flex items-center gap-2">
-              <div className="p-1.5 rounded-lg bg-amber-500 text-slate-950 shrink-0">
-                <AlertTriangle className="w-3.5 h-3.5" />
-              </div>
-              <div>
-                <div className="text-[11px] font-bold text-slate-900 dark:text-white">Evidence Admission Pending</div>
-                <div className="text-[9px] font-mono text-amber-600 dark:text-amber-300">SECTION 8 PROTOCOL</div>
-              </div>
-            </div>
-            <p className="text-[10px] text-slate-600 dark:text-slate-300 leading-relaxed">
-              Officer <strong className="text-amber-600 dark:text-amber-400">{waitingVisitor.officerName}</strong> ({waitingVisitor.badgeNumber}) is at the Receiving Bay.
-            </p>
-            <button
-              onClick={onOpenVerifyOfficer}
-              className="w-full py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[11px] flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
-            >
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>Verify Officer</span>
-            </button>
-          </div>
-        )}
-
-        {currentUser.role !== 'RECEPTIONIST' && (
-        <div className="space-y-2.5">
-          <div className="flex items-center justify-between">
-            <h3 className="text-[10px] font-mono uppercase tracking-wider text-slate-500 dark:text-slate-400">Notifications</h3>
-            <button
-              onClick={onOpenNotifications}
-              className="text-[10px] font-mono text-amber-600 dark:text-amber-400 hover:underline"
-            >
-              View all {unreadNotificationsCount > 0 && `(${unreadNotificationsCount} new)`}
-            </button>
-          </div>
-          <div className="space-y-2">
-            {notifications.slice(0, 4).map((n) => (
-              <div
-                key={n.id}
-                className={`p-2.5 rounded-lg bg-white border space-y-1 dark:bg-slate-950 ${
-                  n.read ? 'border-slate-200 dark:border-slate-800/70' : 'border-amber-500/25'
-                }`}
-              >
-                <div className="flex items-center gap-1.5">
-                  <span className={`w-1.5 h-1.5 rounded-full ${notifDot[n.type]} shrink-0`} />
-                  <span className="text-[10px] font-semibold text-slate-900 dark:text-white truncate">{n.title}</span>
-                  <span className="ml-auto shrink-0 text-[9px] font-mono text-slate-500">{n.timestamp}</span>
-                </div>
-                <p className="text-[10px] text-slate-600 dark:text-slate-400 leading-snug line-clamp-2">{n.message}</p>
-                <span className={`inline-block px-1.5 py-0.5 rounded text-[9px] font-mono uppercase border ${notifBadge[n.type]}`}>
-                  {n.type}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-        )}
-
-        <div className="space-y-2.5">
-          <div className="flex items-center justify-between">
-            <h3 className="text-[10px] font-mono uppercase tracking-wider text-slate-500 dark:text-slate-400">Chain of Custody</h3>
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-          </div>
-          <div className="space-y-2">
-            {activeCase.custodyHistory.slice(0, 3).map((c, idx) => (
-              <div key={idx} className="relative pl-4 border-l-2 border-slate-200 dark:border-slate-800 pb-1 last:border-transparent">
-                <span
-                  className={`absolute -left-[5px] top-1 w-2 h-2 rounded-full ${
-                    idx === 0 ? 'bg-amber-400' : idx === 1 ? 'bg-sky-400' : 'bg-slate-400 dark:bg-slate-600'
-                  }`}
-                />
-                <div className="flex items-center justify-between text-[10px] font-mono text-slate-500 dark:text-slate-400">
-                  <span className="text-amber-600 dark:text-amber-400 font-bold">{c.action}</span>
-                  <span>{c.timestamp.slice(-8)}</span>
-                </div>
-                <div className="mt-0.5 text-[11px] text-slate-900 dark:text-white font-medium truncate">{c.officerOrStaffName}</div>
-                <div className="text-[10px] text-slate-500 dark:text-slate-400 line-clamp-2">{c.remarks}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="space-y-2.5">
-          <h3 className="text-[10px] font-mono uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-            <Zap className="w-3 h-3 text-purple-500 dark:text-purple-400" /> Instrument Telemetry
-          </h3>
-          <div className="space-y-2">
-            {instruments.map((inst) => (
-              <div
-                key={inst.name}
-                className="p-2 rounded-lg bg-white border border-slate-200 flex items-center justify-between gap-2 dark:bg-slate-950 dark:border-slate-800"
-              >
-                <span className="text-[10px] text-slate-700 dark:text-slate-200 font-medium truncate">{inst.name}</span>
-                <span className={`shrink-0 px-1.5 py-0.5 rounded text-[9px] font-mono font-bold border ${inst.color}`}>
-                  {inst.status}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="p-3 rounded-xl bg-white border border-slate-200 space-y-2 dark:bg-slate-950 dark:border-slate-800">
-          <h3 className="text-[10px] font-mono uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-            <Gauge className="w-3 h-3 text-teal-500 dark:text-teal-400" /> Vault Environment
-          </h3>
-          <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
-            <div className="p-2 rounded-lg bg-slate-100 border border-slate-200 dark:bg-slate-900 dark:border-slate-800">
-              <span className="text-slate-500 dark:text-slate-400 block text-[9px]">Temp</span>
-              <span className="text-emerald-600 dark:text-emerald-400 font-bold">19.4 °C</span>
-            </div>
-            <div className="p-2 rounded-lg bg-slate-100 border border-slate-200 dark:bg-slate-900 dark:border-slate-800">
-              <span className="text-slate-500 dark:text-slate-400 block text-[9px]">Humidity</span>
-              <span className="text-emerald-600 dark:text-emerald-400 font-bold">42.1 %</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-2.5">
-          <h3 className="text-[10px] font-mono uppercase tracking-wider text-slate-500 dark:text-slate-400">Live Activity</h3>
-          <div className="space-y-2">
-            {auditLogs.slice(0, 4).map((log) => (
-              <div key={log.id} className="flex items-start gap-2 text-[10px]">
-                <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />
-                <div className="min-w-0">
-                  <div className="text-slate-700 dark:text-slate-300 font-medium truncate">{log.action.replace(/_/g, ' ')}</div>
-                  <div className="text-slate-500 font-mono truncate">{log.user} · {log.timestamp.slice(11, 16)}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="pt-1 space-y-2">
-          <h3 className="text-[10px] font-mono uppercase tracking-wider text-slate-500 dark:text-slate-400">Quick Actions</h3>
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              onClick={() => onOpenCaseFile(activeCase.id)}
-              className="px-2 py-2 rounded-lg bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-[10px] font-medium flex items-center gap-1.5 justify-center transition-colors cursor-pointer dark:bg-slate-950 dark:hover:bg-slate-800 dark:border-slate-800 dark:text-slate-200"
-            >
-              <FileText className="w-3 h-3 text-amber-500 dark:text-amber-400" /> Case File
-            </button>
-            <button
-              onClick={onOpenIntakeModal}
-              className="px-2 py-2 rounded-lg bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-[10px] font-medium flex items-center gap-1.5 justify-center transition-colors cursor-pointer dark:bg-slate-950 dark:hover:bg-slate-800 dark:border-slate-800 dark:text-slate-200"
-            >
-              <Package className="w-3 h-3 text-sky-500 dark:text-sky-400" />{' '}
-              {currentUser.department === 'Food & Drugs' ? 'Register Sample' : 'Exhibit Intake'}
-            </button>
-            <button
-              onClick={() => onNavigate('reception')}
-              className="px-2 py-2 rounded-lg bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-[10px] font-medium flex items-center gap-1.5 justify-center transition-colors cursor-pointer dark:bg-slate-950 dark:hover:bg-slate-800 dark:border-slate-800 dark:text-slate-200"
-            >
-              <Building2 className="w-3 h-3 text-emerald-500 dark:text-emerald-400" /> Reception
-            </button>
-            <button
-              onClick={() => onNavigate('audit')}
-              className="px-2 py-2 rounded-lg bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-[10px] font-medium flex items-center gap-1.5 justify-center transition-colors cursor-pointer dark:bg-slate-950 dark:hover:bg-slate-800 dark:border-slate-800 dark:text-slate-200"
-            >
-              <Shield className="w-3 h-3 text-violet-500 dark:text-violet-400" /> Audit
-            </button>
-          </div>
-          </div>
-          </div>
-          </div>
-      </aside>
-      */}
     </div>
   );
 };

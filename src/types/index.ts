@@ -472,6 +472,12 @@ export interface AppNotification {
   resolvedBy?: string | null;
 }
 
+/** One line of the description of samples, e.g. F/MISC/49/2026 – KFC soy sauce. */
+export interface SubSample {
+  subSampleNo: string;
+  description: string;
+}
+
 /** Food & Drugs analytical sample receipt form, filled from the sample's case file. */
 export interface FoodDrugReceiptForm {
   intakeId: string;
@@ -490,6 +496,14 @@ export interface FoodDrugReceiptForm {
   analystReceivingId?: string | null;
   analystReceiving?: string | null;
   analystReceivedDate: string;
+  labSampleNo?: string | null; // e.g. F/MISC/47-49/2026
+  sendersRefNo?: string | null;
+  submitterIdType?: 'ID' | 'POWER_OF_ENTRY';
+  subSamples?: SubSample[];
+  submitterSignature?: string | null; // PNG/JPEG data URL
+  receiverSignature?: string | null;
+  stampImage?: string | null;
+  receivedDate?: string | null;
   updatedBy?: string;
   updatedAt?: string;
 }
@@ -500,6 +514,13 @@ export interface FoodDrugWorksheet {
   analysisStartedOn: string;
   testMethods: string;
   results?: string | null;
+  labSampleNo?: string | null;
+  subSamples?: SubSample[];
+  analysisRequired?: string | null;
+  analystSignature?: string | null;
+  checkerSignature?: string | null;
+  /** Charts and images (e.g. GC-MS chromatograms) printed after the results. */
+  attachments?: { id: string; caption: string; image: string }[];
   analysedBy?: string | null;
   analysedDate?: string | null;
   checkedBy?: string | null;
@@ -538,4 +559,33 @@ export interface AuditEvent {
   previousValue?: string;
   newValue?: string;
   details: string;
+}
+
+/** Certificate of Analysis – Draft Report, one per sub sample (GCD/GL/01/LWG/FOODS/F12). */
+export interface FoodDrugDraftReportFields {
+  labSampleNo: string;
+  sendersRef: string;
+  senderContacts: string;
+  dateReceived: string;
+  analysisStartedOn: string;
+  sampleDescription: string;
+  analysisRequired: string;
+  testMethods: string;
+  analyticalReport: string;
+  remarks: string;
+  copyType: 'ORIGINAL' | 'DUPLICATE';
+}
+
+export interface FoodDrugDraftReport extends FoodDrugDraftReportFields {
+  id: string;
+  intakeId: string;
+  status: 'DRAFT' | 'SUBMITTED' | 'APPROVED';
+  analystSignature?: string | null;
+  analysedBy?: string | null;
+  analysedDate?: string | null;
+  checkerSignature?: string | null;
+  checkedBy?: string | null;
+  checkedDate?: string | null;
+  updatedBy?: string;
+  updatedAt?: string;
 }

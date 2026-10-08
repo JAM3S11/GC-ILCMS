@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { FolderOpen, Inbox } from 'lucide-react';
-import { WaterIntake, WaterIntakeStatus } from '../../types';
+import { FoodDrugIntake, FoodDrugIntakeStatus, WaterIntake, WaterIntakeStatus } from '../../types';
 import {
   Button,
   DashboardHeader,
@@ -25,7 +25,23 @@ interface ExhibitCaseFileIndexProps {
   isLoading?: boolean;
   error?: string;
   onOpenCaseFile: (intake: WaterIntake) => void;
+  /** Food & Drugs samples; when given, the page offers a laboratory switch. */
+  foodDrugIntakes?: FoodDrugIntake[];
+  foodDrugLoading?: boolean;
+  onOpenFoodDrugCaseFile?: (intake: FoodDrugIntake) => void;
+  laboratory?: Laboratory;
+  onLaboratoryChange?: (laboratory: Laboratory) => void;
 }
+
+export type Laboratory = 'water' | 'food';
+
+const FOOD_STATUS_TONE: Record<FoodDrugIntakeStatus, Tone> = {
+  'Awaiting Approval': 'rose',
+  'Awaiting Assignment': 'amber',
+  'Under Analysis': 'sky',
+  Reported: 'emerald',
+};
+const FOOD_STATUSES: FoodDrugIntakeStatus[] = ['Awaiting Approval', 'Awaiting Assignment', 'Under Analysis', 'Reported'];
 
 type StatusFilter = 'all' | WaterIntakeStatus;
 
@@ -43,9 +59,32 @@ export const ExhibitCaseFileIndex: React.FC<ExhibitCaseFileIndexProps> = ({
   isLoading = false,
   error = '',
   onOpenCaseFile,
+  foodDrugIntakes,
+  foodDrugLoading = false,
+  onOpenFoodDrugCaseFile,
+  laboratory = 'water',
+  onLaboratoryChange,
 }) => {
   const [filter, setFilter] = useState<StatusFilter>('all');
+  const [foodFilter, setFoodFilter] = useState<'all' | FoodDrugIntakeStatus>('all');
   const [query, setQuery] = useState('');
+  const isFood = laboratory === 'food' && !!foodDrugIntakes;
+
+  const foodRows = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return (foodDrugIntakes ?? [])
+      .filter((i) => foodFilter === 'all' || i.status === foodFilter)
+      .filter(
+        (i) =>
+          !q ||
+          i.id.toLowerCase().includes(q) ||
+          i.exhibitId.toLowerCase().includes(q) ||
+          i.clientName.toLowerCase().includes(q) ||
+          (i.analystAssigned ?? '').toLowerCase().includes(q) ||
+          i.sampleType.toLowerCase().includes(q),
+      )
+      .sort((a, b) => b.intakeDate.localeCompare(a.intakeDate));
+  }, [foodDrugIntakes, foodFilter, query]);
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -63,6 +102,107 @@ export const ExhibitCaseFileIndex: React.FC<ExhibitCaseFileIndexProps> = ({
       .sort((a, b) => b.dateReceived.localeCompare(a.dateReceived));
   }, [intakes, filter, query]);
 
+  const labSwitch = foodDrugIntakes && onLaboratoryChange && (
+    <SegmentedControl
+      ariaLabel="Laboratory"
+      value={laboratory}
+      onChange={onLaboratoryChange}
+      options={[
+        { value: 'water', label: 'Water & Environment', count: intakes.length },
+        { value: 'food', label: 'Food & Drugs', count: foodDrugIntakes.length },
+      ]}
+    />
+  );
+
+  if (isFood) {
+    const all = foodDrugIntakes ?? [];
+    return (
+      <DashboardPage>
+        <DashboardHeader
+          breadcrumb={['Operations', 'Case File']}
+          title="Case files"
+          description="Open any Food & Drugs sample to see its case file: work allocation, receipt form, laboratory worksheet and draft reports."
+          meta={<StatusPill tone="slate">{all.length} samples</StatusPill>}
+          actions={labSwitch}
+        />
+        <Panel
+          icon={FolderOpen}
+          tone="sky"
+          title="Food & Drugs case files"
+          description={`${foodRows.length} of ${all.length} entries`}
+          flush
+          actions={<SearchInput value={query} onChange={setQuery} placeholder="Search sample, client, analyst…" />}
+        >
+          <div className="border-b border-slate-200 px-4 py-2.5 dark:border-slate-800">
+            <SegmentedControl
+              ariaLabel="Filter Food & Drugs case files by status"
+              value={foodFilter}
+              onChange={setFoodFilter}
+              options={[
+                { value: 'all', label: 'All', count: all.length },
+                ...FOOD_STATUSES.map((status) => ({ value: status, label: status, count: all.filter((i) => i.status === status).length })),
+              ]}
+            />
+          </div>
+          {foodDrugLoading && !all.length ? (
+            <div className="p-8 text-center text-sm text-slate-500">Loading case files…</div>
+          ) : foodRows.length === 0 ? (
+            <EmptyState
+              icon={Inbox}
+              title="No case files to show"
+              description={query.trim() ? `Nothing matches “${query.trim()}”.` : 'No Food & Drugs samples have been registered yet.'}
+            />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className={`${tc.table} min-w-[860px]`}>
+                <thead className={tc.thead}>
+                  <tr>
+                    <th scope="col" className={tc.th}>Sample no.</th>
+                    <th scope="col" className={tc.th}>Received</th>
+                    <th scope="col" className={tc.th}>Client</th>
+                    <th scope="col" className={tc.th}>Sample type</th>
+                    <th scope="col" className={tc.th}>Analyst</th>
+                    <th scope="col" className={tc.th}>Progress</th>
+                    <th scope="col" className={tc.th}>Status</th>
+                    <th scope="col" className={`${tc.th} text-right`}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody className={tc.tbody}>
+                  {foodRows.map((intake) => (
+                    <tr key={intake.id} className={tc.tr}>
+                      <td className={tc.td}>
+                        <div className="font-mono text-[13px] font-semibold text-slate-900 dark:text-white">{intake.id}</div>
+                        <div className="font-mono text-[11px] text-slate-400">{intake.exhibitId}</div>
+                      </td>
+                      <td className={`${tc.td} whitespace-nowrap`}>{intake.intakeDate}</td>
+                      <td className={tc.td}>
+                        <div className="max-w-[200px] truncate font-medium text-slate-900 dark:text-white" title={intake.clientName}>{intake.clientName}</div>
+                      </td>
+                      <td className={tc.td}>{intake.sampleType}</td>
+                      <td className={tc.td}>{intake.analystAssigned ?? <span className="text-slate-400">Not assigned</span>}</td>
+                      <td className={tc.td}>
+                        <div className="text-xs">{intake.receiptFormSaved ? 'Receipt form saved' : <span className="text-slate-400">No receipt form</span>}</div>
+                        <div className="text-[11px] text-slate-400">Worksheet: {intake.worksheetStatus ?? 'not started'}</div>
+                      </td>
+                      <td className={tc.td}>
+                        <StatusPill tone={FOOD_STATUS_TONE[intake.status]}>{intake.status}</StatusPill>
+                      </td>
+                      <td className={`${tc.td} text-right`}>
+                        <Button size="xs" icon={FolderOpen} onClick={() => onOpenFoodDrugCaseFile?.(intake)}>
+                          Case file
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Panel>
+      </DashboardPage>
+    );
+  }
+
   return (
     <DashboardPage>
       <DashboardHeader
@@ -70,6 +210,7 @@ export const ExhibitCaseFileIndex: React.FC<ExhibitCaseFileIndexProps> = ({
         title="Case files"
         description="Open any Water & Environment exhibit to see its full case file, process and findings."
         meta={<StatusPill tone="slate">{intakes.length} exhibits</StatusPill>}
+        actions={labSwitch}
       />
 
       {error && (

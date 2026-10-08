@@ -4,6 +4,7 @@ import {
   Building2,
   Check,
   ClipboardList,
+  FolderOpen,
   FlaskConical,
   LogIn,
   LogOut,
@@ -20,6 +21,7 @@ import { OfficerVisitor } from '../../types';
 import { VISITOR_STATUS } from './visitorStatus';
 import { NationalIdReveal } from './NationalIdReveal';
 import { LabNotifyButton } from './LabNotifyButton';
+import { VisitorCaseProgressDialog } from './VisitorCaseProgressDialog';
 import {
   Avatar,
   Button,
@@ -58,6 +60,7 @@ export const VisitorDeskView: React.FC<VisitorDeskViewProps> = ({
 }) => {
   const [filterText, setFilterText] = useState('');
   const [registerFilter, setRegisterFilter] = useState<RegisterFilter>('all');
+  const [caseFileVisit, setCaseFileVisit] = useState<OfficerVisitor | null>(null);
   const [dateFilter, setDateFilter] = useState('');
   // Delete asks for a second press on the same row before it removes the record.
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -340,6 +343,17 @@ export const VisitorDeskView: React.FC<VisitorDeskViewProps> = ({
                         </td>
                         <td className={`${tc.td} text-right`}>
                           <div className="flex justify-end gap-1.5">
+                            {isDeparted ? (
+                              <Button
+                                size="xs"
+                                variant="ghost"
+                                icon={FolderOpen}
+                                onClick={() => setCaseFileVisit(vis)}
+                                title="See how bench work on this client's samples is progressing"
+                              >
+                                Case file
+                              </Button>
+                            ) : (
                             <Button
                               size="xs"
                               variant="ghost"
@@ -349,6 +363,7 @@ export const VisitorDeskView: React.FC<VisitorDeskViewProps> = ({
                             >
                               Lab Bay
                             </Button>
+                            )}
                             {onSendLabNotification && vis.status !== 'Departed' && (
                               <LabNotifyButton
                                 visit={vis}
@@ -390,6 +405,8 @@ export const VisitorDeskView: React.FC<VisitorDeskViewProps> = ({
             </div>
           )}
         </Panel>
+
+        {caseFileVisit && <VisitorCaseProgressDialog visit={caseFileVisit} onClose={() => setCaseFileVisit(null)} />}
 
         {/* Right rail */}
         <div className="space-y-5 xl:col-span-4">

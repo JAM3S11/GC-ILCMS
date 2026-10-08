@@ -56,7 +56,13 @@ app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   next();
 });
-app.use(express.json({ limit: '20kb' }));
+const jsonDefault = express.json({ limit: '20kb' });
+// The receipt form and worksheet carry signature, stamp and chart images, so only those routes accept up to 4 MB.
+const jsonReceiptForm = express.json({ limit: '4mb' });
+app.use((req, res, next) =>
+  (req.method !== 'GET' && (/^\/api\/food-drug\/intakes\/[^/]+\/(receipt-form|draft-reports|worksheet(\/submit|\/check|\/attachments)?)$/.test(req.path) ||
+    /^\/api\/food-drug\/draft-reports\/[^/]+(\/submit|\/approve)?$/.test(req.path))
+    ? jsonReceiptForm : jsonDefault)(req, res, next));
 app.use('/api', (req, res, next) => {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
   const origin = req.get('origin');
@@ -983,6 +989,75 @@ app.post('/api/reception/visits/:id/notify-lab', requireSession, asyncHandler(as
     return next(error);
   } finally {
     client.release();
+  }
+}));
+
+// Bench-work progress for a visitor's samples, for reception's case-file view.
+// Milestones only: results, findings and worksheets stay inside the laboratory.
+app.get('/api/reception/visits/:id/case-progress', requireSession, requireReceptionRead, asyncHandler(async (req, res, next) => {
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.id ?? '')) {
+    return res.status(400).json({ error: 'That is not a valid visit reference.' });
+  }
+  try {
+    const water = await pool.query(
+      `SELECT w.exhibit_number AS "reference", w.status, w.created_at AS "registeredAt",
+              w.assigned_at AS "assignedAt", analyst.full_name AS "analyst",
+              w.completed_at AS "completedAt",
+              (SELECT MIN(c.issued_at) FROM water_certificates c WHERE c.intake_id = w.id) AS "certifiedAt"
+       FROM water_exhibit_intakes w
+       LEFT JOIN users analyst ON analyst.id = w.analysis_officer_id
+       WHERE w.reception_visit_id = $1 AND w.deleted_at IS NULL
+       ORDER BY w.created_at`,
+      [req.params.id],
+    );
+    const food = await pool.query(
+      `SELECT f.id AS "reference", f.sample_type AS "sampleType", f.status, f.created_at AS "registeredAt",
+              f.approved_at AS "approvedAt", f.assigned_at AS "assignedAt", analyst.full_name AS "analyst",
+              r.created_at AS "receiptFormAt", ws.created_at AS "worksheetStartedAt",
+              ws.analysed_at AS "analysedAt", ws.checked_at AS "checkedAt", f.reported_at AS "reportedAt",
+              (SELECT MAX(d.checked_at) FROM food_drug_draft_reports d WHERE d.intake_id = f.id AND d.status = 'APPROVED') AS "draftApprovedAt"
+       FROM food_drug_intakes f
+       LEFT JOIN users analyst ON analyst.id = f.analyst_id
+       LEFT JOIN food_drug_receipt_forms r ON r.intake_id = f.id
+       LEFT JOIN food_drug_worksheets ws ON ws.intake_id = f.id
+       WHERE f.reception_visit_id = $1 AND f.deleted_at IS NULL
+       ORDER BY f.created_at`,
+      [req.params.id],
+    );
+    const samples = [
+      ...water.rows.map((w) => ({
+        laboratory: 'Water',
+        reference: w.reference,
+        status: w.status,
+        analyst: w.analyst ?? null,
+        steps: [
+          { label: 'Sample registered', at: w.registeredAt },
+          { label: 'Assigned to analyst', at: w.assignedAt },
+          { label: 'Bench analysis complete', at: w.completedAt },
+          { label: 'Certificate issued', at: w.certifiedAt },
+        ],
+      })),
+      ...food.rows.map((f) => ({
+        laboratory: 'Food & Drugs',
+        reference: f.reference,
+        status: f.status,
+        analyst: f.analyst ?? null,
+        steps: [
+          { label: 'Sample registered', at: f.registeredAt },
+          { label: 'Approved by Head of Department', at: f.approvedAt },
+          { label: 'Assigned to analyst', at: f.assignedAt },
+          { label: 'Sample receipt form filled', at: f.receiptFormAt },
+          { label: 'Bench analysis started', at: f.worksheetStartedAt },
+          { label: 'Analysis submitted', at: f.analysedAt },
+          { label: 'Worksheet checked by Head of Department', at: f.checkedAt },
+          { label: 'Draft report approved', at: f.draftApprovedAt },
+          { label: 'Reported', at: f.reportedAt },
+        ],
+      })),
+    ];
+    res.json({ samples });
+  } catch (error) {
+    next(error);
   }
 }));
 
@@ -2834,6 +2909,14 @@ const receiptFormProjection = `
   r.analyst_receiving_id AS "analystReceivingId",
   analyst.full_name AS "analystReceiving",
   TO_CHAR(r.analyst_received_date, 'YYYY-MM-DD') AS "analystReceivedDate",
+  r.lab_sample_no AS "labSampleNo",
+  r.senders_ref_no AS "sendersRefNo",
+  r.submitter_id_type AS "submitterIdType",
+  r.sub_samples AS "subSamples",
+  r.submitter_signature AS "submitterSignature",
+  r.receiver_signature AS "receiverSignature",
+  r.stamp_image AS "stampImage",
+  TO_CHAR(COALESCE(r.received_date, r.analyst_received_date), 'YYYY-MM-DD') AS "receivedDate",
   editor.full_name AS "updatedBy",
   TO_CHAR(r.updated_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD HH24:MI') AS "updatedAt"`;
 
@@ -2872,6 +2955,14 @@ const receiptFormPrefill = async (db, intakeId) => {
       analystReceivingId: row.analyst_id,
       analystReceiving: row.analyst_name,
       analystReceivedDate: row.today,
+      labSampleNo: row.id,
+      sendersRefNo: '',
+      submitterIdType: 'ID',
+      subSamples: [{ subSampleNo: row.id, description: row.notes || '' }],
+      submitterSignature: null,
+      receiverSignature: null,
+      stampImage: null,
+      receivedDate: row.today,
     },
   };
 };
@@ -2898,18 +2989,40 @@ app.get('/api/food-drug/intakes/:id/receipt-form', requireSession, requireFoodDr
 }));
 
 app.put('/api/food-drug/intakes/:id/receipt-form', requireSession, requireFoodDrugLab, asyncHandler(async (req, res, next) => {
-  const { senderPhysicalAddress, sampleDescription, examinationRequired, feeKes, invoiceNumber, receiptNumber } = req.body ?? {};
+  const {
+    senderPhysicalAddress, examinationRequired, feeKes, invoiceNumber, receiptNumber,
+    labSampleNo, sendersRefNo, submitterIdType, subSamples, submitterSignature, receiverSignature, stampImage, receivedDate,
+  } = req.body ?? {};
   const fee = Number(feeKes);
   const text = (value, min, max) => typeof value === 'string' && value.trim().length >= min && value.trim().length <= max;
+  const optionalText = (value, max) => value == null || value === '' || (typeof value === 'string' && value.trim().length <= max);
+  // A PNG/JPEG data URL of at most ~300 KB, or nothing.
+  const optionalImage = (value) => value == null || value === '' ||
+    (typeof value === 'string' && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(value) && value.length <= 400_000);
+  const samples = Array.isArray(subSamples)
+    ? subSamples.map((row) => ({
+        subSampleNo: typeof row?.subSampleNo === 'string' ? row.subSampleNo.trim() : '',
+        description: typeof row?.description === 'string' ? row.description.trim() : '',
+      }))
+    : [];
+  const sampleDescription = samples
+    .map((row, index) => `(${index + 1}) ${row.subSampleNo ? `${row.subSampleNo} – ` : ''}${row.description}`)
+    .join('\n');
   if (
+    !samples.length || samples.length > 50 ||
+    samples.some((row) => row.description.length < 2 || row.description.length > 300 || row.subSampleNo.length > 60) ||
+    !optionalText(labSampleNo, 60) || !optionalText(sendersRefNo, 100) ||
+    !['ID', 'POWER_OF_ENTRY'].includes(submitterIdType ?? 'ID') ||
+    !optionalImage(submitterSignature) || !optionalImage(receiverSignature) || !optionalImage(stampImage) ||
+    (receivedDate != null && receivedDate !== '' && (typeof receivedDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(receivedDate))) ||
     !text(senderPhysicalAddress, 2, 300) ||
-    !text(sampleDescription, 5, 2000) ||
+    !text(sampleDescription, 5, 4000) ||
     !text(examinationRequired, 3, 1000) ||
     !Number.isFinite(fee) || fee < 0 || fee > 10_000_000 ||
     !text(invoiceNumber, 1, 100) ||
     !text(receiptNumber, 1, 100)
   ) {
-    return res.status(400).json({ error: 'Fill in the physical address, sample description, examination required, fee, invoice number and receipt number.' });
+    return res.status(400).json({ error: 'Fill in the physical address, at least one sample description, examination required, fee, invoice number and receipt number. Signatures and stamps must be PNG or JPEG images under 300 KB.' });
   }
   const client = await pool.connect();
   try {
@@ -2934,9 +3047,20 @@ app.put('/api/food-drug/intakes/:id/receipt-form', requireSession, requireFoodDr
       `INSERT INTO food_drug_receipt_forms (
          intake_id, sender_name, sender_physical_address, sender_postal_address, sender_telephone,
          submitter_name, submitter_id_number, sample_description, examination_required, fee_kes,
-         invoice_number, receipt_number, analyst_receiving_id, created_by, updated_by
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)
+         invoice_number, receipt_number, analyst_receiving_id, created_by, updated_by,
+         lab_sample_no, senders_ref_no, submitter_id_type, sub_samples, submitter_signature,
+         receiver_signature, stamp_image, received_date
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14,
+                 $15, $16, $17, $18::jsonb, $19, $20, $21, COALESCE($22::date, (NOW() AT TIME ZONE 'Africa/Nairobi')::date))
        ON CONFLICT (intake_id) DO UPDATE SET
+         lab_sample_no = EXCLUDED.lab_sample_no,
+         senders_ref_no = EXCLUDED.senders_ref_no,
+         submitter_id_type = EXCLUDED.submitter_id_type,
+         sub_samples = EXCLUDED.sub_samples,
+         submitter_signature = EXCLUDED.submitter_signature,
+         receiver_signature = EXCLUDED.receiver_signature,
+         stamp_image = EXCLUDED.stamp_image,
+         received_date = EXCLUDED.received_date,
          sender_physical_address = EXCLUDED.sender_physical_address,
          sample_description = EXCLUDED.sample_description,
          examination_required = EXCLUDED.examination_required,
@@ -2949,6 +3073,11 @@ app.put('/api/food-drug/intakes/:id/receipt-form', requireSession, requireFoodDr
         req.params.id, p.senderName, senderPhysicalAddress.trim(), p.senderPostalAddress, p.senderTelephone,
         p.submitterName, p.submitterIdNumber, sampleDescription.trim(), examinationRequired.trim(), fee,
         invoiceNumber.trim(), receiptNumber.trim(), p.analystReceivingId, req.user.id,
+        typeof labSampleNo === 'string' && labSampleNo.trim() ? labSampleNo.trim() : null,
+        typeof sendersRefNo === 'string' && sendersRefNo.trim() ? sendersRefNo.trim() : null,
+        submitterIdType ?? 'ID', JSON.stringify(samples),
+        submitterSignature || null, receiverSignature || null, stampImage || null,
+        receivedDate || null,
       ],
     );
     await audit(client, req.user.id, req.user.email, 'FD_RECEIPT_FORM_SAVED', 'food_drug_intake', req.params.id, {
@@ -2982,6 +3111,13 @@ const worksheetProjection = `
   TO_CHAR(ws.analysis_started_on, 'YYYY-MM-DD') AS "analysisStartedOn",
   ws.test_methods AS "testMethods",
   ws.results,
+  ws.lab_sample_no AS "labSampleNo",
+  ws.sub_samples AS "subSamples",
+  ws.analysis_required AS "analysisRequired",
+  ws.analyst_signature AS "analystSignature",
+  ws.checker_signature AS "checkerSignature",
+  (SELECT COALESCE(JSON_AGG(JSON_BUILD_OBJECT('id', a.id, 'caption', a.caption, 'image', a.image) ORDER BY a.uploaded_at), '[]'::json)
+     FROM food_drug_worksheet_attachments a WHERE a.intake_id = ws.intake_id) AS "attachments",
   analysed.full_name AS "analysedBy",
   TO_CHAR(ws.analysed_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "analysedDate",
   checker.full_name AS "checkedBy",
@@ -3008,6 +3144,8 @@ const worksheetContext = async (db, intakeId, lock = false) => {
   const { rows } = await db.query(
     `SELECT f.id, f.status, f.analyst_id, TO_CHAR(f.intake_date, 'YYYY-MM-DD') AS intake_date,
             r.sample_description, TO_CHAR(r.form_date, 'YYYY-MM-DD') AS receipt_date,
+            r.lab_sample_no AS receipt_lab_sample_no, r.sub_samples AS receipt_sub_samples,
+            r.examination_required AS receipt_examination,
             ws.analysed_at, ws.checked_at,
             TO_CHAR((NOW() AT TIME ZONE 'Africa/Nairobi')::date, 'YYYY-MM-DD') AS today
      FROM food_drug_intakes f
@@ -3034,6 +3172,13 @@ app.get('/api/food-drug/intakes/:id/worksheet', requireSession, requireFoodDrugL
     res.json({
       worksheet: await selectWorksheet(pool, req.params.id),
       sampleDescription: ctx.sample_description ?? null,
+      // What the analytical sample receipt form already says, to pre-fill a new worksheet.
+      fromReceipt: ctx.sample_description ? {
+        labSampleNo: ctx.receipt_lab_sample_no ?? ctx.id,
+        subSamples: Array.isArray(ctx.receipt_sub_samples) && ctx.receipt_sub_samples.length
+          ? ctx.receipt_sub_samples : [{ subSampleNo: ctx.id, description: ctx.sample_description }],
+        analysisRequired: ctx.receipt_examination ?? '',
+      } : null,
       receiptDate: ctx.receipt_date ?? null,
       intakeDate: ctx.intake_date,
       canEdit: canFillWorksheet(req.user, ctx),
@@ -3045,33 +3190,54 @@ app.get('/api/food-drug/intakes/:id/worksheet', requireSession, requireFoodDrugL
   }
 }));
 
+const worksheetImage = (value) => value == null || value === '' ||
+  (typeof value === 'string' && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(value) && value.length <= 400_000);
+const worksheetSamples = (rows) => (Array.isArray(rows) ? rows : []).map((row) => ({
+  subSampleNo: typeof row?.subSampleNo === 'string' ? row.subSampleNo.trim() : '',
+  description: typeof row?.description === 'string' ? row.description.trim() : '',
+})).filter((row) => row.subSampleNo || row.description);
+
 const validWorksheetBody = (body, ctx) => {
-  const { analysisStartedOn, testMethods, results } = body ?? {};
+  const { analysisStartedOn, testMethods, results, labSampleNo, subSamples, analysisRequired, analystSignature } = body ?? {};
+  const samples = worksheetSamples(subSamples);
+  if (!samples.length || samples.length > 50 || samples.some((r) => r.description.length > 300 || r.subSampleNo.length > 60)) {
+    return 'List at least one sample (up to 50; descriptions up to 300 characters).';
+  }
+  if (labSampleNo != null && (typeof labSampleNo !== 'string' || labSampleNo.length > 60)) return 'The lab sample no. is too long.';
+  if (typeof analysisRequired !== 'string' || analysisRequired.trim().length < 3 || analysisRequired.length > 2000) return 'Enter the analysis required.';
+  if (!worksheetImage(analystSignature)) return 'The signature must be a PNG or JPEG image under 300 KB.';
   if (typeof analysisStartedOn !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(analysisStartedOn) ||
       Number.isNaN(Date.parse(`${analysisStartedOn}T00:00:00Z`))) {
     return 'Enter the date the analysis started.';
   }
   if (analysisStartedOn < ctx.intake_date) return 'The analysis cannot start before the sample was received.';
   if (analysisStartedOn > ctx.today) return 'The analysis start date cannot be in the future.';
-  if (typeof testMethods !== 'string' || testMethods.trim().length < 3 || testMethods.trim().length > 2000) {
+  if (typeof testMethods !== 'string' || testMethods.trim().length < 3 || testMethods.trim().length > 10000) {
     return 'Describe the test methods used.';
   }
-  if (results != null && (typeof results !== 'string' || results.length > 10000)) return 'Results are limited to 10,000 characters.';
+  if (results != null && (typeof results !== 'string' || results.length > 50000)) return 'Results are limited to 50,000 characters.';
   return null;
 };
 
 const saveWorksheetRow = (db, intakeId, body, userId) =>
   db.query(
-    `INSERT INTO food_drug_worksheets (intake_id, analysis_started_on, test_methods, results, created_by, updated_by)
-     VALUES ($1, $2::date, $3, $4, $5, $5)
+    `INSERT INTO food_drug_worksheets (intake_id, analysis_started_on, test_methods, results, created_by, updated_by,
+       lab_sample_no, sub_samples, analysis_required, analyst_signature)
+     VALUES ($1, $2::date, $3, $4, $5, $5, $6, $7::jsonb, $8, $9)
      ON CONFLICT (intake_id) DO UPDATE SET
+       lab_sample_no = EXCLUDED.lab_sample_no,
+       sub_samples = EXCLUDED.sub_samples,
+       analysis_required = EXCLUDED.analysis_required,
+       analyst_signature = EXCLUDED.analyst_signature,
        analysis_started_on = EXCLUDED.analysis_started_on,
        test_methods = EXCLUDED.test_methods,
        results = EXCLUDED.results,
        updated_by = EXCLUDED.updated_by,
        updated_at = NOW()`,
     [intakeId, body.analysisStartedOn, body.testMethods.trim(),
-     typeof body.results === 'string' && body.results.trim() ? body.results.trim() : null, userId],
+     typeof body.results === 'string' && body.results.trim() ? body.results.trim() : null, userId,
+     typeof body.labSampleNo === 'string' && body.labSampleNo.trim() ? body.labSampleNo.trim() : null,
+     JSON.stringify(worksheetSamples(body.subSamples)), body.analysisRequired.trim(), body.analystSignature || null],
   );
 
 // Runs one worksheet change in a transaction with the sample locked.
@@ -3126,11 +3292,23 @@ app.post('/api/food-drug/intakes/:id/worksheet/submit', requireSession, requireF
   if (ctx.analyst_id !== req.user.id) return { status: 403, error: 'Only the analyst allocated this sample can submit its worksheet as analysed.' };
   const invalid = validWorksheetBody(req.body, ctx);
   if (invalid) return { status: 400, error: invalid };
+  if (!req.body.analystSignature) return { status: 400, error: 'Sign the worksheet before submitting it as analysed.' };
   await saveWorksheetRow(db, ctx.id, req.body, req.user.id);
   await db.query(
     'UPDATE food_drug_worksheets SET analysed_by = $2, analysed_at = NOW(), updated_at = NOW() WHERE intake_id = $1',
     [ctx.id, req.user.id],
   );
+  // The Head of Department checks it next.
+  await createReceptionActivityNotification(db, {
+    recipientRole: 'HEAD_OF_DEPARTMENT',
+    recipientDepartment: FOOD_DRUG,
+    title: `Laboratory worksheet to check — ${ctx.id}`,
+    message: `${req.user.name ?? req.user.fullName ?? req.user.full_name ?? 'The analyst'} submitted the laboratory worksheet for ${ctx.id}. Check and sign it so the draft report can be prepared.`,
+    type: 'info',
+    linkAction: 'WORK_ALLOCATION',
+    relatedRecordType: 'FOOD_DRUG_INTAKE',
+    relatedRecordId: ctx.id,
+  });
   await audit(db, req.user.id, req.user.email, 'FD_WORKSHEET_SUBMITTED', 'food_drug_intake', ctx.id);
 }));
 
@@ -3141,11 +3319,364 @@ app.post('/api/food-drug/intakes/:id/worksheet/check', requireSession, requireFo
   }
   if (!ctx.analysed_at) return { status: 409, error: 'The analyst has not submitted this worksheet yet.' };
   if (ctx.checked_at) return { status: 409, error: 'This worksheet has already been checked.' };
+  const signature = req.body?.checkerSignature;
+  if (!signature || !worksheetImage(signature)) return { status: 400, error: 'Sign the worksheet (PNG or JPEG under 300 KB) before marking it checked.' };
   await db.query(
-    'UPDATE food_drug_worksheets SET checked_by = $2, checked_at = NOW(), updated_at = NOW() WHERE intake_id = $1',
-    [ctx.id, req.user.id],
+    'UPDATE food_drug_worksheets SET checked_by = $2, checked_at = NOW(), checker_signature = $3, updated_at = NOW() WHERE intake_id = $1',
+    [ctx.id, req.user.id, signature],
   );
+  // Tell the analyst they can now prepare the draft report.
+  if (ctx.analyst_id) {
+    await createReceptionActivityNotification(db, {
+      recipientUserId: ctx.analyst_id,
+      title: `Worksheet checked — ${ctx.id}`,
+      message: `The Head of Department checked and signed the laboratory worksheet for ${ctx.id}. You can now generate the Certificate of Analysis draft report.`,
+      type: 'success',
+      linkAction: 'WORK_ALLOCATION',
+      relatedRecordType: 'FOOD_DRUG_INTAKE',
+      relatedRecordId: ctx.id,
+    });
+  }
   await audit(db, req.user.id, req.user.email, 'FD_WORKSHEET_CHECKED', 'food_drug_intake', ctx.id);
+}));
+
+/* ---------------- Food & Drugs Certificate of Analysis – Draft Report ---------------- */
+
+const draftReportProjection = `
+  d.id,
+  d.intake_id AS "intakeId",
+  d.lab_sample_no AS "labSampleNo",
+  d.senders_ref AS "sendersRef",
+  d.sender_contacts AS "senderContacts",
+  TO_CHAR(d.date_received, 'YYYY-MM-DD') AS "dateReceived",
+  TO_CHAR(d.analysis_started_on, 'YYYY-MM-DD') AS "analysisStartedOn",
+  d.sample_description AS "sampleDescription",
+  d.analysis_required AS "analysisRequired",
+  d.test_methods AS "testMethods",
+  d.analytical_report AS "analyticalReport",
+  d.remarks,
+  d.copy_type AS "copyType",
+  d.status,
+  d.analyst_signature AS "analystSignature",
+  analysed.full_name AS "analysedBy",
+  TO_CHAR(d.analysed_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "analysedDate",
+  d.checker_signature AS "checkerSignature",
+  checker.full_name AS "checkedBy",
+  TO_CHAR(d.checked_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "checkedDate",
+  editor.full_name AS "updatedBy",
+  TO_CHAR(d.updated_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD HH24:MI') AS "updatedAt"`;
+const draftReportJoins = `
+  LEFT JOIN users analysed ON analysed.id = d.analysed_by
+  LEFT JOIN users checker ON checker.id = d.checked_by
+  JOIN users editor ON editor.id = d.updated_by`;
+
+const selectDraftReport = async (db, id) => {
+  const { rows } = await db.query(`SELECT ${draftReportProjection} FROM food_drug_draft_reports d ${draftReportJoins} WHERE d.id = $1`, [id]);
+  return rows[0] ?? null;
+};
+
+// The sample, its receipt form and its worksheet: what a draft report is built from.
+const draftReportContext = async (db, intakeId, lock = false) => {
+  if (lock) await db.query('SELECT id FROM food_drug_intakes WHERE id = $1 FOR UPDATE', [intakeId]);
+  const { rows } = await db.query(
+    `SELECT f.id, f.status, f.analyst_id,
+            r.sender_name, r.sender_physical_address, r.sender_postal_address, r.sender_telephone,
+            r.senders_ref_no, r.sub_samples, r.sample_description, r.examination_required, r.lab_sample_no,
+            TO_CHAR(COALESCE(r.received_date, r.analyst_received_date, f.intake_date), 'YYYY-MM-DD') AS date_received,
+            TO_CHAR(ws.analysis_started_on, 'YYYY-MM-DD') AS analysis_started_on,
+            ws.test_methods, ws.analysis_required AS worksheet_analysis_required,
+            ws.sub_samples AS worksheet_sub_samples, ws.checked_at AS worksheet_checked_at
+     FROM food_drug_intakes f
+     LEFT JOIN food_drug_receipt_forms r ON r.intake_id = f.id
+     LEFT JOIN food_drug_worksheets ws ON ws.intake_id = f.id
+     WHERE f.id = $1 AND f.deleted_at IS NULL`,
+    [intakeId],
+  );
+  return rows[0] ?? null;
+};
+
+// One prefill per sub sample, from the receipt form and the checked worksheet.
+const draftReportPrefills = (ctx) => {
+  const samples = Array.isArray(ctx.worksheet_sub_samples) && ctx.worksheet_sub_samples.length
+    ? ctx.worksheet_sub_samples
+    : Array.isArray(ctx.sub_samples) && ctx.sub_samples.length
+      ? ctx.sub_samples
+      : [{ subSampleNo: ctx.lab_sample_no ?? ctx.id, description: ctx.sample_description ?? '' }];
+  const senderContacts = [
+    ctx.sender_name,
+    ctx.sender_postal_address,
+    ctx.sender_physical_address,
+    ctx.sender_telephone && `Tel: ${ctx.sender_telephone}`,
+  ].filter(Boolean).join('\n');
+  return samples.map((row) => ({
+    labSampleNo: row.subSampleNo || ctx.lab_sample_no || ctx.id,
+    sendersRef: ctx.senders_ref_no ?? '',
+    senderContacts,
+    dateReceived: ctx.date_received,
+    analysisStartedOn: ctx.analysis_started_on ?? '',
+    sampleDescription: row.description ?? '',
+    analysisRequired: ctx.worksheet_analysis_required || ctx.examination_required || '',
+    testMethods: ctx.test_methods ?? '',
+    analyticalReport: '',
+    remarks: '',
+    copyType: 'ORIGINAL',
+  }));
+};
+
+const canWriteDraftReport = (user, ctx) =>
+  ctx.status === 'Under Analysis' && !!ctx.worksheet_checked_at && (ctx.analyst_id === user.id || isFoodDrugHead(user));
+
+app.get('/api/food-drug/intakes/:id/draft-reports', requireSession, requireFoodDrugLab, asyncHandler(async (req, res, next) => {
+  try {
+    const ctx = await draftReportContext(pool, req.params.id);
+    if (!ctx) return res.status(404).json({ error: 'Food & Drugs sample not found.' });
+    const { rows } = await pool.query(
+      `SELECT ${draftReportProjection} FROM food_drug_draft_reports d ${draftReportJoins}
+       WHERE d.intake_id = $1 ORDER BY d.lab_sample_no`,
+      [ctx.id],
+    );
+    res.json({
+      reports: rows,
+      prefills: ctx.worksheet_checked_at ? draftReportPrefills(ctx) : [],
+      worksheetChecked: !!ctx.worksheet_checked_at,
+      canWrite: canWriteDraftReport(req.user, ctx),
+      isAnalyst: ctx.analyst_id === req.user.id,
+      canApprove: req.user.role === 'HEAD_OF_DEPARTMENT' && req.user.department === FOOD_DRUG,
+      canUnlock: req.user.role === 'SUPER_ADMIN',
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+const draftReportImage = (value) =>
+  typeof value === 'string' && /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(value) && value.length <= 400_000;
+const isoDate = (value) => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`));
+
+const validDraftReport = (b) => {
+  const text = (v, min, max) => typeof v === 'string' && v.trim().length >= min && v.trim().length <= max;
+  if (!text(b?.labSampleNo, 1, 60)) return 'Enter the lab sample no.';
+  if (b.sendersRef != null && b.sendersRef !== '' && !text(b.sendersRef, 0, 100)) return "The sender's ref. is too long.";
+  if (!text(b.senderContacts, 2, 600)) return "Enter the sender's address and contacts.";
+  if (!isoDate(b.dateReceived)) return 'Enter the date received.';
+  if (!isoDate(b.analysisStartedOn)) return 'Enter the date analysis started.';
+  if (b.analysisStartedOn < b.dateReceived) return 'The analysis cannot start before the sample was received.';
+  if (!text(b.sampleDescription, 2, 2000)) return 'Describe the sample.';
+  if (!text(b.analysisRequired, 2, 2000)) return 'Enter the analysis required.';
+  if (!text(b.testMethods, 2, 10000)) return 'Enter the test method(s).';
+  if (b.analyticalReport != null && (typeof b.analyticalReport !== 'string' || b.analyticalReport.length > 50000)) return 'The analytical report is limited to 50,000 characters.';
+  if (b.remarks != null && b.remarks !== '' && !text(b.remarks, 0, 2000)) return 'Remarks are limited to 2,000 characters.';
+  if (!['ORIGINAL', 'DUPLICATE'].includes(b.copyType ?? 'ORIGINAL')) return 'Choose Original or Duplicate copy.';
+  if (b.analystSignature != null && b.analystSignature !== '' && !draftReportImage(b.analystSignature)) return 'The signature must be a PNG or JPEG image under 300 KB.';
+  return null;
+};
+const draftReportValues = (b) => [
+  b.labSampleNo.trim(), b.sendersRef?.trim() || null, b.senderContacts.trim(), b.dateReceived, b.analysisStartedOn,
+  b.sampleDescription.trim(), b.analysisRequired.trim(), b.testMethods.trim(), (b.analyticalReport ?? '').trim(),
+  b.remarks?.trim() || null, b.copyType ?? 'ORIGINAL', b.analystSignature || null,
+];
+const DRAFT_REPORT_UPDATE = `UPDATE food_drug_draft_reports SET
+  lab_sample_no = $2, senders_ref = $3, sender_contacts = $4, date_received = $5::date, analysis_started_on = $6::date,
+  sample_description = $7, analysis_required = $8, test_methods = $9, analytical_report = $10, remarks = $11,
+  copy_type = $12, analyst_signature = $13, updated_by = $14, updated_at = NOW()`;
+
+// Runs a change to one draft report in a transaction with its sample locked.
+const draftReportChange = (change) => asyncHandler(async (req, res, next) => {
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.reportId ?? '')) return res.status(404).json({ error: 'Draft report not found.' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const found = await client.query('SELECT intake_id FROM food_drug_draft_reports WHERE id = $1', [req.params.reportId]);
+    if (!found.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Draft report not found.' });
+    }
+    const ctx = await draftReportContext(client, found.rows[0].intake_id, true);
+    const { rows } = await client.query('SELECT * FROM food_drug_draft_reports WHERE id = $1 FOR UPDATE', [req.params.reportId]);
+    const refusal = await change(client, ctx, rows[0], req);
+    if (refusal) {
+      await client.query('ROLLBACK');
+      return res.status(refusal.status).json({ error: refusal.error });
+    }
+    const report = await selectDraftReport(client, req.params.reportId);
+    await client.query('COMMIT');
+    res.json({ report });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    if (error?.code === '23505') return res.status(409).json({ error: 'There is already a draft report for that lab sample no.' });
+    return next(error);
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/food-drug/intakes/:id/draft-reports', requireSession, requireFoodDrugLab, asyncHandler(async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const ctx = await draftReportContext(client, req.params.id, true);
+    const refuse = async (status, error) => {
+      await client.query('ROLLBACK');
+      return res.status(status).json({ error });
+    };
+    if (!ctx) return refuse(404, 'Food & Drugs sample not found.');
+    if (!ctx.worksheet_checked_at) return refuse(409, 'The Head of Department must check the laboratory worksheet before a draft report is prepared.');
+    if (!canWriteDraftReport(req.user, ctx)) return refuse(403, 'Only the analyst allocated this sample can prepare its draft report.');
+    const invalid = validDraftReport(req.body);
+    if (invalid) return refuse(400, invalid);
+    const { rows } = await client.query(
+      `INSERT INTO food_drug_draft_reports (
+         intake_id, lab_sample_no, senders_ref, sender_contacts, date_received, analysis_started_on,
+         sample_description, analysis_required, test_methods, analytical_report, remarks, copy_type,
+         analyst_signature, created_by, updated_by
+       ) VALUES ($1, $2, $3, $4, $5::date, $6::date, $7, $8, $9, $10, $11, $12, $13, $14, $14)
+       RETURNING id`,
+      [ctx.id, ...draftReportValues(req.body), req.user.id],
+    );
+    await audit(client, req.user.id, req.user.email, 'FD_DRAFT_REPORT_CREATED', 'food_drug_intake', ctx.id, { labSampleNo: req.body.labSampleNo });
+    const report = await selectDraftReport(client, rows[0].id);
+    await client.query('COMMIT');
+    res.status(201).json({ report });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    if (error?.code === '23505') return res.status(409).json({ error: 'There is already a draft report for that lab sample no.' });
+    return next(error);
+  } finally {
+    client.release();
+  }
+}));
+
+app.put('/api/food-drug/draft-reports/:reportId', requireSession, requireFoodDrugLab, draftReportChange(async (db, ctx, report, req) => {
+  if (report.status !== 'DRAFT') return { status: 409, error: 'This draft report has been submitted and can no longer be edited.' };
+  if (!canWriteDraftReport(req.user, ctx)) return { status: 403, error: 'Only the analyst allocated this sample can edit its draft report.' };
+  const invalid = validDraftReport(req.body);
+  if (invalid) return { status: 400, error: invalid };
+  await db.query(`${DRAFT_REPORT_UPDATE} WHERE id = $1`, [report.id, ...draftReportValues(req.body), req.user.id]);
+  await audit(db, req.user.id, req.user.email, 'FD_DRAFT_REPORT_SAVED', 'food_drug_intake', ctx.id, { labSampleNo: req.body.labSampleNo });
+}));
+
+// The analyst signs it and sends it to the Head of Department.
+app.post('/api/food-drug/draft-reports/:reportId/submit', requireSession, requireFoodDrugLab, draftReportChange(async (db, ctx, report, req) => {
+  if (report.status !== 'DRAFT') return { status: 409, error: 'This draft report has already been submitted.' };
+  if (ctx.analyst_id !== req.user.id) return { status: 403, error: 'Only the analyst allocated this sample can submit its draft report.' };
+  const invalid = validDraftReport(req.body);
+  if (invalid) return { status: 400, error: invalid };
+  if (!req.body.analystSignature) return { status: 400, error: 'Sign the draft report before submitting it.' };
+  if (!req.body.analyticalReport?.trim()) return { status: 400, error: 'Write the analytical report before submitting it.' };
+  await db.query(
+    `${DRAFT_REPORT_UPDATE}, status = 'SUBMITTED', analysed_by = $14, analysed_at = NOW() WHERE id = $1`,
+    [report.id, ...draftReportValues(req.body), req.user.id],
+  );
+  const labSampleNo = req.body.labSampleNo.trim();
+  await createReceptionActivityNotification(db, {
+    recipientRole: 'HEAD_OF_DEPARTMENT',
+    recipientDepartment: FOOD_DRUG,
+    title: `Draft report to approve — ${labSampleNo}`,
+    message: `${req.user.name ?? req.user.fullName ?? 'The analyst'} submitted the Certificate of Analysis draft report for ${labSampleNo} (${ctx.id}). Check and sign it to approve.`,
+    type: 'info',
+    linkAction: 'WORK_ALLOCATION',
+    relatedRecordType: 'FOOD_DRUG_INTAKE',
+    relatedRecordId: ctx.id,
+  });
+  await audit(db, req.user.id, req.user.email, 'FD_DRAFT_REPORT_SUBMITTED', 'food_drug_intake', ctx.id, { labSampleNo });
+}));
+
+// The Head of Department signs "Checked by", which approves and locks it.
+app.post('/api/food-drug/draft-reports/:reportId/approve', requireSession, requireFoodDrugLab, draftReportChange(async (db, ctx, report, req) => {
+  if (!(req.user.role === 'HEAD_OF_DEPARTMENT' && req.user.department === FOOD_DRUG)) {
+    return { status: 403, error: 'Only the Head of the Food & Drugs section can approve a draft report.' };
+  }
+  if (report.status !== 'SUBMITTED') {
+    return { status: 409, error: report.status === 'APPROVED' ? 'This draft report is already approved.' : 'The analyst has not submitted this draft report yet.' };
+  }
+  const signature = req.body?.checkerSignature;
+  if (!draftReportImage(signature)) return { status: 400, error: 'Sign the draft report (PNG or JPEG under 300 KB) to approve it.' };
+  await db.query(
+    `UPDATE food_drug_draft_reports SET status = 'APPROVED', checker_signature = $2, checked_by = $3, checked_at = NOW(),
+       updated_by = $3, updated_at = NOW() WHERE id = $1`,
+    [report.id, signature, req.user.id],
+  );
+  if (ctx.analyst_id) {
+    await createReceptionActivityNotification(db, {
+      recipientUserId: ctx.analyst_id,
+      title: `Draft report approved — ${report.lab_sample_no}`,
+      message: `The Head of Department approved the Certificate of Analysis draft report for ${report.lab_sample_no}.`,
+      type: 'success',
+      linkAction: 'WORK_ALLOCATION',
+      relatedRecordType: 'FOOD_DRUG_INTAKE',
+      relatedRecordId: ctx.id,
+    });
+  }
+  await audit(db, req.user.id, req.user.email, 'FD_DRAFT_REPORT_APPROVED', 'food_drug_intake', ctx.id, { labSampleNo: report.lab_sample_no });
+}));
+
+// Super Admin only: back to Draft, both signatures cleared.
+app.post('/api/food-drug/draft-reports/:reportId/unlock', requireSession, requireFoodDrugLab, draftReportChange(async (db, ctx, report, req) => {
+  if (req.user.role !== 'SUPER_ADMIN') return { status: 403, error: 'Only an administrator can unlock a draft report.' };
+  if (report.status === 'DRAFT') return { status: 409, error: 'This draft report is not locked.' };
+  const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+  if (reason.length < 5 || reason.length > 500) return { status: 400, error: 'Give a reason for unlocking (5–500 characters).' };
+  await db.query(
+    `UPDATE food_drug_draft_reports SET status = 'DRAFT', analysed_by = NULL, analysed_at = NULL, analyst_signature = NULL,
+       checked_by = NULL, checked_at = NULL, checker_signature = NULL,
+       unlocked_by = $2, unlocked_at = NOW(), unlock_reason = $3, updated_by = $2, updated_at = NOW()
+     WHERE id = $1`,
+    [report.id, req.user.id, reason],
+  );
+  await audit(db, req.user.id, req.user.email, 'FD_DRAFT_REPORT_UNLOCKED', 'food_drug_intake', ctx.id, { labSampleNo: report.lab_sample_no, reason });
+}));
+
+app.post('/api/food-drug/intakes/:id/worksheet/attachments', requireSession, requireFoodDrugLab, worksheetChange(async (db, ctx, req) => {
+  const refusal = worksheetFillRefusal(req.user, ctx);
+  if (refusal) return refusal;
+  const { image, caption } = req.body ?? {};
+  if (typeof image !== 'string' || !/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(image) || image.length > 2_800_000) {
+    return { status: 400, error: 'Attach a PNG or JPEG image under 2 MB.' };
+  }
+  if (caption != null && (typeof caption !== 'string' || caption.length > 200)) return { status: 400, error: 'The caption is limited to 200 characters.' };
+  const exists = await db.query('SELECT 1 FROM food_drug_worksheets WHERE intake_id = $1', [ctx.id]);
+  if (!exists.rows.length) return { status: 409, error: 'Save the worksheet before attaching charts.' };
+  const count = await db.query('SELECT COUNT(*)::int AS n FROM food_drug_worksheet_attachments WHERE intake_id = $1', [ctx.id]);
+  if (count.rows[0].n >= 10) return { status: 409, error: 'A worksheet can have up to 10 attachments.' };
+  await db.query(
+    'INSERT INTO food_drug_worksheet_attachments (intake_id, caption, image, uploaded_by) VALUES ($1, $2, $3, $4)',
+    [ctx.id, (caption ?? '').trim(), image, req.user.id],
+  );
+  await audit(db, req.user.id, req.user.email, 'FD_WORKSHEET_ATTACHMENT_ADDED', 'food_drug_intake', ctx.id);
+}));
+
+app.delete('/api/food-drug/intakes/:id/worksheet/attachments/:attachmentId', requireSession, requireFoodDrugLab, worksheetChange(async (db, ctx, req) => {
+  const refusal = worksheetFillRefusal(req.user, ctx);
+  if (refusal) return refusal;
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.attachmentId ?? '')) return { status: 400, error: 'That is not a valid attachment.' };
+  const removed = await db.query(
+    'DELETE FROM food_drug_worksheet_attachments WHERE id = $1 AND intake_id = $2',
+    [req.params.attachmentId, ctx.id],
+  );
+  if (!removed.rowCount) return { status: 404, error: 'Attachment not found.' };
+  await audit(db, req.user.id, req.user.email, 'FD_WORKSHEET_ATTACHMENT_REMOVED', 'food_drug_intake', ctx.id);
+}));
+
+// Finds a saved receipt form by its lab sample no., to fill in a worksheet from it.
+app.get('/api/food-drug/receipt-forms/lookup', requireSession, requireFoodDrugLab, asyncHandler(async (req, res, next) => {
+  const labSampleNo = typeof req.query.labSampleNo === 'string' ? req.query.labSampleNo.trim() : '';
+  if (!labSampleNo || labSampleNo.length > 60) return res.status(400).json({ error: 'Enter a lab sample no.' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT r.intake_id AS "intakeId", COALESCE(r.lab_sample_no, r.intake_id) AS "labSampleNo",
+              r.sub_samples AS "subSamples", r.sample_description AS "sampleDescription",
+              r.examination_required AS "analysisRequired"
+       FROM food_drug_receipt_forms r
+       JOIN food_drug_intakes f ON f.id = r.intake_id AND f.deleted_at IS NULL
+       WHERE UPPER(COALESCE(r.lab_sample_no, r.intake_id)) = UPPER($1)
+       ORDER BY r.updated_at DESC LIMIT 1`,
+      [labSampleNo],
+    );
+    if (!rows.length) return res.status(404).json({ error: 'No receipt form has that lab sample no.' });
+    res.json({ receipt: rows[0] });
+  } catch (error) {
+    next(error);
+  }
 }));
 
 // One correction per intake, before analysis starts. Client details stay as reception recorded them.

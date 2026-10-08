@@ -1,5 +1,6 @@
 import React, { useRef } from 'react';
 import {
+  ChevronRight,
   Bell,
   LogOut,
   ChevronDown,
@@ -12,10 +13,13 @@ import { ThemeToggle } from './ThemeToggle';
 import { Kbd, isMacPlatform } from './GlobalSearchModal';
 import { User, UserRole } from '../../types';
 import { departmentQualifier } from '../../lib/departments';
+import { viewBreadcrumb } from '../layout/appNav';
 
 
 interface HeaderProps {
   currentUser: User;
+  /** The open workspace view; drives the breadcrumb. */
+  activeView?: string;
   onSignOut: () => void;
   onNavigate?: (view: string) => void;
   unreadNotificationsCount: number;
@@ -26,6 +30,7 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   currentUser,
+  activeView = 'dashboard',
   onSignOut,
   onNavigate,
   unreadNotificationsCount,
@@ -147,7 +152,18 @@ export const Header: React.FC<HeaderProps> = ({
           : 'bg-white/75 border-slate-200/70 dark:bg-slate-950/75 dark:border-slate-800/40'
       }`}
     >
-      <div className="mx-auto flex h-14 w-full max-w-[1700px] items-center">
+      {/* Government identity strip */}
+      <div className="hidden sm:flex h-7 items-center gap-2 border-b border-slate-200 bg-slate-900 px-4 text-[11px] text-slate-300 dark:border-slate-800 dark:bg-black/40">
+        <span className="font-medium text-white">Republic of Kenya</span>
+        <span className="text-slate-500">·</span>
+        <span>Government Chemist Department — Official laboratory information system</span>
+        <span className={`ml-auto rounded px-1.5 py-px text-[10px] font-semibold ${
+          import.meta.env.VITE_DEMO_MODE === 'true' ? 'bg-amber-500/20 text-amber-300' : 'bg-emerald-500/15 text-emerald-300'
+        }`}>
+          {import.meta.env.VITE_DEMO_MODE === 'true' ? 'Training environment' : 'Production'}
+        </span>
+      </div>
+      <div className="flex h-14 w-full items-center">
         {/* Brand block — width locked to the expanded left sidebar so the divider line (border-r)
             sits exactly on the sidebar's right edge (kept fixed, not collapsible) */}
         <div className="flex items-center shrink-0 gap-2 sm:gap-3 w-auto sm:w-60 pl-2 sm:pl-4 pr-2 border-r border-slate-200 dark:border-slate-800">
@@ -165,25 +181,29 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="hidden sm:block leading-none min-w-0">
             <div className="flex items-center gap-1.5 min-w-0">
               <span className="text-[15px] font-bold tracking-tight truncate whitespace-nowrap text-slate-900 dark:text-white">GC-ILCMS</span>
-              <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold tracking-wide uppercase bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 dark:text-emerald-500">
+              <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-semibold tracking-wide uppercase bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 dark:text-emerald-500">
                 GoK
               </span>
             </div>
-            <div className="mt-1 text-[10px] font-mono uppercase tracking-wider whitespace-nowrap text-slate-500 dark:text-slate-400">
+            <div className="mt-1 text-[11px] whitespace-nowrap text-slate-500 dark:text-slate-400">
               Government Chemist
             </div>
           </div>
         </div>
 
-        {/* Department chip. Institution-wide staff have no laboratory, so the
-            chip reads "General Administration" rather than "… Lab". */}
-        {departmentQualifier(currentUser.department) && (
-          <div className="hidden lg:flex items-center gap-2 pl-4 min-w-0">
-            <span className="px-2 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-[11px] font-mono text-slate-600 dark:bg-slate-900 dark:border-slate-800 dark:text-slate-300 truncate whitespace-nowrap max-w-[180px]">
-              {departmentQualifier(currentUser.department)} Lab
-            </span>
-          </div>
-        )}
+        {/* Breadcrumb */}
+        <nav aria-label="Breadcrumb" className="hidden lg:flex items-center gap-1.5 pl-5 min-w-0 text-[13px]">
+          {(() => {
+            const [section, page] = viewBreadcrumb(currentUser, activeView);
+            return (
+              <>
+                <span className="text-slate-500 truncate dark:text-slate-400">{section}</span>
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                <span aria-current="page" className="font-medium text-slate-900 truncate dark:text-white">{page}</span>
+              </>
+            );
+          })()}
+        </nav>
 
         {/* Right Actions */}
         <div className="flex items-center gap-1 sm:gap-2 ml-auto pr-2 sm:pr-4 md:pr-6">
@@ -251,8 +271,8 @@ export const Header: React.FC<HeaderProps> = ({
                   {currentUser.name}
                 </span>
                 <span className="flex items-center gap-1 min-w-0">
-                  <span className={`text-[10px] font-mono uppercase leading-tight truncate max-w-[110px] lg:max-w-[150px] ${getRoleTextColor(currentUser.role)}`}>
-                    {currentUser.role}
+                  <span className="text-[11px] leading-tight truncate max-w-[110px] lg:max-w-[150px] text-slate-500 dark:text-slate-400">
+                    {getRoleLabel(currentUser.role)}
                   </span>
                   {currentUser.role === 'HEAD_OF_DEPARTMENT' && (
                     <span className="shrink-0 rounded bg-emerald-500/15 px-1 py-px text-[9px] font-bold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
@@ -281,7 +301,7 @@ export const Header: React.FC<HeaderProps> = ({
                     </div>
                     <div className="min-w-0">
                       <div className="text-sm font-bold text-slate-900 truncate dark:text-white">{currentUser.name}</div>
-                      <div className={`flex items-center gap-1.5 text-xs font-mono ${getRoleTextColor(currentUser.role)}`}>
+                      <div className={`flex items-center gap-1.5 text-xs ${getRoleTextColor(currentUser.role)}`}>
                         {getRoleLabel(currentUser.role)}
                         {currentUser.role === 'HEAD_OF_DEPARTMENT' && (
                           <span className="rounded bg-emerald-500/15 px-1 py-px text-[9px] font-bold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
