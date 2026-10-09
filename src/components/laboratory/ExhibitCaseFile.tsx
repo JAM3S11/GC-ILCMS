@@ -36,6 +36,7 @@ import { WaterTestResultsForm } from './WaterTestResultsForm';
 import { WorkAllocationViewer } from './WorkAllocationForm';
 import { WaterTestEntry } from '../../lib/waterTestParameters';
 import { CertificateIssue, WaterCertificatePreview } from './WaterCertificatePreview';
+import { CaseFileContents, CaseFileContentsSection } from './CaseFileContents';
 import { WaterCertificate, WaterCertificateState, fieldsFromSnapshot } from '../../lib/waterCertificates';
 import { canEditWaterIntake, canEditWaterResults, canPrintWaterCertificate, waterEditAccess } from '../../lib/waterIntakeAccess';
 
@@ -411,6 +412,32 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
     window.print();
   };
 
+
+  // The file's contents page: each numbered section and where it stands.
+  const contentsSections: CaseFileContentsSection[] = [
+    { id: 'section-1', number: 1, title: 'Exhibit particulars', state: 'done', note: `Received ${intake.dateReceived ?? '—'}` },
+    {
+      id: 'section-2',
+      number: 2,
+      title: 'Findings',
+      state: findingsRecorded ? 'done' : analysisStarted ? 'current' : 'pending',
+      note: findingsRecorded ? 'Results recorded' : analysisStarted ? 'Under analysis' : 'Awaiting analysis',
+    },
+    { id: 'section-3', number: 3, title: 'Process history', note: `${doneCount} of ${checklist.length} steps done` },
+    {
+      id: 'section-4',
+      number: 4,
+      title: 'Memo',
+      state: issued ? 'done' : isComplete ? 'current' : 'pending',
+      note: issued ? 'Approved by the Head' : isComplete ? 'Awaiting approval' : 'Not yet issued',
+    },
+  ];
+  const contentsProps = {
+    reference: intake.labReference ?? intake.exhibitId,
+    register: 'Water & Environment',
+    sections: contentsSections,
+  };
+
   return (
     <DashboardPage>
       <DashboardHeader
@@ -449,7 +476,10 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
 
       <ProcessTracker stage={stage} details={trackerDetails} stages={TRACKER_STAGES} />
 
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_18rem] 2xl:grid-cols-[14rem_minmax(0,1fr)_18rem]">
+        {/* Contents: the file's sections in order, with where each one stands */}
+        <CaseFileContents {...contentsProps} className="hidden 2xl:sticky 2xl:top-4 2xl:block" />
+
         {/* Main record */}
         <div className="@container min-w-0 space-y-4">
           <FileSection number={1} icon={Droplets} title="Exhibit particulars" description="Recorded at intake. Client details come from reception.">
@@ -606,6 +636,8 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
 
         {/* Sidebar: where the file stands and what is left to do */}
         <aside className="space-y-4 lg:sticky lg:top-4">
+          {/* Below 2xl there is no room for a third column, so the contents lead the side panel. */}
+          <CaseFileContents {...contentsProps} className="2xl:hidden" />
           <section aria-label="Completion checklist" className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
             <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-950/50">
               <h2 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
@@ -906,8 +938,9 @@ const FileSection: React.FC<{
   children: React.ReactNode;
 }> = ({ number, icon: Icon, title, description, children }) => (
   <section
+    id={`section-${number}`}
     aria-labelledby={`file-section-${number}`}
-    className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm print:break-inside-avoid dark:border-slate-700 dark:bg-slate-900"
+    className="scroll-mt-4 overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm print:break-inside-avoid dark:border-slate-700 dark:bg-slate-900"
   >
     <div className="flex items-start gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-950/50">
       <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-slate-800 text-[11px] font-semibold text-white dark:bg-slate-700 dark:text-slate-100">

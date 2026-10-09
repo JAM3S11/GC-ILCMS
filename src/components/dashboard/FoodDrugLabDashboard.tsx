@@ -110,7 +110,7 @@ export const FoodDrugLabDashboard: React.FC<FoodDrugLabDashboardProps> = ({
         }
         actions={
           <>
-            <Button icon={Users} onClick={() => onNavigate('lab-bay')}>Reception &amp; Client Handover</Button>
+            <Button icon={Users} onClick={() => onNavigate('lab-bay')}>Visitor Register</Button>
             <Button variant="primary" icon={FlaskConical} onClick={() => onNavigate('laboratory')}>Open Exhibit Laboratory</Button>
           </>
         }

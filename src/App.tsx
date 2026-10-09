@@ -25,14 +25,19 @@ import { FoodDrugIntakePage } from './components/laboratory/FoodDrugIntakePage';
 import { WaterIntakePage } from './components/laboratory/WaterIntakePage';
 import { IntakeHandoverDialog } from './components/laboratory/IntakeHandoverDialog';
 import { Header } from './components/common/Header';
-import { AppShell } from './components/layout/AppShell';
+import { DashboardLayout } from './components/layout/DashboardLayout';
+import { AppSidebar } from './components/layout/AppSidebar';
+import { CASE_REGISTER_NAV_PREFIX } from './components/layout/appNav';
+import { GovBanner } from './components/layout/GovBanner';
 import { PrototypeToolbar } from './components/common/PrototypeToolbar';
 import { GlobalSearchModal } from './components/common/GlobalSearchModal';
 import { PrototypeTourModal } from './components/common/PrototypeTourModal';
 import { VisitorDeskView } from './components/reception/VisitorDeskView';
 import { ReceptionVisitStats } from './components/reception/VisitorDeskViewProps';
 import { VisitorRegistrationPage } from './components/reception/VisitorRegistrationPage';
-import { LabBayView, CheckOutView, NotificationsView } from './components/reception/ReceptionWorkflowViews';
+import { CheckOutView } from './components/reception/CheckOutView';
+import { NotificationsView } from './components/notifications/NotificationsPage';
+import { VisitorRegisterView } from './components/reception/VisitorRegisterView';
 import { departmentLabel, isInstitutionWide } from './lib/departments';
 import { laboratoryLabel } from './data/laboratories';
 import { formatKes } from './waterIntake';
@@ -157,7 +162,7 @@ export default function App() {
     [visitors, selectedIntakeVisitId, currentUser?.department]
   );
   // The client the Water intake form is bound to. Only a client chosen on purpose (Open intake
-  // from Reception & Client Handover) is used; opening the form from the sidebar leaves the
+  // from the Visitor Register) is used; opening the form from the sidebar leaves the
   // client details as dashes instead of silently picking up whoever arrived last.
   const chosenWaterVisitor = useMemo(
     () =>
@@ -271,7 +276,6 @@ export default function App() {
   const [tourOpen, setTourOpen] = useState(false);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -344,7 +348,7 @@ export default function App() {
     if (currentUser?.role !== 'SUPER_ADMIN') return;
     try {
       const { notifications: rows } = await apiRequest<{
-        notifications: Array<Omit<AppNotification, 'timestamp' | 'persisted' | 'relatedRecordType' | 'relatedRecordId'> & {
+        notifications: Array<Omit<AppNotification, 'timestamp' | 'createdAt' | 'persisted' | 'relatedRecordType' | 'relatedRecordId'> & {
           createdAt: string;
           recordType?: string;
           recordId?: string;
@@ -352,6 +356,7 @@ export default function App() {
       }>('/api/admin/notifications');
       setAdminNotifications(rows.map(({ createdAt, recordType, recordId, ...notification }) => ({
         ...notification,
+        createdAt,
         timestamp: new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(createdAt)),
         relatedRecordType: recordType,
         relatedRecordId: recordId,
@@ -374,18 +379,32 @@ export default function App() {
     return () => window.clearInterval(intervalId);
   }, [currentUser?.id, currentUser?.role, loadAdminNotifications]);
 
+  // Department change decisions already acted on, so each one refreshes the
+  // signed-in user only once.
+  const handledDepartmentDecisions = useRef(new Set<string>());
+
   const loadReceptionActivityNotifications = useCallback(async () => {
     if (!currentUser || currentUser.role === 'SUPER_ADMIN') return;
     try {
       const { notifications: rows } = await apiRequest<{
-        notifications: Array<Omit<AppNotification, 'timestamp' | 'persisted'> & { createdAt: string }>;
+        notifications: Array<Omit<AppNotification, 'timestamp' | 'createdAt' | 'persisted'> & { createdAt: string }>;
       }>('/api/notifications');
       setReceptionActivityNotifications(rows.map(({ createdAt, ...notification }) => ({
         ...notification,
+        createdAt,
         timestamp: new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(createdAt)),
         persisted: true,
       })));
       setReceptionActivityNotificationError('');
+      // An approved department move changes what this user may see: reload the
+      // account so it takes effect without signing in again.
+      const newDecisions = rows.filter((row) =>
+        row.relatedRecordType === 'department_change_request' && !row.read && !handledDepartmentDecisions.current.has(row.id));
+      if (newDecisions.length) {
+        newDecisions.forEach((row) => handledDepartmentDecisions.current.add(row.id));
+        const { user } = await apiRequest<{ user: User }>('/api/auth/me');
+        setCurrentUser((previous) => previous && (previous.department !== user.department || previous.role !== user.role) ? user : previous);
+      }
     } catch (cause) {
       setReceptionActivityNotificationError(cause instanceof Error ? cause.message : 'Unable to load live reception activity.');
     }
@@ -603,7 +622,7 @@ export default function App() {
       return;
     }
     if (isReceptionist(currentUser?.role) && !RECEPTIONIST_VIEWS.has(view)) {
-      showToast('Reception access is limited to registration, Reception & Client Handover monitoring, and check-out.');
+      showToast('Reception access is limited to registration, Visitor Register monitoring, and check-out.');
       return;
     }
 
@@ -631,6 +650,13 @@ export default function App() {
 
     // Going to the intake form from the menu starts blank; Open intake sets the client itself.
     if (view === 'water-intake' || view === 'food-drug-intake') setSelectedIntakeVisitId(null);
+
+    // A laboratory's case register ('case-file:food') opens Case File on that lab.
+    if (view.startsWith(CASE_REGISTER_NAV_PREFIX)) {
+      const laboratory = view.slice(CASE_REGISTER_NAV_PREFIX.length);
+      if (laboratory === 'water' || laboratory === 'food') setCaseFileLaboratory(laboratory);
+      view = 'case-file';
+    }
 
     // Opening Case File from the sidebar starts at the list, not the last exhibit.
     if (view === 'case-file' && isSuperAdmin) {
@@ -791,6 +817,10 @@ export default function App() {
         } catch (cause) {
           showToast(cause instanceof Error ? cause.message : 'Could not load the visitor record.');
         }
+        return;
+      }
+      if (notification.linkAction === 'ACCOUNT_SETTINGS') {
+        setActiveView('settings');
         return;
       }
       if (notification.linkAction === 'WORK_ALLOCATION') {
@@ -1441,50 +1471,41 @@ export default function App() {
         /* IF AUTHENTICATED -> RENDER FULL GC-ILCMS INTERNAL WORKSPACE
            As a fixed, full-height app frame: toolbar + header stay pinned,
            only the main content region scrolls. */
-        <div className="h-[100dvh] flex flex-col overflow-hidden">
-          <a
-            href="#main-content"
-            className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[100] focus:rounded-md focus:bg-white focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-slate-900 focus:shadow-lg focus:ring-2 focus:ring-amber-500"
-          >
-            Skip to main content
-          </a>
-          {DEMO_MODE && <PrototypeToolbar onOpenTour={() => setTourOpen(true)} />}
-
-          {/* Main Authenticated Header */}
-          <Header
-            currentUser={currentUser}
-            activeView={activeView}
-            onSignOut={handleSignOut}
-            onNavigate={handleNavigateView}
-            unreadNotificationsCount={unreadCount}
-            onToggleNotifications={() => setNotificationsOpen(!notificationsOpen)}
-            onOpenSearch={() => setSearchOpen(true)}
-            onOpenMobileNav={() => setMobileNavOpen(true)}
-          />
-
-          {/* Persistent app shell: left nav sidebar + content + right command-center sidebar */}
-          <AppShell
-            currentUser={currentUser}
-            activeView={activeView}
-            onNavigate={handleNavigateView}
-            onSignOut={handleSignOut}
-            unreadNotificationsCount={unreadCount}
-            notifications={visibleNotifications}
-            auditLogs={auditLogs}
-            activeCase={activeCase}
-            officerVerified={officerVerified}
-            waitingVisitor={intakeVisitor}
-            onOpenVerifyOfficer={openOfficerVerification}
-            onOpenIntakeModal={openIntake}
-            onOpenCaseFile={() => setActiveView('case-file')}
-            onOpenNotifications={() => setNotificationsOpen(true)}
-            myExhibitsCount={myExhibitsCount}
-            superAdminTab={superAdminTab}
-            sidebarCollapsed={sidebarCollapsed}
-            onToggleSidebar={() => setSidebarCollapsed((c) => !c)}
-            mobileNavOpen={mobileNavOpen}
-            onCloseMobileNav={() => setMobileNavOpen(false)}
-          >
+        <>
+        <DashboardLayout
+          open={!sidebarCollapsed}
+          onOpenChange={(open) => setSidebarCollapsed(!open)}
+          banner={
+            <>
+              {DEMO_MODE && <PrototypeToolbar onOpenTour={() => setTourOpen(true)} />}
+              <GovBanner />
+            </>
+          }
+          sidebar={
+            <AppSidebar
+              currentUser={currentUser}
+              activeView={activeView}
+              onNavigate={handleNavigateView}
+              onSignOut={handleSignOut}
+              unreadNotificationsCount={unreadCount}
+              myExhibitsCount={myExhibitsCount}
+              superAdminTab={superAdminTab}
+              caseRegister={caseFileLaboratory}
+              caseRegisterCounts={{ water: waterIntakes.length, food: foodDrugIntakes.length }}
+            />
+          }
+          topbar={
+            <Header
+              currentUser={currentUser}
+              activeView={activeView}
+              unreadNotificationsCount={unreadCount}
+              onToggleNotifications={() => setNotificationsOpen(!notificationsOpen)}
+              onOpenSearch={() => setSearchOpen(true)}
+              onOpenSettings={() => handleNavigateView('settings')}
+              onSignOut={handleSignOut}
+            />
+          }
+        >
             {visitsError && (
               <div role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
                 Reception records could not be refreshed: {visitsError}
@@ -1502,7 +1523,7 @@ export default function App() {
                   onRevealNationalId={handleRevealNationalId}
                   onProceedToLab={(v) => {
                     handleNavigateView('lab-bay');
-                    showToast(`Opened Reception & Client Handover for ${v.visitNumber}.`);
+                    showToast(`Opened the Visitor Register at ${v.visitNumber}.`);
                   }}
                   onCheckOutVisitor={handleCheckOutVisitor}
                   onDeleteVisitor={handleDeleteVisitor}
@@ -1552,7 +1573,7 @@ export default function App() {
                 onRevealNationalId={handleRevealNationalId}
                 onProceedToLab={(v) => {
                   handleNavigateView('lab-bay');
-                  showToast(`Opened Reception & Client Handover for ${v.visitNumber}.`);
+                  showToast(`Opened the Visitor Register at ${v.visitNumber}.`);
                 }}
                 onCheckOutVisitor={handleCheckOutVisitor}
                 onDeleteVisitor={currentUser.role === 'RECEPTIONIST' ? handleDeleteVisitor : undefined}
@@ -1578,7 +1599,7 @@ export default function App() {
             )}
 
             {activeView === 'lab-bay' && (
-              <LabBayView
+              <VisitorRegisterView
                 visitors={visitors}
                 initialSelectedVisitorId={selectedIntakeVisitId}
                 onCheckOut={handleCheckOutVisitor}
@@ -1669,6 +1690,8 @@ export default function App() {
                   onMarkAllAsRead={() => void markAllNotificationsRead()}
                   onSelect={(notification) => void selectNotification(notification)}
                   onAdminAction={performAdminNotificationAction}
+                  onToggleRead={(id, read) => void markNotificationRead(id, read)}
+                  onDismiss={(id) => void dismissNotification(id)}
                   unreadCount={unreadCount}
                   description={currentUser.role === 'SUPER_ADMIN'
                     ? 'Account registrations, department requests and account security actions. Select an alert to open its administration workflow.'
@@ -1764,7 +1787,7 @@ export default function App() {
               <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center dark:border-slate-700 dark:bg-slate-900">
                 <FlaskConical className="mx-auto h-8 w-8 text-slate-400" />
                 <h2 className="mt-3 text-sm font-bold text-slate-900 dark:text-white">No active reception visits</h2>
-                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">New arrivals routed to your laboratory will appear under Reception &amp; Client Handover.</p>
+                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">New arrivals routed to your laboratory will appear in the Visitor Register.</p>
               </div>
             )}
 
@@ -1894,7 +1917,7 @@ export default function App() {
                 currentUserRole={currentUser.role}
               />
             )}
-          </AppShell>
+          </DashboardLayout>
 
           {/* Global Officer Verification Modal (Triggerable from Dashboard or Workspaces) */}
           {intakeVisitor && <OfficerVerificationModal
@@ -1950,7 +1973,7 @@ export default function App() {
             }}
             onDismiss={(id) => void dismissNotification(id)}
           />
-        </div>
+        </>
       )}
 
       {/* Global Quick Search Modal (Ctrl + K) */}

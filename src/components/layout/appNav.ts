@@ -1,9 +1,9 @@
 import React from 'react';
-import { LayoutDashboard, FlaskConical, TestTube, Droplets, LogOut, Bell, FileText, Settings, ShieldCheck, Building2, ClipboardList, UserCheck, Users, ScrollText } from 'lucide-react';
+import { LayoutDashboard, FlaskConical, TestTube, Droplets, LogOut, Bell, FileText, Settings, ShieldCheck, Building2, ClipboardList, UserCheck, Users, ScrollText, FolderOpen } from 'lucide-react';
 import { LaboratoryDepartment, User, UserRole } from '../../types';
 
 /**
- * The signed-in workspace navigation. Shared by the sidebar (AppShell) and
+ * The signed-in workspace navigation. Shared by the sidebar (AppSidebar) and
  * global search, so both always offer the same pages for a given user.
  */
 
@@ -16,6 +16,8 @@ export type NavItem = {
   departments?: LaboratoryDepartment[];
   /** Departments that never see the item, even when their role would admit them. */
   hideForDepartments?: LaboratoryDepartment[];
+  /** Sub-pages listed under the item in the sidebar (e.g. one register per laboratory). */
+  children?: { id: string; label: string }[];
 };
 
 export const APP_NAV_GROUPS: { title: string; items: NavItem[] }[] = [
@@ -27,7 +29,7 @@ export const APP_NAV_GROUPS: { title: string; items: NavItem[] }[] = [
         // Not an analysis page: this is the reception/client handover board -
         // who is in the building, which bay, and checking clients out.
         id: 'lab-bay',
-        label: 'Reception & Client Handover',
+        label: 'Visitor Register',
         icon: Building2,
         roles: [
           'RECEPTIONIST', 'ADMINISTRATOR', 'CLERK', 'CEO',
@@ -87,14 +89,45 @@ export type SuperAdminTab = 'requests' | 'department-requests' | 'users' | 'audi
 /** Prefix of the sidebar ids that open a Super Admin console tab. */
 export const SUPER_ADMIN_NAV_PREFIX = 'super-admin:';
 
-const SUPER_ADMIN_HIDDEN_NAV_IDS = new Set(['laboratory', 'food-drug-intake', 'water-intake']);
+/** Prefix of the sidebar ids that open one laboratory's case register ('case-file:water'). */
+export const CASE_REGISTER_NAV_PREFIX = 'case-file:';
+
+const appNavItem = (id: string): NavItem => {
+  const item = APP_NAV_GROUPS.flatMap((group) => group.items).find((entry) => entry.id === id);
+  if (!item) throw new Error(`Unknown nav item: ${id}`);
+  return item;
+};
 
 /**
- * The Super Admin's own sidebar. It replaces the laboratory workspace nav
- * (which has nothing for an institution-wide administrator) with the console
- * sections, so the sidebar and the page read as one admin area.
+ * The Super Admin's own sidebar, laid out like a government records office:
+ * an overview, the case registry (one register per laboratory), the front
+ * office, then system administration. The laboratory-floor pages (register,
+ * intake, officer queue) are for lab staff; the Super Admin reviews that work
+ * through the case registers instead.
  */
 export const SUPER_ADMIN_NAV_GROUPS: { title: string; items: NavItem[] }[] = [
+  {
+    title: 'Overview',
+    items: [appNavItem('dashboard'), appNavItem('notifications')],
+  },
+  {
+    title: 'Case Registry',
+    items: [
+      {
+        id: 'case-file',
+        label: 'Case files',
+        icon: FolderOpen,
+        children: [
+          { id: `${CASE_REGISTER_NAV_PREFIX}water`, label: 'Water & Environment' },
+          { id: `${CASE_REGISTER_NAV_PREFIX}food`, label: 'Food & Drugs' },
+        ],
+      },
+    ],
+  },
+  {
+    title: 'Front Office',
+    items: [appNavItem('lab-bay'), appNavItem('check-out')],
+  },
   {
     title: 'Administration',
     items: [
@@ -102,17 +135,6 @@ export const SUPER_ADMIN_NAV_GROUPS: { title: string; items: NavItem[] }[] = [
       { id: `${SUPER_ADMIN_NAV_PREFIX}audit`, label: 'Audit log', icon: ScrollText },
     ],
   },
-  // Every page any other role can open, so the Super Admin can work as any of
-  // them. The two intake pages share a label for staff (each sees only their
-  // own lab), so they are disambiguated here.
-  ...APP_NAV_GROUPS
-    .filter((group) => group.title !== 'System Administration')
-    .map((group) => ({
-      title: 'Laboratory Operations',
-      // The laboratory-floor pages (register, intake, officer queue) are for lab
-      // staff; the Super Admin reviews that work through the case files instead.
-      items: group.items.filter((item) => !SUPER_ADMIN_HIDDEN_NAV_IDS.has(item.id)),
-    })),
 ];
 
 /** Items with no roles/departments are open to everyone. */
@@ -129,9 +151,9 @@ const DETAIL_VIEWS: Record<string, { section: string; label: string }> = {
   'exhibit-case-file': { section: 'Exhibit Laboratory', label: 'Exhibit case file' },
   'food-drug-case-file': { section: 'Exhibit Laboratory', label: 'Sample case file' },
   'water-intake-edit': { section: 'Exhibit Intake', label: 'Edit submission' },
-  'register-visitor': { section: 'Reception & Client Handover', label: 'Register visitor' },
-  'lab-bay': { section: 'Operations', label: 'Laboratory bay' },
-  reception: { section: 'Operations', label: 'Reception & Client Handover' },
+  'register-visitor': { section: 'Visitor Register', label: 'Register visitor' },
+  'lab-bay': { section: 'Operations', label: 'Visitor Register' },
+  reception: { section: 'Operations', label: 'Visitor Register' },
   references: { section: 'Operations', label: 'Reference database' },
   executive: { section: 'Operations', label: 'Executive overview' },
   audit: { section: 'Operations', label: 'Audit trail' },

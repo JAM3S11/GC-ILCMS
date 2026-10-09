@@ -974,7 +974,7 @@ app.post('/api/reception/visits/:id/notify-lab', requireSession, asyncHandler(as
     await createReceptionActivityNotification(client, {
       recipientDepartment: visit.destination_department,
       title: `Client transferred to ${visit.destination_department}`,
-      message: `${visit.visitor_name} (${visit.visit_number}) ${resend ? 'was re-notified to' : 'has been transferred to'} ${visit.destination_department}. Open the Lab Bay notification to receive the client and continue with intake.`,
+      message: `${visit.visitor_name} (${visit.visit_number}) ${resend ? 'was re-notified to' : 'has been transferred to'} ${visit.destination_department}. Open the Visitor Register to receive the client and continue with intake.`,
       type: 'warning',
       linkAction: 'RECEPTION_LAB_BAY',
       visitId: visit.id,
@@ -4042,6 +4042,27 @@ app.post('/api/account/department-change-requests', requireSession, asyncHandler
   }
 }));
 
+// The caller's own department change requests, newest first, so Settings can
+// show a pending request and the outcome of earlier ones.
+app.get('/api/account/department-change-requests', requireSession, asyncHandler(async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT r.id, r.current_department AS "currentDepartment",
+              r.requested_department AS "requestedDepartment", r.reason, r.status,
+              r.created_at AS "createdAt", r.decision_at AS "decisionAt",
+              d.full_name AS "decidedBy"
+       FROM department_change_requests r
+       LEFT JOIN users d ON d.id = r.decision_by
+       WHERE r.user_id = $1
+       ORDER BY r.created_at DESC LIMIT 10`,
+      [req.user.id],
+    );
+    res.json({ requests: rows });
+  } catch (error) {
+    next(error);
+  }
+}));
+
 app.get('/api/admin/department-change-requests', requireSession, requireSuperAdmin, asyncHandler(async (_req, res, next) => {
   try {
     const { rows } = await pool.query(
@@ -4109,6 +4130,18 @@ app.post('/api/admin/department-change-requests/:id/:decision', requireSession, 
       linkAction: 'ADMIN_USERS',
       recordType: 'department_change_request',
       recordId: request.id,
+    });
+    // Tell the requester the outcome in their own notification feed.
+    await createReceptionActivityNotification(client, {
+      recipientUserId: request.user_id,
+      title: decision === 'approve' ? 'Department change approved' : 'Department change not approved',
+      message: decision === 'approve'
+        ? `Your move from ${request.current_department} to ${request.requested_department} was approved. You now work in ${request.requested_department}.`
+        : `Your request to move from ${request.current_department} to ${request.requested_department} was not approved. You remain in ${request.live_department}.`,
+      type: decision === 'approve' ? 'success' : 'info',
+      linkAction: 'ACCOUNT_SETTINGS',
+      relatedRecordType: 'department_change_request',
+      relatedRecordId: request.id,
     });
     await client.query('COMMIT');
     res.json({ message: `Department change request ${decision === 'approve' ? 'approved' : 'rejected'}.` });
@@ -4389,6 +4422,9 @@ app.post('/api/admin/users', requireSession, requireSuperAdmin, asyncHandler(asy
   const emailSent = await deliverInvite(req, user, invitation);
   res.status(201).json({
     emailSent,
+    // Lets the console find, pin and highlight the new row in User accounts.
+    userId: user.id,
+    inviteExpiresAt: invitation.expiresAt,
     message: emailSent
       ? `Invitation sent to ${user.email}. It expires in 15 minutes.`
       : `Account created, but the invitation email could not be delivered. Check SMTP settings, then resend the invitation from Staff accounts.`,

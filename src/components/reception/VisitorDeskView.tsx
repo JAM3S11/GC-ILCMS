@@ -134,7 +134,7 @@ export const VisitorDeskView: React.FC<VisitorDeskViewProps> = ({
         actions={
           <>
             <Button icon={FlaskConical} onClick={() => onNavigate?.('lab-bay')}>
-              Lab Bay
+              Visitor Register
             </Button>
             <Button variant="primary" icon={UserPlus} onClick={() => onNavigate?.('register-visitor')}>
               Register visitor
@@ -172,8 +172,8 @@ export const VisitorDeskView: React.FC<VisitorDeskViewProps> = ({
           value={visitStats ? visitStats.awaitingLab : visitStatsLoading ? '…' : '—'}
           icon={FlaskConical}
           tone="emerald"
-          hint="All visits staged in Lab Bay"
-          action={{ label: 'Open Lab Bay', onClick: () => onNavigate?.('lab-bay') }}
+          hint="All visits in the Visitor Register"
+          action={{ label: 'Open Visitor Register', onClick: () => onNavigate?.('lab-bay') }}
         />
         <KpiCard
           label="Total departed"
@@ -361,7 +361,7 @@ export const VisitorDeskView: React.FC<VisitorDeskViewProps> = ({
                               onClick={() => onProceedToLab(vis)}
                               title="Move the visitor to the laboratory receiving process"
                             >
-                              Lab Bay
+                              Hand to lab
                             </Button>
                             )}
                             {onSendLabNotification && vis.status !== 'Departed' && (

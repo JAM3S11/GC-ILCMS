@@ -455,7 +455,10 @@ export interface ForensicCase {
 
 export interface AppNotification {
   id: string;
+  /** Display time, e.g. "9 Oct 2026, 14:32". */
   timestamp: string;
+  /** ISO time it was raised, when known; used for sorting and grouping by day. */
+  createdAt?: string;
   recipientRole?: UserRole | null;
   recipientDepartment?: LaboratoryDepartment | null;
   title: string;

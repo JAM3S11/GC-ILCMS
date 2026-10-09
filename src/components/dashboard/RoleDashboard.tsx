@@ -511,7 +511,7 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
           action={{ label: 'Open case file', onClick: () => onNavigate('case-file') }} />
         <KpiCard label="Awaiting allocation" value={3} icon={Inbox} tone="sky" hint="Pending HoD assignment" />
         <KpiCard label="Visitors on site" value={onSite.length} icon={Users} tone="violet"
-          hint={`${awaitingLab.length} awaiting a laboratory`} action={{ label: 'Reception & Client Handover', onClick: () => onNavigate('lab-bay') }} />
+          hint={`${awaitingLab.length} awaiting a laboratory`} action={{ label: 'Visitor Register', onClick: () => onNavigate('lab-bay') }} />
         <KpiCard label="Certificates to dispatch" value={6} icon={FileCheck} tone="emerald" hint="Signed and sealed" />
       </>
     ),
@@ -547,7 +547,7 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
     ) : persona === 'registry' ? (
       <>
         <Button icon={Users} onClick={() => onNavigate('lab-bay')}>
-          Lab Bay
+          Visitor Register
         </Button>
         <Button variant="primary" icon={Package} onClick={onOpenIntakeModal} id="dash-quick-intake">
           Register submission

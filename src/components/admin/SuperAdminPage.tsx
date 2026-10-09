@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Activity,
   Check,
@@ -14,6 +14,7 @@ import {
   KeyRound,
   UserCheck,
   UserRoundX,
+  UserPlus,
   Users,
   X,
 } from 'lucide-react';
@@ -21,12 +22,16 @@ import { LaboratoryDepartment, UserRole } from '../../types';
 import { apiRequest } from '../../lib/api';
 import { AuditLogView } from './AuditLogView';
 import { Select } from '../common/Select';
+import { Avatar, Button, SegmentedControl, StatusPill, Tone } from '../common/Dashboard';
+import { CreateUserDrawer, NewAccount } from './CreateUserDrawer';
+import { roleLabel } from './roles';
 import {
   GENERAL_ADMINISTRATION,
   departmentForRole,
   departmentLabel,
   departmentsForRole,
   isLabScopedRole,
+  LABORATORY_DEPARTMENTS,
 } from '../../lib/departments';
 
 type RequestRecord = {
@@ -92,11 +97,26 @@ const formatDate = (value: string) => new Intl.DateTimeFormat(undefined, {
   timeStyle: 'short',
 }).format(new Date(value));
 
-const statusStyle: Record<AccountRecord['status'], string> = {
-  ACTIVE: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300',
-  PENDING_INVITE: 'bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300',
-  DISABLED: 'bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300',
+const ACCOUNT_STATUS: Record<AccountRecord['status'], { label: string; tone: Tone }> = {
+  ACTIVE: { label: 'Active', tone: 'emerald' },
+  PENDING_INVITE: { label: 'Invitation pending', tone: 'amber' },
+  DISABLED: { label: 'Disabled', tone: 'rose' },
 };
+
+type StatusFilter = 'all' | AccountRecord['status'];
+
+/** The account just created from this console, pinned and highlighted in the register. */
+type CreatedAccount = NewAccount & {
+  id?: string;
+  emailSent: boolean;
+  message: string;
+  inviteExpiresAt?: string;
+};
+
+const isToday = (value: string) => new Date(value).toDateString() === new Date().toDateString();
+
+const formatTime = (value: string) =>
+  new Intl.DateTimeFormat(undefined, { timeStyle: 'short' }).format(new Date(value));
 
 export const SuperAdminPage: React.FC<{
   currentUserId: string;
@@ -118,11 +138,12 @@ export const SuperAdminPage: React.FC<{
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [query, setQuery] = useState('');
-  const [showCreateForm, setShowCreateForm] = useState(false);
-  const [fullName, setFullName] = useState('');
-  const [email, setEmail] = useState('');
-  const [role, setRole] = useState<UserRole>('ANALYST');
-  const [department, setDepartment] = useState<LaboratoryDepartment>(departmentForRole('ANALYST'));
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [justCreated, setJustCreated] = useState<CreatedAccount | null>(null);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [departmentFilter, setDepartmentFilter] = useState<'all' | LaboratoryDepartment>('all');
+  const createdRowRef = useRef<HTMLTableRowElement | null>(null);
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
   const [roleDraft, setRoleDraft] = useState<UserRole>('ANALYST');
   const [departmentDraft, setDepartmentDraft] = useState<LaboratoryDepartment>(GENERAL_ADMINISTRATION);
@@ -228,37 +249,70 @@ export const SuperAdminPage: React.FC<{
     setConfirmDeleteId(null);
   };
 
-  const chooseInviteRole = (next: UserRole) => {
-    setRole(next);
-    setDepartment(departmentForRole(next, department));
+  const openCreate = () => {
+    setCreateError('');
+    setCreateOpen(true);
   };
 
-  const createUser = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const createUser = async (account: NewAccount) => {
     setWorkingId('create');
+    setCreateError('');
     setError('');
     setNotice('');
     try {
-      const result = await apiRequest<{ message: string }>('/api/admin/users', {
+      const result = await apiRequest<{ message: string; emailSent: boolean; userId?: string; inviteExpiresAt?: string }>('/api/admin/users', {
         method: 'POST',
-        body: JSON.stringify({ fullName, email, role, department }),
+        body: JSON.stringify(account),
       });
-      setNotice(result.message);
-      setShowCreateForm(false);
-      setFullName('');
-      setEmail('');
-      setDepartment(departmentForRole(role));
-      await loadData();
+      setCreateOpen(false);
+      // Clear anything that could hide the new row, then land on the register.
+      setQuery('');
+      setStatusFilter('all');
+      setDepartmentFilter('all');
       setTab('users');
+      setUsersView('accounts');
+      setJustCreated({ ...account, id: result.userId, emailSent: result.emailSent, message: result.message, inviteExpiresAt: result.inviteExpiresAt });
+      await loadData(false);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'The account could not be created.');
+      setCreateError(cause instanceof Error ? cause.message : 'The account could not be created.');
     } finally {
       setWorkingId(null);
     }
   };
 
-  const filteredUsers = users.filter((user) =>
-    `${user.fullName} ${user.email} ${user.role}`.toLowerCase().includes(query.toLowerCase()));
+  // Older servers do not return the id, so fall back to the email.
+  const isJustCreated = (user: AccountRecord) =>
+    !!justCreated && (justCreated.id ? user.id === justCreated.id : user.email.toLowerCase() === justCreated.email);
+  const createdRecord = justCreated ? users.find(isJustCreated) : undefined;
+
+  // Bring the new row into view once it has loaded.
+  useEffect(() => {
+    if (createdRecord) createdRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [createdRecord?.id]);
+
+  const showCreatedRow = () => createdRowRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+  const statusCounts = users.reduce<Record<StatusFilter, number>>(
+    (counts, user) => ({ ...counts, all: counts.all + 1, [user.status]: counts[user.status] + 1 }),
+    { all: 0, ACTIVE: 0, PENDING_INVITE: 0, DISABLED: 0 },
+  );
+  const departmentsWithHead = users
+    .filter((user) => user.role === 'HEAD_OF_DEPARTMENT' && user.department)
+    .map((user) => user.department as LaboratoryDepartment);
+
+  const filteredUsers = users
+    .filter((user) => statusFilter === 'all' || user.status === statusFilter)
+    .filter((user) => departmentFilter === 'all' || (user.department ?? GENERAL_ADMINISTRATION) === departmentFilter)
+    .filter((user) =>
+      `${user.fullName} ${user.email} ${user.role} ${roleLabel(user.role)} ${departmentLabel(user.department)}`.toLowerCase().includes(query.toLowerCase()))
+    // The account just created always leads the list.
+    .sort((a, b) => Number(isJustCreated(b)) - Number(isJustCreated(a)));
+  const filtersActive = statusFilter !== 'all' || departmentFilter !== 'all' || query !== '';
+  const clearFilters = () => {
+    setStatusFilter('all');
+    setDepartmentFilter('all');
+    setQuery('');
+  };
 
   const metrics = [
     { label: 'Account requests', value: overview?.pending_requests ?? '—', icon: Clock3, tone: 'amber' },
@@ -313,48 +367,22 @@ export const SuperAdminPage: React.FC<{
           <button type="button" onClick={() => void loadData()} className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
           </button>
-          <button type="button" onClick={() => setShowCreateForm((shown) => !shown)} className="inline-flex h-10 items-center gap-2 rounded-lg bg-amber-500 px-3 text-sm font-semibold text-slate-950 hover:bg-amber-400">
-            <Plus className="h-4 w-4" /> Create user
-          </button>
+          <Button variant="primary" icon={UserPlus} onClick={openCreate}>Create user</Button>
         </div>
       </header>
 
       {error && <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">{error}</div>}
       {notice && <div role="status" className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">{notice}</div>}
 
-      {showCreateForm && (
-        <form onSubmit={createUser} className="grid gap-4 rounded-2xl border border-amber-200 bg-white p-5 shadow-sm dark:border-amber-900/60 dark:bg-slate-900 md:grid-cols-2 xl:grid-cols-3">
-          <div className="md:col-span-2 xl:col-span-3">
-            <h2 className="font-semibold text-slate-900 dark:text-white">Invite a staff member</h2>
-            <p className="mt-1 text-xs text-slate-500">They’ll receive a one-time activation link that expires after 15 minutes.</p>
-          </div>
-          <label className="space-y-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300">Full name
-            <input required minLength={2} value={fullName} onChange={(e) => setFullName(e.target.value)} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-normal text-slate-900 outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
-          </label>
-          <label className="space-y-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300">Work email
-            <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm font-normal text-slate-900 outline-none focus:border-amber-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
-          </label>
-          <label className="space-y-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300">Role
-            <Select value={role} onChange={chooseInviteRole} options={roles.map((item) => ({ value: item, label: item.replaceAll('_', ' ') }))} />
-          </label>
-          <label className="space-y-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300">Department
-            <Select value={department} onChange={(value) => setDepartment(value as LaboratoryDepartment)} options={departmentsForRole(role).map((item) => ({ value: item, label: departmentLabel(item) }))} />
-            <span className="block text-[11px] font-normal text-slate-500">
-              {role === 'HEAD_OF_DEPARTMENT'
-                ? 'One Head of Department per laboratory. Change the current head’s role first to replace them.'
-                : isLabScopedRole(role)
-                  ? 'This role works in one laboratory division.'
-                  : 'This role is institution-wide and is not attached to a laboratory.'}
-            </span>
-          </label>
-          <div className="flex items-end gap-2">
-            <button disabled={workingId === 'create'} className="inline-flex h-10 items-center gap-2 rounded-lg bg-slate-900 px-4 text-sm font-semibold text-white disabled:opacity-60 dark:bg-white dark:text-slate-900">
-              <Mail className="h-4 w-4" /> {workingId === 'create' ? 'Sending…' : 'Create & send invite'}
-            </button>
-            <button type="button" onClick={() => setShowCreateForm(false)} className="h-10 rounded-lg px-3 text-sm text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">Cancel</button>
-          </div>
-        </form>
-      )}
+      <CreateUserDrawer
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        onSubmit={createUser}
+        working={workingId === 'create'}
+        error={createError}
+        existingEmails={users.map((user) => user.email.toLowerCase())}
+        departmentsWithHead={departmentsWithHead}
+      />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         {metrics.map(({ label, value, icon: Icon, tone }) => (
@@ -382,12 +410,6 @@ export const SuperAdminPage: React.FC<{
               </button>
             ))}
           </div>
-          {shownTab === 'users' && usersView === 'accounts' && (
-            <label className="flex h-9 items-center gap-2 rounded-lg border border-slate-200 px-2.5 dark:border-slate-700">
-              <Search className="h-4 w-4 text-slate-400" />
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search staff" className="w-40 bg-transparent text-xs outline-none dark:text-white" />
-            </label>
-          )}
         </div>
 
         {loading ? (
@@ -434,14 +456,79 @@ export const SuperAdminPage: React.FC<{
               ))}
             </div>
           )}
-          {hideTabs && usersView === 'requests' ? renderRequests() : filteredUsers.length === 0 ? <EmptyState title="No staff accounts found" detail="Change your search or invite a new staff member." /> : (
+          {!(hideTabs && usersView === 'requests') && (
+            <>
+              {justCreated && (
+                <CreatedReceipt
+                  account={justCreated}
+                  record={createdRecord}
+                  working={!!createdRecord && workingId === createdRecord.id}
+                  onShow={showCreatedRow}
+                  onResend={createdRecord ? () => void resendInvite(createdRecord.id) : undefined}
+                  onCreateAnother={openCreate}
+                  onDismiss={() => setJustCreated(null)}
+                />
+              )}
+              <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-2.5 dark:border-slate-800">
+                <SegmentedControl<StatusFilter>
+                  ariaLabel="Filter by account status"
+                  value={statusFilter}
+                  onChange={setStatusFilter}
+                  options={[
+                    { value: 'all', label: 'All', count: statusCounts.all },
+                    { value: 'ACTIVE', label: 'Active', count: statusCounts.ACTIVE },
+                    { value: 'PENDING_INVITE', label: 'Invitation pending', count: statusCounts.PENDING_INVITE },
+                    { value: 'DISABLED', label: 'Disabled', count: statusCounts.DISABLED },
+                  ]}
+                />
+                <Select<'all' | LaboratoryDepartment>
+                  size="xs"
+                  className="w-52"
+                  aria-label="Filter by department"
+                  value={departmentFilter}
+                  onChange={setDepartmentFilter}
+                  options={[
+                    { value: 'all', label: 'All departments' },
+                    ...[...LABORATORY_DEPARTMENTS, GENERAL_ADMINISTRATION].map((item) => ({ value: item, label: departmentLabel(item) })),
+                  ]}
+                />
+                <label className="ml-auto flex h-8 items-center gap-2 rounded-lg border border-slate-200 px-2.5 dark:border-slate-700">
+                  <Search className="h-3.5 w-3.5 text-slate-400" />
+                  <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, email or role" aria-label="Search staff" className="w-48 bg-transparent text-xs outline-none dark:text-white" />
+                </label>
+                {filtersActive && <Button variant="ghost" size="sm" onClick={clearFilters}>Clear</Button>}
+              </div>
+            </>
+          )}
+          {hideTabs && usersView === 'requests' ? renderRequests() : filteredUsers.length === 0 ? <EmptyState title="No staff accounts found" detail={filtersActive ? 'No account matches these filters. Clear them to see the full register.' : 'Create the first staff account to get started.'} /> : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[760px] text-left text-xs">
-                <thead className="bg-slate-50 text-slate-500 dark:bg-slate-950/50"><tr><th className="px-4 py-3 font-semibold">Staff member</th><th className="px-4 py-3 font-semibold">Role / unit</th><th className="px-4 py-3 font-semibold">Status</th><th className="px-4 py-3 font-semibold">Created</th><th className="px-4 py-3 text-right font-semibold">Actions</th></tr></thead>
+                <thead className="bg-slate-50 text-slate-500 dark:bg-slate-950/50"><tr><th className="px-4 py-3 font-semibold">Staff member</th><th className="px-4 py-3 font-semibold">Role / unit</th><th className="px-4 py-3 font-semibold">Status</th><th className="px-4 py-3 font-semibold">Added</th><th className="px-4 py-3 text-right font-semibold">Actions</th></tr></thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {filteredUsers.map((user) => (
-                    <tr key={user.id}>
-                      <td className="px-4 py-3"><div className="font-semibold text-slate-900 dark:text-white">{user.fullName}</div><div className="mt-1 text-slate-500">{user.email}</div></td>
+                  {filteredUsers.map((user) => {
+                    const created = isJustCreated(user);
+                    return (
+                    <tr
+                      key={user.id}
+                      ref={created ? createdRowRef : undefined}
+                      aria-current={created ? 'true' : undefined}
+                      className={created
+                        ? 'bg-amber-50/80 shadow-[inset_3px_0_0_var(--color-amber-500)] dark:bg-amber-500/10'
+                        : 'transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40'}
+                    >
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <Avatar name={user.fullName} size="sm" tone={created ? 'amber' : user.status === 'DISABLED' ? 'rose' : 'slate'} />
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-semibold text-slate-900 dark:text-white">{user.fullName}</span>
+                              {created && <span className="rounded bg-amber-500 px-1.5 py-px text-[10px] font-bold uppercase tracking-wide text-slate-950">New</span>}
+                              {user.id === currentUserId && <span className="text-[11px] text-slate-500">(you)</span>}
+                            </div>
+                            <div className="mt-0.5 text-slate-500">{user.email}</div>
+                          </div>
+                        </div>
+                      </td>
                       <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
                         {editingRoleId === user.id ? (
                           <div className="flex flex-wrap items-center gap-1.5">
@@ -451,7 +538,7 @@ export const SuperAdminPage: React.FC<{
                               aria-label="Role"
                               value={roleDraft}
                               onChange={chooseRoleDraft}
-                              options={roles.map((item) => ({ value: item, label: item.replaceAll('_', ' ') }))}
+                              options={roles.map((item) => ({ value: item, label: roleLabel(item) }))}
                             />
                             <Select
                               size="xs"
@@ -468,17 +555,20 @@ export const SuperAdminPage: React.FC<{
                         ) : (
                           <>
                             <div className="flex items-center gap-2">
-                              <span>{user.role.replaceAll('_', ' ')}</span>
+                              <span className="font-medium text-slate-800 dark:text-slate-200">{roleLabel(user.role)}</span>
                               {user.id !== currentUserId && (
                                 <button type="button" title="Change role" onClick={() => beginRoleEdit(user)} className="text-slate-400 transition-colors hover:text-amber-600 dark:hover:text-amber-400"><Pencil className="h-3.5 w-3.5" /></button>
                               )}
                             </div>
-                            <div className="mt-1 text-slate-500">{user.department || '—'}</div>
+                            <div className="mt-0.5 text-slate-500">{departmentLabel(user.department) || '—'}</div>
                           </>
                         )}
                       </td>
-                      <td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${statusStyle[user.status]}`}>{user.status.replaceAll('_', ' ')}</span></td>
-                      <td className="px-4 py-3 text-slate-500">{formatDate(user.createdAt)}</td>
+                      <td className="px-4 py-3">
+                        <StatusPill tone={ACCOUNT_STATUS[user.status].tone}>{ACCOUNT_STATUS[user.status].label}</StatusPill>
+                        {user.status === 'PENDING_INVITE' && <div className="mt-1 text-[11px] text-slate-500">Awaiting activation by the officer</div>}
+                      </td>
+                      <td className="px-4 py-3 text-slate-500">{isToday(user.createdAt) ? <><span className="font-medium text-slate-700 dark:text-slate-200">Today</span>, {formatTime(user.createdAt)}</> : formatDate(user.createdAt)}</td>
                       <td className="px-4 py-3"><div className="flex flex-wrap items-center justify-end gap-2">
                         {confirmDeleteId === user.id ? (
                           <>
@@ -496,7 +586,8 @@ export const SuperAdminPage: React.FC<{
                         )}
                       </div></td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -508,6 +599,60 @@ export const SuperAdminPage: React.FC<{
       </div>
       <p className="flex items-center gap-2 text-[11px] text-slate-500"><CheckCircle2 className="h-4 w-4 text-emerald-500" /> Administrator actions are stored in PostgreSQL audit logs.</p>
     </section>
+  );
+};
+
+/**
+ * Confirmation shown above the register after creating an account: who was
+ * created, where the invitation went and when it lapses, and what to do next.
+ */
+const CreatedReceipt: React.FC<{
+  account: CreatedAccount;
+  /** The row once the register has reloaded; undefined while it loads. */
+  record?: AccountRecord;
+  working: boolean;
+  onShow: () => void;
+  onResend?: () => void;
+  onCreateAnother: () => void;
+  onDismiss: () => void;
+}> = ({ account, record, working, onShow, onResend, onCreateAnother, onDismiss }) => {
+  const sent = account.emailSent;
+  return (
+    <div
+      role="status"
+      className={`flex flex-wrap items-start gap-3 border-b px-4 py-3 ${
+        sent
+          ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-900/60 dark:bg-emerald-950/30'
+          : 'border-amber-200 bg-amber-50 dark:border-amber-900/60 dark:bg-amber-950/30'
+      }`}
+    >
+      <span className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${sent ? 'bg-emerald-600 text-white' : 'bg-amber-500 text-slate-950'}`}>
+        {sent ? <CheckCircle2 className="h-4 w-4" /> : <Mail className="h-4 w-4" />}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className={`text-sm font-semibold ${sent ? 'text-emerald-900 dark:text-emerald-100' : 'text-amber-900 dark:text-amber-100'}`}>
+          {sent ? 'Account created and invitation sent' : 'Account created, but the invitation email was not delivered'}
+        </p>
+        <p className="mt-0.5 text-xs text-slate-700 dark:text-slate-300">
+          <strong>{account.fullName}</strong> · {roleLabel(account.role)} · {departmentLabel(account.department)}
+        </p>
+        <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-400">
+          {sent
+            ? <>Activation link emailed to {account.email}{account.inviteExpiresAt ? <> · expires at {formatTime(account.inviteExpiresAt)}</> : ' · expires in 15 minutes'}. The account shows as <em>Invitation pending</em> until the officer activates it.</>
+            : <>Check the mail (SMTP) settings, then resend the invitation to {account.email}.</>}
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        {record && <Button size="sm" onClick={onShow}>Show in list</Button>}
+        {onResend && (!sent || record?.status === 'PENDING_INVITE') && (
+          <Button size="sm" icon={RefreshCw} disabled={working} onClick={onResend}>Resend invite</Button>
+        )}
+        <Button size="sm" variant="primary" icon={UserPlus} onClick={onCreateAnother}>Create another</Button>
+        <button type="button" aria-label="Dismiss" onClick={onDismiss} className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-slate-500 hover:bg-black/5 hover:text-slate-900 dark:hover:bg-white/10 dark:hover:text-white">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
   );
 };
 
