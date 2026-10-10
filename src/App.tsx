@@ -1908,6 +1908,11 @@ export default function App() {
                 currentUser={currentUser}
                 onCompactSidebarChange={(compact) => setSidebarCollapsed(compact)}
                 onSignOut={handleSignOut}
+                onSessionEnded={(message) => {
+                  setCurrentUser(null);
+                  setActiveView('landing');
+                  showToast(message);
+                }}
               />
             )}
 

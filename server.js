@@ -4019,9 +4019,13 @@ app.post('/api/account/department-change-requests', requireSession, asyncHandler
       [req.user.id, req.user.department, department, reason?.trim() || null],
     );
     const request = rows[0];
+    // Requesting a move ends every session the user has (this browser and any
+    // other device); they sign in again to continue.
+    const { rowCount: sessionsEnded } = await client.query('DELETE FROM auth_sessions WHERE user_id = $1', [req.user.id]);
     await audit(client, req.user.id, req.user.email, 'DEPARTMENT_CHANGE_REQUESTED', 'department_change_request', request.id, {
       from: req.user.department,
       to: department,
+      sessionsEnded,
     });
     await createAdminNotification(client, {
       title: 'Department change requested',
@@ -4032,7 +4036,8 @@ app.post('/api/account/department-change-requests', requireSession, asyncHandler
       recordId: request.id,
     });
     await client.query('COMMIT');
-    res.status(201).json({ request });
+    res.clearCookie(SESSION_COOKIE, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', path: '/' });
+    res.status(201).json({ request, signedOut: true });
   } catch (error) {
     await client.query('ROLLBACK');
     if (error.code === '23505') return res.status(409).json({ error: 'You already have a pending department change request.' });
@@ -4060,6 +4065,46 @@ app.get('/api/account/department-change-requests', requireSession, asyncHandler(
     res.json({ requests: rows });
   } catch (error) {
     next(error);
+  }
+}));
+
+// The requester calls off their own pending request. Kept as a WITHDRAWN row
+// (not deleted) so the history and audit trail stay complete.
+app.post('/api/account/department-change-requests/:id/withdraw', requireSession, asyncHandler(async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `UPDATE department_change_requests
+       SET status = 'WITHDRAWN', decision_by = $2, decision_at = NOW()
+       WHERE id = $1 AND user_id = $2 AND status = 'PENDING'
+       RETURNING id, current_department, requested_department`,
+      [req.params.id, req.user.id],
+    );
+    if (!rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'This request is no longer pending. It may already have been decided.' });
+    }
+    const request = rows[0];
+    await audit(client, req.user.id, req.user.email, 'DEPARTMENT_CHANGE_WITHDRAWN', 'department_change_request', request.id, {
+      from: request.current_department,
+      to: request.requested_department,
+    });
+    await createAdminNotification(client, {
+      title: 'Department change request withdrawn',
+      message: `${req.user.full_name} (${req.user.email}) withdrew their request to move from ${request.current_department} to ${request.requested_department}. No action is needed.`,
+      type: 'info',
+      linkAction: 'ADMIN_DEPARTMENT_REQUESTS',
+      recordType: 'department_change_request',
+      recordId: request.id,
+    });
+    await client.query('COMMIT');
+    res.json({ message: 'Your department change request was withdrawn.' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    next(error);
+  } finally {
+    client.release();
   }
 }));
 

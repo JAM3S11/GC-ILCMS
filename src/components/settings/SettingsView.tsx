@@ -178,6 +178,8 @@ interface SettingsViewProps {
   currentUser: User;
   onCompactSidebarChange: (compact: boolean) => void;
   onSignOut: () => void;
+  /** The server ended every session for this user (e.g. after requesting a move). */
+  onSessionEnded: (message: string) => void;
 }
 
 /** One of the signed-in user's department change requests. */
@@ -186,7 +188,7 @@ interface DepartmentRequest {
   currentDepartment: LaboratoryDepartment;
   requestedDepartment: LaboratoryDepartment;
   reason?: string | null;
-  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+  status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'WITHDRAWN';
   createdAt: string;
   decisionAt?: string | null;
   decidedBy?: string | null;
@@ -200,7 +202,7 @@ type BrowserPermission =NotificationPermission | 'unsupported';
 const browserPermission = (): BrowserPermission =>
   typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'unsupported';
 
-export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onCompactSidebarChange, onSignOut }) => {
+export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onCompactSidebarChange, onSignOut, onSessionEnded }) => {
   const { setMode } = useTheme();
   const [section, setSection] = useState<SectionId>('profile');
   const [settings, setSettings] = useState<UserSettings>(() => readUserSettings(currentUser.id));
@@ -228,6 +230,32 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onCompa
 
   const pendingRequest = myRequests?.find((request) => request.status === 'PENDING');
   const decidedRequests = myRequests?.filter((request) => request.status !== 'PENDING') ?? [];
+
+  const [confirmWithdraw, setConfirmWithdraw] = useState(false);
+  const [withdrawing, setWithdrawing] = useState(false);
+  const [withdrawError, setWithdrawError] = useState('');
+
+  const withdrawRequest = async () => {
+    if (!pendingRequest) return;
+    setWithdrawing(true);
+    setWithdrawError('');
+    try {
+      await apiRequest(`/api/account/department-change-requests/${pendingRequest.id}/withdraw`, { method: 'POST', body: '{}' });
+      const now = new Date().toISOString();
+      // Move it into the history; the form comes back for a new request.
+      setMyRequests((previous) => previous?.map((request) =>
+        request.id === pendingRequest.id ? { ...request, status: 'WITHDRAWN', decisionAt: now, decidedBy: currentUser.name } : request) ?? null);
+      setConfirmWithdraw(false);
+    } catch (cause) {
+      setWithdrawError(cause instanceof Error ? cause.message : 'Could not withdraw the request.');
+      // It may have been decided meanwhile: reload to show the real state.
+      apiRequest<{ requests: DepartmentRequest[] }>('/api/account/department-change-requests')
+        .then(({ requests }) => setMyRequests(requests))
+        .catch(() => undefined);
+    } finally {
+      setWithdrawing(false);
+    }
+  };
 
   const [resetState, setResetState] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [resetSending, setResetSending] = useState(false);
@@ -286,21 +314,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onCompa
     setDepartmentRequestSaving(true);
     setDepartmentRequest(null);
     try {
-      const { request } = await apiRequest<{ request: { id: string; department: LaboratoryDepartment; status: 'PENDING'; createdAt: string } }>(
+      const { request } = await apiRequest<{ request: { department: LaboratoryDepartment } }>(
         '/api/account/department-change-requests',
         { method: 'POST', body: JSON.stringify({ department: requestedDepartment, reason: departmentReason }) },
       );
-      // The pending panel that replaces the form is the confirmation.
-      setMyRequests((previous) => [{
-        id: request.id,
-        currentDepartment: currentUser.department as LaboratoryDepartment,
-        requestedDepartment: request.department,
-        reason: departmentReason.trim() || null,
-        status: request.status,
-        createdAt: request.createdAt,
-      }, ...(previous ?? [])]);
-      setDepartmentReason('');
-      setRequestedDepartment('');
+      // The server has ended all of this user's sessions; return to sign-in.
+      onSessionEnded(`Move to ${departmentLabel(request.department)} requested. You have been signed out on all devices; sign in again to check its status.`);
+      return;
     } catch (cause) {
       setDepartmentRequest({ tone: 'error', text: cause instanceof Error ? cause.message : 'Could not submit the department change request.' });
     } finally {
@@ -405,6 +425,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onCompa
 
               {canRequestMove && (
                 <SectionCard title="Move to another laboratory" description="Ask the Super Admin to transfer you. Nothing changes until they approve.">
+                  {withdrawError && (
+                    <p role="alert" className="mx-5 mt-4 rounded-lg bg-rose-50 px-3 py-2.5 text-xs text-rose-800 dark:bg-rose-950/30 dark:text-rose-200">{withdrawError}</p>
+                  )}
                   {myRequests === null ? (
                     <div className="px-5 py-6 text-center text-xs text-slate-500 dark:text-slate-400">Checking for an open request…</div>
                   ) : pendingRequest ? (
@@ -429,6 +452,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onCompa
                         {pendingRequest.reason && (
                           <p className="mt-3 text-xs text-slate-700 dark:text-slate-300"><span className="font-medium">Reason:</span> {pendingRequest.reason}</p>
                         )}
+                        <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t border-amber-200 pt-3 dark:border-amber-500/30">
+                          {confirmWithdraw ? (
+                            <>
+                              <span className="mr-auto text-xs font-medium text-slate-700 dark:text-slate-200">Withdraw this request? The Super Admin will no longer see it.</span>
+                              <Button size="sm" variant="ghost" disabled={withdrawing} onClick={() => setConfirmWithdraw(false)}>Keep it</Button>
+                              <Button size="sm" variant="danger" disabled={withdrawing} onClick={() => void withdrawRequest()}>
+                                {withdrawing ? 'Withdrawing…' : 'Yes, withdraw'}
+                              </Button>
+                            </>
+                          ) : (
+                            <Button size="sm" variant="secondary" onClick={() => { setWithdrawError(''); setConfirmWithdraw(true); }}>Withdraw request</Button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ) : (
@@ -469,9 +505,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onCompa
                         {departmentRequest.text}
                       </p>
                     )}
-                    <div className="flex justify-end">
+                    <div className="flex flex-wrap items-center justify-end gap-3">
+                      <p className="mr-auto flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                        <LogOut className="h-3.5 w-3.5 shrink-0" />
+                        Sending the request signs you out on every device. Sign in again to continue working.
+                      </p>
                       <Button type="submit" variant="primary" icon={ArrowRightLeft} disabled={departmentRequestSaving || !requestedDepartment}>
-                        {departmentRequestSaving ? 'Sending…' : 'Send request'}
+                        {departmentRequestSaving ? 'Sending…' : 'Send request & sign out'}
                       </Button>
                     </div>
                   </form>
@@ -488,11 +528,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onCompa
                               </div>
                               <div className="text-[11px] text-slate-500 dark:text-slate-400">
                                 Sent {formatDateTime(request.createdAt)}
-                                {request.decisionAt && <> · decided {formatDateTime(request.decisionAt)}{request.decidedBy ? ` by ${request.decidedBy}` : ''}</>}
+                                {request.decisionAt && (request.status === 'WITHDRAWN'
+                                  ? <> · withdrawn by you {formatDateTime(request.decisionAt)}</>
+                                  : <> · decided {formatDateTime(request.decisionAt)}{request.decidedBy ? ` by ${request.decidedBy}` : ''}</>)}
                               </div>
                             </div>
-                            <StatusPill tone={request.status === 'APPROVED' ? 'emerald' : 'rose'}>
-                              {request.status === 'APPROVED' ? 'Approved' : 'Not approved'}
+                            <StatusPill tone={request.status === 'APPROVED' ? 'emerald' : request.status === 'WITHDRAWN' ? 'slate' : 'rose'}>
+                              {request.status === 'APPROVED' ? 'Approved' : request.status === 'WITHDRAWN' ? 'Withdrawn' : 'Not approved'}
                             </StatusPill>
                           </li>
                         ))}
