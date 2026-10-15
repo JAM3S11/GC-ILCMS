@@ -58,7 +58,7 @@ type Stage = 'all' | 'awaiting' | 'analysis' | 'complete';
 
 const STATUS_TONE: Record<WaterIntakeStatus, Tone> = {
   'Awaiting Approval': 'rose',
-  'Awaiting Assignment': 'amber',
+  'Awaiting Assignment': 'teal',
   'Under Analysis': 'sky',
   'Analysis Complete': 'emerald',
 };
@@ -180,12 +180,12 @@ export const WaterRegisterPanel: React.FC<WaterRegisterPanelProps> = ({
               onClick={() => setStage(tab.id)}
               className={`-mb-px flex shrink-0 items-center gap-1.5 border-b-2 py-3 text-[13px] transition-colors ${
                 active
-                  ? 'border-amber-500 font-semibold text-slate-900 dark:text-white'
+                  ? 'border-teal-500 font-semibold text-slate-900 dark:text-white'
                   : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
               }`}
             >
               {tab.label}
-              <span className={`rounded-full px-1.5 text-[11px] tabular-nums ${active ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
+              <span className={`rounded-full px-1.5 text-[11px] tabular-nums ${active ? 'bg-teal-500/15 text-teal-700 dark:text-teal-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}>
                 {tab.count}
               </span>
             </button>
@@ -224,7 +224,7 @@ export const WaterRegisterPanel: React.FC<WaterRegisterPanelProps> = ({
           ]}
         />
         {filtersActive && (
-          <button type="button" onClick={clearFilters} className="ml-auto text-xs font-medium text-amber-700 hover:underline dark:text-amber-400">
+          <button type="button" onClick={clearFilters} className="ml-auto text-xs font-medium text-teal-700 hover:underline dark:text-teal-400">
             Clear filters
           </button>
         )}
@@ -303,7 +303,7 @@ const ExhibitNextAction: React.FC<
   if (intake.status === 'Awaiting Assignment' || intake.status === 'Awaiting Approval') {
     return isHead ? (
       <>
-        <Button size="xs" variant="primary" icon={UserCheck} onClick={() => setAllocating(true)}>
+        <Button size="xs" variant="primaryTeal" icon={UserCheck} onClick={() => setAllocating(true)}>
           Allocate work
         </Button>
         {allocating && (

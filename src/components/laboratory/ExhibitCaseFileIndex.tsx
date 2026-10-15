@@ -27,14 +27,14 @@ export type Laboratory = 'water' | 'food';
 
 const WATER_STATUSES: RegisterStatus<WaterIntakeStatus>[] = [
   { value: 'Awaiting Approval', tone: 'rose', hint: 'Intake documents need the Head’s approval' },
-  { value: 'Awaiting Assignment', tone: 'amber', hint: 'Not yet allocated to an analysis officer' },
+  { value: 'Awaiting Assignment', tone: 'teal', hint: 'Not yet allocated to an analysis officer' },
   { value: 'Under Analysis', tone: 'sky', hint: 'With the analysis officer' },
   { value: 'Analysis Complete', tone: 'emerald', hint: 'Findings recorded; memo to follow', closed: true },
 ];
 
 const FOOD_STATUSES: RegisterStatus<FoodDrugIntakeStatus>[] = [
   { value: 'Awaiting Approval', tone: 'rose', hint: 'Intake documents need the Head’s approval' },
-  { value: 'Awaiting Assignment', tone: 'amber', hint: 'Not yet allocated to an analyst' },
+  { value: 'Awaiting Assignment', tone: 'teal', hint: 'Not yet allocated to an analyst' },
   { value: 'Under Analysis', tone: 'sky', hint: 'With the analyst' },
   { value: 'Reported', tone: 'emerald', hint: 'Certificate of analysis issued', closed: true },
 ];

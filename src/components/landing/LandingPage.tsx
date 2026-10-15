@@ -168,10 +168,10 @@ const GUILLOCHE_PATTERN =
   '%3C/svg%3E")';
 
 const inputClass =
-  'h-11 w-full rounded-[9px] border border-[#d8d8df] bg-white px-[14px] text-[length:calc(16px*var(--lp-scale))] text-[#111] sm:h-9 sm:text-[length:calc(13px*var(--lp-scale))] outline-none transition-colors placeholder:text-[#9b9ba5] focus:border-[#f26522] focus:shadow-[0_0_0_2px_rgba(242,101,34,0.15)]';
+  'h-11 w-full rounded-[9px] border border-[#d8d8df] bg-white px-[14px] text-[length:calc(16px*var(--lp-scale))] text-[#111] sm:h-9 sm:text-[length:calc(13px*var(--lp-scale))] outline-none transition-colors placeholder:text-[#9b9ba5] focus:border-[#0f766e] focus:shadow-[0_0_0_2px_rgba(15,118,110,0.18)]';
 
 const primaryBtnClass =
-  'h-11 w-full cursor-pointer rounded-[8px] bg-[#f26522] text-[length:calc(15px*var(--lp-scale))] font-bold sm:h-[38px] sm:text-[length:calc(13px*var(--lp-scale))] text-white transition-colors hover:bg-[#d9541a] active:scale-[0.99]';
+  'h-11 w-full cursor-pointer rounded-[8px] bg-[#5eead4] text-[length:calc(15px*var(--lp-scale))] font-bold sm:h-[38px] sm:text-[length:calc(13px*var(--lp-scale))] text-[#0b3a42] transition-colors hover:bg-[#2dd4bf] active:scale-[0.99]';
 
 interface LandingPageProps {
   onLogin: (user: User) => void;
@@ -269,7 +269,7 @@ const TermsDialog: React.FC<TermsDialogProps> = ({ open, onClose }) => {
               <button
                 type="button"
                 onClick={onClose}
-                className="h-[38px] cursor-pointer rounded-[8px] bg-[#f26522] px-5 text-[length:calc(13px*var(--lp-scale))] font-bold text-white transition-colors hover:bg-[#d9541a]"
+                className="h-[38px] cursor-pointer rounded-[8px] bg-[#5eead4] px-5 text-[length:calc(13px*var(--lp-scale))] font-bold text-[#0b3a42] transition-colors hover:bg-[#2dd4bf]"
               >
                 I Understand
               </button>
@@ -614,7 +614,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                   className="mx-auto max-w-[calc(36rem*var(--lp-grow,1))] text-[length:calc(clamp(1.8rem,1.45rem+2.4vw,3.2rem)*var(--lp-scale))] font-semibold leading-[1.08] tracking-[-0.01em] text-white"
                   style={{ fontFamily: SERIF_STACK }}
                 >
-                  Government Chemist <span className="text-[#f26522]">LIMS</span>
+                  Government Chemist <span className="text-[#5eead4]">LIMS</span>
                 </h1>
                 <p className="mx-auto max-w-[calc(28rem*var(--lp-grow,1))] text-[length:calc(14px*var(--lp-scale))] leading-relaxed text-white/85 sm:text-[length:calc(15px*var(--lp-scale))]">
                   Register cases, track exhibits and route work to laboratory units.
@@ -740,7 +740,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                   <div aria-hidden="true" className="absolute inset-x-0 bottom-0 h-0.5 bg-white/10">
                     <motion.div
                       key={`${activeStep}-${autoAdvance}`}
-                      className="h-full origin-left bg-[#f26522]"
+                      className="h-full origin-left bg-[#5eead4]"
                       initial={{ scaleX: autoAdvance ? 0 : 1 }}
                       animate={{ scaleX: autoAdvance ? 1 : 0 }}
                       transition={{ duration: autoAdvance ? SLIDE_MS / 1000 : 0, ease: 'linear' }}
@@ -781,7 +781,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
             <button
               type="button"
               onClick={showMobileOverview}
-              className={`${centred ? 'hidden' : 'inline-flex'} h-8 cursor-pointer items-center gap-1 rounded-[8px] pr-2 text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#0d4a52] transition-colors hover:text-[#f26522] lg:hidden`}
+              className={`${centred ? 'hidden' : 'inline-flex'} h-8 cursor-pointer items-center gap-1 rounded-[8px] pr-2 text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#0d4a52] transition-colors hover:text-[#0f766e] lg:hidden`}
             >
               <ChevronLeft className="h-4 w-4" />
               Overview
@@ -862,7 +862,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                                 type="button"
                                 onClick={() => setShowSigninPass((prev) => !prev)}
                                 aria-label={showSigninPass ? 'Hide password' : 'Show password'}
-                                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8b8b98] hover:text-[#f26522] cursor-pointer"
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8b8b98] hover:text-[#0f766e] cursor-pointer"
                               >
                                 {showSigninPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                               </button>
@@ -879,7 +879,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                           <button
                             type="button"
                             onClick={() => { setForgotEmail(loginEmail); setAuthMode('forgot'); }}
-                            className="cursor-pointer text-[length:calc(12px*var(--lp-scale))] font-semibold text-[#f26522] underline-offset-2 hover:underline"
+                            className="cursor-pointer text-[length:calc(12px*var(--lp-scale))] font-semibold text-[#0f766e] underline-offset-2 hover:underline"
                           >
                             Forgot your password?
                           </button>
@@ -944,7 +944,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                             <button
                               type="button"
                               onClick={() => setAuthMode('signin')}
-                              className="mt-3 cursor-pointer text-[length:calc(12px*var(--lp-scale))] font-semibold text-[#f26522] underline-offset-2 hover:underline"
+                              className="mt-3 cursor-pointer text-[length:calc(12px*var(--lp-scale))] font-semibold text-[#0f766e] underline-offset-2 hover:underline"
                             >
                               Go to sign in
                             </button>
@@ -969,7 +969,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                                   type="button"
                                   onClick={() => setShowResetPass((prev) => !prev)}
                                   aria-label={showResetPass ? 'Hide password' : 'Show password'}
-                                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8b8b98] hover:text-[#f26522] cursor-pointer"
+                                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8b8b98] hover:text-[#0f766e] cursor-pointer"
                                 >
                                   {showResetPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                                 </button>

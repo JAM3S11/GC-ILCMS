@@ -36,7 +36,7 @@ const reportTone = (report: string) =>
       : 'text-slate-400';
 
 const inputClass =
-  'h-8 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-900 placeholder:text-slate-400 transition-colors focus:border-amber-500 focus:outline-none focus:ring-4 focus:ring-amber-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white';
+  'h-8 w-full rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-900 placeholder:text-slate-400 transition-colors focus:border-teal-500 focus:outline-none focus:ring-4 focus:ring-teal-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white';
 
 /** The physical and chemical test sheet: the officer fills it in; everyone else reads it. */
 export const WaterTestResultsForm: React.FC<WaterTestResultsFormProps> = ({ intake, canEdit, saving, saveError, onSave, onDraftChange, lockedNote }) => {
@@ -210,7 +210,7 @@ export const WaterTestResultsForm: React.FC<WaterTestResultsFormProps> = ({ inta
             {dirty ? 'You have unsaved changes.' : 'All changes saved.'}
             {intake.status === 'Under Analysis' && ' Saving the results marks the analysis complete.'}
           </span>
-          <Button variant="primary" size="sm" icon={FlaskConical} disabled={!canSave} onClick={() => onSave({ results: cleaned, remarks: remarks.trim() })}>
+          <Button variant="primaryTeal" size="sm" icon={FlaskConical} disabled={!canSave} onClick={() => onSave({ results: cleaned, remarks: remarks.trim() })}>
             {saving ? 'Saving…' : intake.findings ? 'Update test results' : 'Save test results'}
           </Button>
         </div>

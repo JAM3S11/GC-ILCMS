@@ -258,12 +258,12 @@ export const VisitorTaskRail: React.FC<{ visitors: ClientInQueue[] }> = ({ visit
       {/* ---------- Sign-out popup (toast) ---------- */}
       <div className="fixed right-4 bottom-4 z-50 space-y-2 w-72 sm:w-80">
         {signedOut.map((t) => (
-          <div key={t.id} className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 dark:bg-emerald-500/10 backdrop-blur shadow-lg flex items-start gap-2.5 animate-slide-up">
-            <span className="p-1.5 rounded-lg bg-emerald-500/20 text-emerald-400 shrink-0">
+          <div key={t.id} className="p-3 rounded-xl bg-teal-500/15 border border-teal-500/30 dark:bg-teal-500/15 backdrop-blur shadow-lg flex items-start gap-2.5 animate-slide-up">
+            <span className="p-1.5 rounded-lg bg-teal-500/20 text-teal-400 shrink-0">
               <BellRing className="w-4 h-4" />
             </span>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase text-emerald-400">
+              <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase text-teal-400">
                 <CheckCircle2 className="w-3 h-3" /> CLIENT SIGNED OUT
               </div>
               <p className="text-xs text-slate-900 dark:text-white font-bold mt-0.5">{t.name}</p>

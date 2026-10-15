@@ -26,8 +26,9 @@ import {
   Users,
   Wallet,
 } from 'lucide-react';
-import { User as UserType, UserRole, ForensicCase, OfficerVisitor, LaboratoryDepartment, WaterIntake, FoodDrugIntake } from '../../types';
+import { User as UserType, UserRole, ForensicCase, OfficerVisitor, LaboratoryDepartment, WaterIntake, FoodDrugIntake, NarcoticsIntake } from '../../types';
 import { FoodDrugLabDashboard } from './FoodDrugLabDashboard';
+import { NarcoticsLabDashboard } from './NarcoticsLabDashboard';
 import {
   Avatar,
   Button,
@@ -51,6 +52,8 @@ interface RoleDashboardProps {
   currentUser: UserType;
   activeCase: ForensicCase;
   visitors: OfficerVisitor[];
+  visitorsLoading?: boolean;
+  narcoticsIntakes?: NarcoticsIntake[];
   waterIntakes: WaterIntake[];
   waterIntakesLoading: boolean;
   waterIntakesError: string;
@@ -136,7 +139,7 @@ const DIVISION_TOTAL = DIVISION_LOAD.reduce((s, d) => s + d.value, 0);
 
 const PIPELINE: { label: string; value: number; tone: Tone }[] = [
   { label: 'Awaiting intake', value: 37, tone: 'sky' },
-  { label: 'In analysis', value: 95, tone: 'amber' },
+  { label: 'In analysis', value: 95, tone: 'teal' },
   { label: 'Draft report', value: 29, tone: 'violet' },
   { label: 'Under review', value: 25, tone: 'cyan' },
   { label: 'Certified', value: 20, tone: 'emerald' },
@@ -157,7 +160,7 @@ type Stage = 'WAITING_RECEIVING' | 'IN_ANALYSIS' | 'REPORT_DRAFT' | 'UNDER_REVIE
 
 const STAGE: Record<Stage, { label: string; tone: Tone }> = {
   WAITING_RECEIVING: { label: 'Intake screening', tone: 'sky' },
-  IN_ANALYSIS: { label: 'In analysis', tone: 'amber' },
+  IN_ANALYSIS: { label: 'In analysis', tone: 'teal' },
   REPORT_DRAFT: { label: 'Draft report', tone: 'violet' },
   UNDER_REVIEW: { label: 'Under review', tone: 'cyan' },
 };
@@ -166,7 +169,7 @@ type Urgency = 'urgent' | 'high' | 'standard';
 
 const URGENCY: Record<Urgency, { label: string; tone: Tone }> = {
   urgent: { label: 'Urgent', tone: 'rose' },
-  high: { label: 'High', tone: 'amber' },
+  high: { label: 'High', tone: 'teal' },
   standard: { label: 'Standard', tone: 'slate' },
 };
 
@@ -231,7 +234,7 @@ const IntakeChart: React.FC<{ data: { week: string; value: number }[] }> = ({ da
               <rect x={pad.l + slot * i} y={pad.t} width={slot} height={H - pad.t - pad.b} fill="transparent" />
               <path
                 d={`M${cx - barW / 2},${y(0)} V${top + 4} Q${cx - barW / 2},${top} ${cx - barW / 2 + 4},${top} H${cx + barW / 2 - 4} Q${cx + barW / 2},${top} ${cx + barW / 2},${top + 4} V${y(0)} Z`}
-                className={`transition-opacity ${isLast ? 'fill-amber-500' : 'fill-amber-500/45'} ${hover !== null && !active ? 'opacity-60' : ''}`}
+                className={`transition-opacity ${isLast ? 'fill-teal-400' : 'fill-teal-400/45'} ${hover !== null && !active ? 'opacity-60' : ''}`}
               />
               {isLast && (
                 <text x={cx} y={top - 6} textAnchor="middle" fontSize="11" fontWeight={600} className="fill-slate-700 dark:fill-slate-200">
@@ -270,6 +273,8 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
   currentUser,
   activeCase,
   visitors,
+  visitorsLoading = false,
+  narcoticsIntakes = [],
   waterIntakes,
   waterIntakesLoading,
   waterIntakesError,
@@ -464,10 +469,22 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
     );
   }
 
+  if (department === 'Narcotics' && currentUser.role !== 'SUPER_ADMIN') {
+    return (
+      <NarcoticsLabDashboard
+        currentUser={currentUser}
+        visitors={visitors}
+        intakes={narcoticsIntakes}
+        isLoading={visitorsLoading}
+        onNavigate={onNavigate}
+      />
+    );
+  }
+
   const kpis: Record<Persona, React.ReactNode> = {
     bench: (
       <>
-        <KpiCard label="Assigned cases" value={queue.length} icon={FileText} tone="amber" hint="+1 since yesterday"
+        <KpiCard label="Assigned cases" value={queue.length} icon={FileText} tone="teal" hint="+1 since yesterday"
           action={{ label: 'View queue', onClick: () => setQueueFilter('all') }} />
         <KpiCard label="Exhibits in custody" value={12} icon={Package} tone="sky" hint="Vault lockers V-04 · sealed" />
         <KpiCard label="Instruments online" value="3/4" icon={Microscope} tone="violet" progress={75} hint="GC-MS run in progress" />
@@ -477,7 +494,7 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
     ),
     division: (
       <>
-        <KpiCard label="Division caseload" value={myDivisionLoad} icon={Layers} tone="amber"
+        <KpiCard label="Division caseload" value={myDivisionLoad} icon={Layers} tone="teal"
           progress={(myDivisionLoad / DIVISION_LOAD[0].value) * 100} hint={`${departmentName} · active cases`} />
         <KpiCard label="Awaiting allocation" value={3} icon={Inbox} tone="sky" hint="Assign to an analyst"
           action={{ label: 'Open laboratory', onClick: () => onNavigate('laboratory') }} />
@@ -498,7 +515,7 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
     ),
     executive: (
       <>
-        <KpiCard label="Cases this year" value="1,482" icon={TrendingUp} tone="amber" hint="+8.4% vs last year" />
+        <KpiCard label="Cases this year" value="1,482" icon={TrendingUp} tone="teal" hint="+8.4% vs last year" />
         <KpiCard label="Active in analysis" value={82} icon={FlaskConical} tone="sky" hint="Across 8 divisions" />
         <KpiCard label="Mean turnaround" value="4.2" unit="days" icon={Clock} tone="emerald" hint="Down from 14 days (paper era)" />
         <KpiCard label="Reports pending review" value={20} icon={FileCheck} tone="violet" hint="1 urgent · Narcotics"
@@ -507,7 +524,7 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
     ),
     registry: (
       <>
-        <KpiCard label="Registered today" value={9} icon={ClipboardList} tone="amber" hint="New case files opened"
+        <KpiCard label="Registered today" value={9} icon={ClipboardList} tone="teal" hint="New case files opened"
           action={{ label: 'Open case file', onClick: () => onNavigate('case-file') }} />
         <KpiCard label="Awaiting allocation" value={3} icon={Inbox} tone="sky" hint="Pending HoD assignment" />
         <KpiCard label="Visitors on site" value={onSite.length} icon={Users} tone="violet"
@@ -517,7 +534,7 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
     ),
     corporate: (
       <>
-        <KpiCard label="Staff on duty" value={64} icon={Users} tone="amber" progress={86} hint="of 74 rostered today" />
+        <KpiCard label="Staff on duty" value={64} icon={Users} tone="teal" progress={86} hint="of 74 rostered today" />
         <KpiCard label="Active cases" value={82} icon={FlaskConical} tone="sky" hint="Across 8 divisions" />
         <KpiCard label="Open requisitions" value={4} icon={Wallet} tone="violet" hint="Reagents & consumables" />
         <KpiCard label="Mean turnaround" value="4.2" unit="days" icon={Clock} tone="emerald" hint="Organisation-wide" />
@@ -540,7 +557,7 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
         <Button icon={Package} onClick={onOpenIntakeModal} id="dash-quick-intake">
           {intakeLabel}
         </Button>
-        <Button variant="primary" icon={FileText} onClick={() => onOpenCaseFile(activeCase.id)} id="dash-quick-open-case">
+        <Button variant="primary" icon={FileText} onClick={() => onOpenCaseFile(activeCase.id)} id="dash-quick-open-case" className="!bg-teal-300 !text-[#0b3a42] hover:!bg-teal-200 !shadow-teal-500/20">
           Resume case
         </Button>
       </>
@@ -549,7 +566,7 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
         <Button icon={Users} onClick={() => onNavigate('lab-bay')}>
           Visitor Register
         </Button>
-        <Button variant="primary" icon={Package} onClick={onOpenIntakeModal} id="dash-quick-intake">
+        <Button variant="primary" icon={Package} onClick={onOpenIntakeModal} id="dash-quick-intake" className="!bg-teal-300 !text-[#0b3a42] hover:!bg-teal-200 !shadow-teal-500/20">
           Register submission
         </Button>
       </>
@@ -558,7 +575,7 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
         <Button icon={Shield} onClick={() => onNavigate('audit')}>
           Audit trail
         </Button>
-        <Button variant="primary" icon={Award} onClick={() => onNavigate('executive')}>
+        <Button variant="primary" icon={Award} onClick={() => onNavigate('executive')} className="!bg-teal-300 !text-[#0b3a42] hover:!bg-teal-200 !shadow-teal-500/20">
           Executive view
         </Button>
       </>
@@ -567,7 +584,7 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
         <Button icon={BookOpen} onClick={() => onNavigate('references')}>
           Reference DB
         </Button>
-        <Button variant="primary" icon={Shield} onClick={() => onNavigate('audit')}>
+        <Button variant="primary" icon={Shield} onClick={() => onNavigate('audit')} className="!bg-teal-300 !text-[#0b3a42] hover:!bg-teal-200 !shadow-teal-500/20">
           Audit trail
         </Button>
       </>
@@ -578,7 +595,7 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
     );
 
   const quickLinks: QuickLink[] = [
-    labAccess && { label: 'Laboratory workspace', hint: 'Benches, instruments & intake', icon: FlaskConical, tone: 'amber', onClick: () => onNavigate('laboratory') },
+    labAccess && { label: 'Laboratory workspace', hint: 'Benches, instruments & intake', icon: FlaskConical, tone: 'teal', onClick: () => onNavigate('laboratory') },
     persona !== 'corporate' && { label: 'GC-MS spectra', hint: `${activeCase.caseNumber}`, icon: Microscope, tone: 'violet', onClick: onOpenGCMS },
     persona !== 'corporate' && persona !== 'registry' && { label: 'Reference database', hint: 'Spectral libraries & methods', icon: BookOpen, tone: 'sky', onClick: () => onNavigate('references') },
     persona !== 'corporate' && persona !== 'registry' && { label: 'Audit trail', hint: 'Chain-of-custody events', icon: Shield, tone: 'slate', onClick: () => onNavigate('audit') },
@@ -612,9 +629,9 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
       />
 
       {showAdmission && (
-        <div className="flex flex-col gap-3 rounded-xl border border-amber-500/30 bg-amber-500/[0.06] p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 rounded-xl border border-teal-500/30 bg-teal-500/[0.06] p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-3">
-            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset ${TONE.amber.chip}`}>
+            <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset ${TONE.teal.chip}`}>
               <AlertTriangle className="h-4 w-4" />
             </span>
             <div className="min-w-0">
@@ -628,7 +645,7 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
               </p>
             </div>
           </div>
-          <Button variant="primary" icon={ShieldCheck} onClick={onOpenVerifyOfficer} className="self-start sm:self-auto">
+          <Button variant="primary" icon={ShieldCheck} onClick={onOpenVerifyOfficer} className="self-start sm:self-auto !bg-teal-300 !text-[#0b3a42] hover:!bg-teal-200 !shadow-teal-500/20">
             Verify officer
           </Button>
         </div>
@@ -641,7 +658,7 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
         <Panel
           className="xl:col-span-8"
           icon={Inbox}
-          tone="amber"
+          tone="teal"
           title={queueTitle[persona]}
           description={`${rows.length} of ${queue.length} cases${persona === 'bench' ? ` · assigned to ${currentUser.name}` : ''}`}
           flush
@@ -691,11 +708,11 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
                   {rows.map((c) => {
                     const isActive = c.id === activeCase.id;
                     return (
-                      <tr key={c.id} className={`${tc.tr} ${isActive ? 'bg-amber-500/[0.04]' : ''}`}>
+                      <tr key={c.id} className={`${tc.tr} ${isActive ? 'bg-teal-500/[0.04]' : ''}`}>
                         <td className={tc.td}>
                           <div className="flex items-center gap-1.5 font-mono text-[12px] font-semibold text-slate-900 dark:text-white">
                             {c.caseNumber}
-                            {isActive && <span className="h-1.5 w-1.5 rounded-full bg-amber-500" title="Active case" />}
+                            {isActive && <span className="h-1.5 w-1.5 rounded-full bg-teal-400" title="Active case" />}
                           </div>
                           <div className="font-mono text-[11px] text-slate-400">{c.labRef}</div>
                         </td>
@@ -797,7 +814,7 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
         <Panel
           className="xl:col-span-8"
           icon={TrendingUp}
-          tone="amber"
+          tone="teal"
           title="Weekly exhibit intakes"
           description="Last 8 weeks · all laboratories"
           actions={
@@ -824,13 +841,13 @@ export const RoleDashboard: React.FC<RoleDashboardProps> = ({
                   <div className="flex items-center justify-between text-xs">
                     <span className={`flex items-center gap-1.5 ${mine ? 'font-medium text-slate-900 dark:text-white' : 'text-slate-600 dark:text-slate-300'}`}>
                       {d.name}
-                      {mine && <StatusPill tone="amber" dot={false}>Yours</StatusPill>}
+                      {mine && <StatusPill tone="teal" dot={false}>Yours</StatusPill>}
                     </span>
                     <span className="font-semibold tabular-nums text-slate-900 dark:text-white">{d.value}</span>
                   </div>
                   <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
                     <div
-                      className={`h-full rounded-full transition-all ${mine ? 'bg-amber-500' : 'bg-sky-500/70'}`}
+                      className={`h-full rounded-full transition-all ${mine ? 'bg-teal-400' : 'bg-sky-500/70'}`}
                       style={{ width: `${(d.value / DIVISION_LOAD[0].value) * 100}%` }}
                     />
                   </div>
@@ -898,7 +915,7 @@ const WaterLabDashboard: React.FC<WaterLabDashboardProps> = ({
   const recentIntakes = intakes.slice(0, 8);
   const statusRows: { label: string; value: number; tone: Tone }[] = [
     { label: 'Awaiting approval', value: awaitingApproval, tone: 'rose' },
-    { label: 'Awaiting assignment', value: awaiting, tone: 'amber' },
+    { label: 'Awaiting assignment', value: awaiting, tone: 'teal' },
     { label: 'Under analysis', value: inAnalysis, tone: 'sky' },
     { label: 'Analysis complete', value: completed, tone: 'emerald' },
   ];
@@ -934,7 +951,7 @@ const WaterLabDashboard: React.FC<WaterLabDashboardProps> = ({
       )}
 
       {!isLoading && awaiting > 0 && (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-teal-500/30 bg-teal-500/5 px-4 py-3 text-sm text-teal-800 dark:text-teal-200">
           <span>
             <span className="font-semibold">{awaiting}</span> exhibit{awaiting === 1 ? '' : 's'} waiting for an Analysis Officer.
           </span>
@@ -945,7 +962,7 @@ const WaterLabDashboard: React.FC<WaterLabDashboardProps> = ({
       <KpiGrid label="Water Lab metrics">
         <KpiCard label="Total exhibits" value={isLoading ? 'Loading' : intakes.length} icon={Droplets} tone="sky" hint="Registered in Water & Environment" />
         <KpiCard label="Awaiting approval" value={isLoading ? 'Loading' : awaitingApproval} icon={ClipboardList} tone="rose" hint="Documents to review" />
-        <KpiCard label="Awaiting assignment" value={isLoading ? 'Loading' : awaiting} icon={Inbox} tone="amber" hint="Waiting for an Analysis Officer" />
+        <KpiCard label="Awaiting assignment" value={isLoading ? 'Loading' : awaiting} icon={Inbox} tone="teal" hint="Waiting for an Analysis Officer" />
         <KpiCard label="Under analysis" value={isLoading ? 'Loading' : inAnalysis} icon={FlaskConical} tone="violet" hint="Assigned and in progress" />
         <KpiCard label="Analysis complete" value={isLoading ? 'Loading' : completed} icon={FileCheck} tone="emerald" hint="Completed exhibits" />
       </KpiGrid>
@@ -1033,7 +1050,7 @@ const WaterLabDashboard: React.FC<WaterLabDashboardProps> = ({
                           intake.status === 'Awaiting Approval'
                             ? 'rose'
                             : intake.status === 'Awaiting Assignment'
-                              ? 'amber'
+                              ? 'teal'
                               : intake.status === 'Under Analysis'
                                 ? 'sky'
                                 : 'emerald'

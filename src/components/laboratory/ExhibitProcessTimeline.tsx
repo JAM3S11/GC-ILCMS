@@ -17,19 +17,19 @@ const EVENT_ICON_TONE: Partial<Record<WaterIntakeEventType, Tone>> = {
   REGISTERED: 'slate',
   APPROVED: 'emerald',
   ASSIGNED: 'sky',
-  TRANSFERRED: 'amber',
+  TRANSFERRED: 'teal',
   ANALYSIS_COMPLETED: 'violet',
   FINDINGS_RECORDED: 'cyan',
   CERTIFICATE_ISSUED: 'emerald',
-  CERTIFICATE_REISSUED: 'amber',
+  CERTIFICATE_REISSUED: 'teal',
   CERTIFICATE_REVOKED: 'rose',
-  EDITED: 'amber',
+  EDITED: 'teal',
   DELETED: 'rose',
 };
 
 const STATUS_TONE: Record<WaterIntakeStatus, Tone> = {
   'Awaiting Approval': 'rose',
-  'Awaiting Assignment': 'amber',
+  'Awaiting Assignment': 'teal',
   'Under Analysis': 'sky',
   'Analysis Complete': 'emerald',
 };

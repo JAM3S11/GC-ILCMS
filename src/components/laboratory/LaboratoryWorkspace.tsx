@@ -101,7 +101,7 @@ type InstrumentState = 'running' | 'idle' | 'calibration' | 'maintenance';
 const INSTRUMENT_STATE: Record<InstrumentState, { label: string; tone: Tone }> = {
   running: { label: 'Running', tone: 'emerald' },
   idle: { label: 'Idle', tone: 'slate' },
-  calibration: { label: 'Calibration due', tone: 'amber' },
+  calibration: { label: 'Calibration due', tone: 'teal' },
   maintenance: { label: 'Maintenance', tone: 'rose' },
 };
 
@@ -116,7 +116,7 @@ type QueueStage = 'intake' | 'analysis' | 'results' | 'draft' | 'review';
 
 const QUEUE_STAGE: Record<QueueStage, { label: string; tone: Tone }> = {
   intake: { label: 'Awaiting intake', tone: 'sky' },
-  analysis: { label: 'In analysis', tone: 'amber' },
+  analysis: { label: 'In analysis', tone: 'teal' },
   results: { label: 'Results ready', tone: 'cyan' },
   draft: { label: 'Draft report', tone: 'violet' },
   review: { label: 'Peer review', tone: 'emerald' },
@@ -124,7 +124,7 @@ const QUEUE_STAGE: Record<QueueStage, { label: string; tone: Tone }> = {
 
 const EXAM_STATUS: Record<ExaminationRecord['status'], { label: string; tone: Tone }> = {
   PENDING: { label: 'Pending', tone: 'slate' },
-  'IN PROGRESS': { label: 'In progress', tone: 'amber' },
+  'IN PROGRESS': { label: 'In progress', tone: 'teal' },
   PAUSED: { label: 'Paused', tone: 'slate' },
   COMPLETED: { label: 'Completed', tone: 'emerald' },
   'REQUIRES REVIEW': { label: 'Needs review', tone: 'rose' },
@@ -377,7 +377,7 @@ export const LaboratoryWorkspace: React.FC<LaboratoryWorkspaceProps> = ({
             <Button icon={Plus} onClick={openIntake} id="btn-open-intake-modal">
               Exhibit intake
             </Button>
-            <Button variant="primary" icon={FileText} onClick={() => onOpenCaseFile(activeCase.id)} id="btn-open-active-case">
+            <Button variant="primaryTeal" icon={FileText} onClick={() => onOpenCaseFile(activeCase.id)} id="btn-open-active-case">
               Open case file
             </Button>
           </>
@@ -389,7 +389,7 @@ export const LaboratoryWorkspace: React.FC<LaboratoryWorkspaceProps> = ({
           label="Samples in queue"
           value={queue.length}
           icon={TestTube}
-          tone="amber"
+          tone="teal"
           hint={`${queue.filter((r) => r.stage === 'intake').length} awaiting intake`}
           action={{ label: 'View queue', onClick: () => setTab('queue') }}
         />
@@ -432,14 +432,14 @@ export const LaboratoryWorkspace: React.FC<LaboratoryWorkspaceProps> = ({
               <Button size="sm" icon={Package} onClick={openIntake}>
                 Intake form
               </Button>
-              <Button size="sm" variant="primary" icon={ArrowRight} onClick={() => onOpenCaseFile(activeCase.id)}>
+              <Button size="sm" variant="primaryTeal" icon={ArrowRight} onClick={() => onOpenCaseFile(activeCase.id)}>
                 Enter case file
               </Button>
             </>
           ) : (
             <>
-              <StatusPill tone="amber" pulse>Verification required</StatusPill>
-              <Button size="sm" variant="primary" icon={ShieldCheck} onClick={() => setShowVerificationModal(true)} id="btn-verify-officer">
+              <StatusPill tone="teal" pulse>Verification required</StatusPill>
+              <Button size="sm" variant="primaryTeal" icon={ShieldCheck} onClick={() => setShowVerificationModal(true)} id="btn-verify-officer">
                 Verify officer
               </Button>
             </>
@@ -486,7 +486,7 @@ export const LaboratoryWorkspace: React.FC<LaboratoryWorkspaceProps> = ({
                       step.done
                         ? TONE.emerald.chip
                         : isCurrent
-                          ? TONE.amber.chip
+                          ? TONE.teal.chip
                           : 'bg-slate-100 text-slate-400 ring-slate-200 dark:bg-slate-800 dark:ring-slate-700'
                     }`}
                   >
@@ -510,7 +510,7 @@ export const LaboratoryWorkspace: React.FC<LaboratoryWorkspaceProps> = ({
         <Panel
           className="xl:col-span-8"
           icon={FlaskConical}
-          tone="amber"
+          tone="teal"
           title="Bench work"
           description={
             tab === 'queue'
@@ -585,7 +585,7 @@ export const LaboratoryWorkspace: React.FC<LaboratoryWorkspaceProps> = ({
                       return (
                         <React.Fragment key={r.id}>
                           <tr
-                            className={`${tc.tr} cursor-pointer ${open ? 'bg-slate-50 dark:bg-slate-800/30' : r.isActive ? 'bg-amber-500/[0.04]' : ''}`}
+                            className={`${tc.tr} cursor-pointer ${open ? 'bg-slate-50 dark:bg-slate-800/30' : r.isActive ? 'bg-teal-500/[0.04]' : ''}`}
                             onClick={() => toggleRow(r.id)}
                           >
                             <td className={`${tc.td} w-10 pr-0`}>
@@ -606,7 +606,7 @@ export const LaboratoryWorkspace: React.FC<LaboratoryWorkspaceProps> = ({
                             <td className={tc.td}>
                               <div className="flex items-center gap-1.5 font-mono text-[12px] font-semibold text-slate-900 dark:text-white">
                                 {r.caseNumber}
-                                {r.isActive && <span className="h-1.5 w-1.5 rounded-full bg-amber-500" title="Active case" />}
+                                {r.isActive && <span className="h-1.5 w-1.5 rounded-full bg-teal-300" title="Active case" />}
                               </div>
                               <div className="font-mono text-[11px] text-slate-400">{r.labRef}</div>
                             </td>
@@ -652,11 +652,11 @@ export const LaboratoryWorkspace: React.FC<LaboratoryWorkspaceProps> = ({
                             </td>
                             <td className={`${tc.td} text-right`} onClick={(e) => e.stopPropagation()}>
                               {r.stage === 'intake' && !officerVerified ? (
-                                <Button size="xs" variant="primary" icon={ShieldCheck} onClick={() => setShowVerificationModal(true)}>
+                                <Button size="xs" variant="primaryTeal" icon={ShieldCheck} onClick={() => setShowVerificationModal(true)}>
                                   Verify
                                 </Button>
                               ) : r.stage === 'intake' ? (
-                                <Button size="xs" variant="primary" icon={Package} onClick={openIntake}>
+                                <Button size="xs" variant="primaryTeal" icon={Package} onClick={openIntake}>
                                   Intake
                                 </Button>
                               ) : (
@@ -693,7 +693,7 @@ export const LaboratoryWorkspace: React.FC<LaboratoryWorkspaceProps> = ({
                                                 done
                                                   ? 'bg-emerald-500 text-white'
                                                   : current
-                                                    ? 'ring-2 ring-inset ring-amber-500'
+                                                    ? 'ring-2 ring-inset ring-teal-300'
                                                     : 'bg-slate-100 dark:bg-slate-800'
                                               }`}
                                             >
@@ -709,7 +709,7 @@ export const LaboratoryWorkspace: React.FC<LaboratoryWorkspaceProps> = ({
                                               }
                                             >
                                               {step}
-                                              {current && <span className="ml-1.5 text-[11px] font-normal text-amber-600 dark:text-amber-400">· next</span>}
+                                              {current && <span className="ml-1.5 text-[11px] font-normal text-teal-600 dark:text-teal-400">· next</span>}
                                             </span>
                                           </li>
                                         );
@@ -772,17 +772,17 @@ export const LaboratoryWorkspace: React.FC<LaboratoryWorkspaceProps> = ({
                                     <div className="mt-auto flex flex-wrap gap-2 pt-3">
                                       {r.stage === 'intake' ? (
                                         officerVerified ? (
-                                          <Button size="sm" variant="primary" icon={Package} onClick={openIntake}>
+                                          <Button size="sm" variant="primaryTeal" icon={Package} onClick={openIntake}>
                                             Record intake
                                           </Button>
                                         ) : (
-                                          <Button size="sm" variant="primary" icon={ShieldCheck} onClick={() => setShowVerificationModal(true)}>
+                                          <Button size="sm" variant="primaryTeal" icon={ShieldCheck} onClick={() => setShowVerificationModal(true)}>
                                             Verify officer
                                           </Button>
                                         )
                                       ) : (
                                         <>
-                                          <Button size="sm" variant="primary" icon={FileText} onClick={() => onOpenCaseFile(activeCase.id)}>
+                                          <Button size="sm" variant="primaryTeal" icon={FileText} onClick={() => onOpenCaseFile(activeCase.id)}>
                                             Open case file
                                           </Button>
                                           <Button size="sm" icon={Link2} onClick={() => setTab('custody')}>
@@ -941,7 +941,7 @@ export const LaboratoryWorkspace: React.FC<LaboratoryWorkspaceProps> = ({
                 </DetailItem>
                 <div className="flex items-center justify-between">
                   <DetailItem label="Condition">{exhibit.condition}</DetailItem>
-                  <StatusPill tone={exhibit.condition === 'Intact & Sealed' ? 'emerald' : 'amber'}>
+                  <StatusPill tone={exhibit.condition === 'Intact & Sealed' ? 'emerald' : 'teal'}>
                     {exhibit.condition === 'Intact & Sealed' ? 'Seal intact' : 'Check seal'}
                   </StatusPill>
                 </div>

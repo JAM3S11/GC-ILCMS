@@ -45,7 +45,7 @@ import { ArrowRight, ChevronRight, Search } from 'lucide-react';
  *    `SearchInput` for filters, `MeterRow` for progress breakdowns.
  * --------------------------------------------------------------------------- */
 
-export type Tone = 'amber' | 'sky' | 'emerald' | 'violet' | 'rose' | 'cyan' | 'slate';
+export type Tone = 'amber' | 'teal' | 'sky' | 'emerald' | 'violet' | 'rose' | 'cyan' | 'slate';
 
 export const TONE: Record<Tone, { chip: string; text: string; bar: string; soft: string; dot: string }> = {
   amber: {
@@ -54,6 +54,13 @@ export const TONE: Record<Tone, { chip: string; text: string; bar: string; soft:
     bar: 'bg-amber-500',
     soft: 'bg-amber-500/10',
     dot: 'bg-amber-500',
+  },
+  teal: {
+    chip: 'bg-teal-500/10 text-teal-700 ring-teal-500/20 dark:text-teal-300',
+    text: 'text-teal-700 dark:text-teal-300',
+    bar: 'bg-teal-400',
+    soft: 'bg-teal-500/10',
+    dot: 'bg-teal-400',
   },
   sky: {
     chip: 'bg-sky-500/10 text-sky-600 ring-sky-500/20 dark:text-sky-400',
@@ -146,10 +153,11 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({ breadcrumb, ti
 
 /* ------------------------------- Buttons -------------------------------- */
 
-type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'success';
+type ButtonVariant = 'primary' | 'primaryTeal' | 'secondary' | 'ghost' | 'danger' | 'success';
 
 const BUTTON_VARIANT: Record<ButtonVariant, string> = {
   primary: 'bg-amber-500 text-slate-950 hover:bg-amber-400 shadow-sm shadow-amber-500/20',
+  primaryTeal: 'bg-teal-300 text-[#0b3a42] hover:bg-teal-200 shadow-sm shadow-teal-500/20',
   secondary:
     'bg-white text-slate-700 ring-1 ring-inset ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700 dark:hover:bg-slate-800',
   ghost: 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white',

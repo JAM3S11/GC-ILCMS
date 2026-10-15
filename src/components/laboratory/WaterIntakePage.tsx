@@ -95,7 +95,7 @@ const WATER_STORAGE_LOCATION = 'Water & Environment Sample Store — Cold Room W
 
 const STATUS_TONE: Record<WaterIntakeStatus, Tone> = {
   'Awaiting Approval': 'rose',
-  'Awaiting Assignment': 'amber',
+  'Awaiting Assignment': 'teal',
   'Under Analysis': 'sky',
   'Analysis Complete': 'emerald',
 };
@@ -442,7 +442,7 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
               Client details come from reception record {reception.visitNumber}, registered by {reception.receptionistName}, and cannot be edited here.
             </div>
           ) : (
-            <div role="status" className="flex items-center gap-2 border-b border-amber-500/20 bg-amber-500/5 px-5 py-2.5 text-xs text-amber-700 dark:text-amber-300">
+            <div role="status" className="flex items-center gap-2 border-b border-teal-500/20 bg-teal-500/5 px-5 py-2.5 text-xs text-teal-700 dark:text-teal-300">
               <FileText className="h-3.5 w-3.5 shrink-0" />
               No client has been sent to Water & Environment yet. You can fill in the exhibit details now, but the exhibit can only be registered once reception has notified this laboratory.
             </div>
@@ -506,7 +506,7 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
                   checked={documentsConfirmed}
                   disabled={confirmingDocuments || (editing && !onSetDocumentsConfirmed)}
                   onChange={(event) => void toggleDocuments(event.target.checked)}
-                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-amber-500 focus:ring-amber-500"
+                  className="mt-0.5 h-4 w-4 rounded border-slate-300 text-teal-500 focus:ring-teal-500"
                 />
                 <span>
                   Intake documents are approved
@@ -680,7 +680,7 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
             </div>
             <div className="flex gap-2">
               <Button onClick={onCancel}>Cancel</Button>
-              <Button type="submit" variant="primary" icon={Check} disabled={editing ? !canSaveEdit || saving : !canSubmit || saving}>
+              <Button type="submit" variant="primaryTeal" icon={Check} disabled={editing ? !canSaveEdit || saving : !canSubmit || saving}>
                 {saving ? 'Saving…' : editing ? 'Save changes' : 'Register exhibit'}
               </Button>
             </div>
@@ -713,7 +713,7 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
             </ul>
           </Panel>
 
-          <Panel icon={UserCheck} tone="amber" title="What happens next">
+          <Panel icon={UserCheck} tone="teal" title="What happens next">
             <ol className="space-y-3 text-xs">
               {[
                 { title: 'Registered', text: 'You register the exhibit. It waits for the Head to assign it.', active: true },

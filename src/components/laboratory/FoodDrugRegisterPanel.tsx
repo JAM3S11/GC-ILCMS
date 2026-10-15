@@ -38,13 +38,13 @@ interface FoodDrugRegisterPanelProps {
 
 const STATUS_TONE: Record<FoodDrugIntakeStatus, Tone> = {
   'Awaiting Approval': 'rose',
-  'Awaiting Assignment': 'amber',
+  'Awaiting Assignment': 'teal',
   'Under Analysis': 'sky',
   Reported: 'emerald',
 };
 
 const fieldCls =
-  'h-8 min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-900 focus:border-amber-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-white';
+  'h-8 min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-900 focus:border-teal-500 focus:outline-none dark:border-slate-700 dark:bg-slate-950 dark:text-white';
 
 export const FoodDrugRegisterPanel: React.FC<FoodDrugRegisterPanelProps> = ({
   intakes,
@@ -62,7 +62,7 @@ export const FoodDrugRegisterPanel: React.FC<FoodDrugRegisterPanelProps> = ({
   toolbar,
   emptyTitle = 'No samples registered yet',
 }) => (
-  <Panel icon={ClipboardList} tone="amber" title={title} description={description} actions={actions} flush>
+  <Panel icon={ClipboardList} tone="teal" title={title} description={description} actions={actions} flush>
     {toolbar}
     {intakes.length === 0 ? (
       <EmptyState icon={TestTube} title={emptyTitle} />
@@ -138,7 +138,7 @@ const RegisterRow: React.FC<Omit<FoodDrugRegisterPanelProps, 'intakes'> & { inta
         isHead ? (
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-[11px] text-slate-400">Review the submitted documents before assigning an officer.</p>
-            <Button size="sm" variant="primary" icon={CheckCircle2} onClick={() => onApprove(intake.id)}>
+            <Button size="sm" variant="primaryTeal" icon={CheckCircle2} onClick={() => onApprove(intake.id)}>
               Approve documents
             </Button>
           </div>
@@ -159,7 +159,7 @@ const RegisterRow: React.FC<Omit<FoodDrugRegisterPanelProps, 'intakes'> & { inta
       {intake.status === 'Awaiting Assignment' && isHead && (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-[11px] text-slate-500 dark:text-slate-400">Fill in a work allocation form to assign this sample to an analyst.</p>
-          <Button size="sm" variant="primary" icon={ClipboardSignature} onClick={() => setAllocating(true)}>
+          <Button size="sm" variant="primaryTeal" icon={ClipboardSignature} onClick={() => setAllocating(true)}>
             Allocate work
           </Button>
         </div>

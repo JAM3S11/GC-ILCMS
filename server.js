@@ -61,7 +61,8 @@ const jsonDefault = express.json({ limit: '20kb' });
 const jsonReceiptForm = express.json({ limit: '4mb' });
 app.use((req, res, next) =>
   (req.method !== 'GET' && (/^\/api\/food-drug\/intakes\/[^/]+\/(receipt-form|draft-reports|worksheet(\/submit|\/check|\/attachments)?)$/.test(req.path) ||
-    /^\/api\/food-drug\/draft-reports\/[^/]+(\/submit|\/approve)?$/.test(req.path))
+    /^\/api\/food-drug\/draft-reports\/[^/]+(\/submit|\/approve)?$/.test(req.path) ||
+    /^\/api\/narcotics\/intakes\/[^/]+\/draft-report(\/submit|\/approve)?$/.test(req.path))
     ? jsonReceiptForm : jsonDefault)(req, res, next));
 app.use('/api', (req, res, next) => {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
@@ -360,6 +361,15 @@ const requireWaterLab = (req, res, next) => {
   if (req.user?.role !== 'SUPER_ADMIN' &&
       (req.user?.department !== 'Water' || !waterLabRoles.has(req.user?.role))) {
     return res.status(403).json({ error: 'Water & Environment laboratory access is required.' });
+  }
+  next();
+};
+// Narcotics staff work the same roles as Water (interns and attachés register intakes too).
+const narcoticsLabRoles = waterLabRoles;
+const requireNarcoticsLab = (req, res, next) => {
+  if (req.user?.role !== 'SUPER_ADMIN' &&
+      (req.user?.department !== 'Narcotics' || !narcoticsLabRoles.has(req.user?.role))) {
+    return res.status(403).json({ error: 'Narcotics laboratory access is required.' });
   }
   next();
 };
@@ -1509,6 +1519,912 @@ app.post('/api/water/intakes', requireSession, requireWaterLab, asyncHandler(asy
   } finally {
     client.release();
   }
+}));
+
+/* ------------------------------ Narcotics ------------------------------- */
+// Keep in step with src/narcoticsIntake.ts.
+const NARCOTICS_DOCUMENTS = new Set([
+  'Exhibit memo', 'Police request letter', 'OB extract', 'Chain of custody form', 'Search & seizure inventory',
+]);
+const NARCOTICS_SEAL_CONDITIONS = new Set(['Intact & Sealed', 'Compromised', 'Damaged', 'Resealed']);
+
+const narcoticsIntakeProjection = `
+  n.id,
+  n.lab_reference AS "labReference",
+  n.cr_number AS "crNumber",
+  n.reception_visit_id AS "receptionVisitId",
+  n.officer_name AS "officerName",
+  n.badge_number AS "badgeNumber",
+  n.officer_mobile AS "officerMobile",
+  n.police_station AS "policeStation",
+  n.documents_received AS "documentsReceived",
+  TO_CHAR(n.documents_confirmed_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "documentsConfirmedAt",
+  confirmer.full_name AS "documentsConfirmedBy",
+  received.full_name AS "receivingOfficer",
+  n.receiving_officer_id AS "receivingOfficerId",
+  TO_CHAR(n.date_received, 'YYYY-MM-DD') AS "dateReceived",
+  TO_CHAR(n.time_received, 'HH24:MI') AS "timeReceived",
+  n.exhibit_type AS "exhibitType",
+  n.number_of_items AS "numberOfItems",
+  n.packaging,
+  n.seal_condition AS "sealCondition",
+  n.seal_number AS "sealNumber",
+  n.markings,
+  n.declared_weight AS "declaredWeight",
+  n.colour_appearance AS "colourAppearance",
+  n.description,
+  n.status,
+  assigned.full_name AS "analysisOfficer",
+  n.analysis_officer_id AS "analysisOfficerId",
+  assigner.full_name AS "assignedBy",
+  TO_CHAR(n.assigned_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "assignedDate",
+  completer.full_name AS "completedBy",
+  TO_CHAR(n.completed_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "completedDate",
+  n.tests_performed AS "testsPerformed",
+  n.substance_identified AS "substanceIdentified",
+  n.net_weight AS "netWeight",
+  n.findings,
+  TO_CHAR(n.findings_recorded_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD HH24:MI') AS "findingsRecordedAt",
+  finder.full_name AS "findingsRecordedBy",
+  approver.full_name AS "approvedBy",
+  TO_CHAR(n.approved_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "approvedDate",
+  memo_approver.full_name AS "memoApprovedBy",
+  TO_CHAR(n.memo_approved_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "memoApprovedDate",
+  (n.edited_at IS NOT NULL) AS edited,
+  TO_CHAR(n.edited_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "editedDate",
+  registrar.full_name AS "registeredBy",
+  TO_CHAR(n.created_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "createdAt"`;
+const narcoticsIntakeJoins = `
+  JOIN users received ON received.id = n.receiving_officer_id
+  JOIN users registrar ON registrar.id = n.registered_by
+  LEFT JOIN users assigned ON assigned.id = n.analysis_officer_id
+  LEFT JOIN users assigner ON assigner.id = n.assigned_by
+  LEFT JOIN users completer ON completer.id = n.completed_by
+  LEFT JOIN users finder ON finder.id = n.findings_recorded_by
+  LEFT JOIN users approver ON approver.id = n.approved_by
+  LEFT JOIN users memo_approver ON memo_approver.id = n.memo_approved_by
+  LEFT JOIN users confirmer ON confirmer.id = n.documents_confirmed_by`;
+
+app.get('/api/narcotics/intakes', requireSession, requireNarcoticsLab, asyncHandler(async (req, res, next) => {
+  try {
+    const [intakes, officers] = await Promise.all([
+      pool.query(
+        `SELECT ${narcoticsIntakeProjection}
+         FROM narcotics_exhibit_intakes n ${narcoticsIntakeJoins}
+         WHERE n.deleted_at IS NULL
+         ORDER BY n.created_at DESC, n.id DESC
+         LIMIT 500`,
+      ),
+      pool.query(
+        `SELECT id, full_name AS name, role
+         FROM users
+         WHERE department = 'Narcotics' AND status = 'ACTIVE' AND role = ANY($1::text[])
+         ORDER BY full_name`,
+        [[...narcoticsLabRoles]],
+      ),
+    ]);
+    res.json({ intakes: intakes.rows, officers: officers.rows });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+// The intake fields the laboratory records (registration and edit share these rules).
+// Returns the cleaned values, or null when anything is missing or invalid.
+const narcoticsIntakeFields = (body) => {
+  const {
+    crNumber, documentsReceived, receivingOfficerId, dateReceived, timeReceived, exhibitType,
+    numberOfItems, packaging, sealCondition, sealNumber, markings, declaredWeight, colourAppearance, description,
+  } = body ?? {};
+  const optionalText = (value, max) => value == null || (typeof value === 'string' && value.trim().length <= max);
+  const documents = Array.isArray(documentsReceived) ? [...new Set(documentsReceived)] : null;
+  const items = Number(numberOfItems);
+  if (
+    typeof crNumber !== 'string' || crNumber.trim().length < 2 || crNumber.trim().length > 100 ||
+    !documents || !documents.length || documents.some((doc) => !NARCOTICS_DOCUMENTS.has(doc)) ||
+    !/^[0-9a-f-]{36}$/i.test(receivingOfficerId ?? '') ||
+    !isValidDay(dateReceived) ||
+    typeof timeReceived !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(timeReceived) ||
+    typeof exhibitType !== 'string' || exhibitType.trim().length < 2 || exhibitType.trim().length > 100 ||
+    !Number.isInteger(items) || items < 1 || items > 10000 ||
+    typeof packaging !== 'string' || packaging.trim().length < 2 || packaging.trim().length > 200 ||
+    !NARCOTICS_SEAL_CONDITIONS.has(sealCondition) ||
+    !optionalText(sealNumber, 100) || !optionalText(markings, 300) ||
+    !optionalText(declaredWeight, 100) || !optionalText(colourAppearance, 200) ||
+    typeof description !== 'string' || description.trim().length < 20 || description.trim().length > 4000
+  ) {
+    return null;
+  }
+  const clean = (value) => (typeof value === 'string' && value.trim() ? value.trim() : null);
+  return {
+    crNumber: crNumber.trim(), documents, receivingOfficerId, dateReceived, timeReceived,
+    exhibitType: exhibitType.trim(), items, packaging: packaging.trim(), sealCondition,
+    sealNumber: clean(sealNumber), markings: clean(markings), declaredWeight: clean(declaredWeight),
+    colourAppearance: clean(colourAppearance), description: description.trim(),
+  };
+};
+const NARCOTICS_FIELDS_ERROR = 'Provide the CR number, intake documents, receipt and a detailed sample description (at least 20 characters) for the Narcotics intake.';
+
+app.post('/api/narcotics/intakes', requireSession, requireNarcoticsLab, asyncHandler(async (req, res, next) => {
+  const { receptionVisitId, documentsConfirmed } = req.body ?? {};
+  const fields = narcoticsIntakeFields(req.body);
+  if (!/^[0-9a-f-]{36}$/i.test(receptionVisitId ?? '') || !fields) {
+    return res.status(400).json({ error: NARCOTICS_FIELDS_ERROR });
+  }
+  const { crNumber, documents, receivingOfficerId, dateReceived, timeReceived } = fields;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // The officer's details are taken from reception's record, never from the request.
+    const visitResult = await client.query(
+      `SELECT id, visitor_name, badge_number, phone, station_or_organization FROM reception_visits
+       WHERE id = $1 AND deleted_at IS NULL AND destination_department = 'Narcotics'
+         AND status IN ('AWAITING_LAB_RECEPTION', 'IN_LABORATORY')
+         AND lab_notification_sent_at IS NOT NULL
+       FOR UPDATE`,
+      [receptionVisitId],
+    );
+    const visit = visitResult.rows[0];
+    if (!visit) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'No officer has been sent to Narcotics for this visit. Reception must notify the laboratory before the exhibit can be registered.' });
+    }
+    if (!visit.badge_number?.trim()) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Reception did not record a badge ID number for this officer. Ask reception to add it before registering the exhibit.' });
+    }
+    const receiverResult = await client.query(
+      `SELECT id FROM users
+       WHERE id = $1 AND department = 'Narcotics' AND status = 'ACTIVE' AND role = ANY($2::text[])`,
+      [receivingOfficerId, [...narcoticsLabRoles]],
+    );
+    if (!receiverResult.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Choose an active Narcotics receiving officer.' });
+    }
+    const { rows: currentDate } = await client.query(
+      `SELECT TO_CHAR((NOW() AT TIME ZONE 'Africa/Nairobi')::date, 'YYYY-MM-DD') AS today`,
+    );
+    if (dateReceived > currentDate[0].today) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Date received cannot be in the future.' });
+    }
+    const year = Number(dateReceived.slice(0, 4));
+    const { rows: sequenceRows } = await client.query(
+      `INSERT INTO narcotics_intake_sequences (intake_year, last_value)
+       VALUES ($1, 1)
+       ON CONFLICT (intake_year) DO UPDATE
+         SET last_value = narcotics_intake_sequences.last_value + 1
+       RETURNING last_value`,
+      [year],
+    );
+    const labReference = `K${String(sequenceRows[0].last_value).padStart(4, '0')}/${year}`;
+    const { rows } = await client.query(
+      `INSERT INTO narcotics_exhibit_intakes (
+         lab_reference, cr_number, reception_visit_id, officer_name, badge_number, officer_mobile,
+         police_station, documents_received, documents_confirmed_at, documents_confirmed_by,
+         receiving_officer_id, registered_by, date_received, time_received, exhibit_type,
+         number_of_items, packaging, seal_condition, seal_number, markings, declared_weight,
+         colour_appearance, description
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text[],
+               CASE WHEN $9::boolean THEN NOW() END, CASE WHEN $9::boolean THEN $11::uuid END,
+               $10, $11, $12::date, $13::time, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+       RETURNING id`,
+      [
+        labReference, crNumber, receptionVisitId, visit.visitor_name, visit.badge_number.trim(),
+        visit.phone, visit.station_or_organization, documents, documentsConfirmed === true,
+        receivingOfficerId, req.user.id, dateReceived, timeReceived, fields.exhibitType, fields.items,
+        fields.packaging, fields.sealCondition, fields.sealNumber, fields.markings, fields.declaredWeight,
+        fields.colourAppearance, fields.description,
+      ],
+    );
+    const intakeId = rows[0].id;
+    await appendNarcoticsIntakeEvent(client, intakeId, 'REGISTERED', req.user.id, null, 'Awaiting Assignment', {
+      labReference, crNumber, receptionVisitId,
+    });
+    await audit(client, req.user.id, req.user.email, 'NARCOTICS_EXHIBIT_REGISTERED', 'narcotics_exhibit_intake', intakeId, {
+      labReference,
+      crNumber,
+      receptionVisitId,
+    });
+    await resolveLabNotificationsForVisit(client, receptionVisitId, 'Narcotics', req.user.id);
+    const intake = await readNarcoticsIntake(client, intakeId);
+    await client.query('COMMIT');
+    res.status(201).json({ intake });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return next(error);
+  } finally {
+    client.release();
+  }
+}));
+
+const isNarcoticsHead = (user) => user?.role === 'HEAD_OF_DEPARTMENT' && user?.department === 'Narcotics';
+// The Head and Senior Chemists supervise every exhibit, as in Water & Environment.
+const isNarcoticsSupervisor = (user) =>
+  user?.role === 'SUPER_ADMIN' ||
+  (user?.department === 'Narcotics' && ['HEAD_OF_DEPARTMENT', 'SENIOR_CHEMIST'].includes(user?.role));
+// Keep in step with NARCOTICS_TESTS in src/narcoticsIntake.ts.
+const NARCOTICS_TESTS = new Set([
+  'Physical examination', 'Microscopic examination', 'Duquenois-Levine test', 'Fast Blue B test',
+  'Marquis test', 'Scott test', 'Simon test', 'Thin-layer chromatography (TLC)', 'GC-MS', 'FTIR', 'UV-Vis',
+]);
+const NARCOTICS_EVENT_LABELS = {
+  REGISTERED: 'Registered',
+  ASSIGNED: 'Assigned to Analysis Officer',
+  TRANSFERRED: 'Analysis Officer changed',
+  DOCUMENTS_CONFIRMED: 'Intake documents confirmed',
+  DOCUMENTS_UNCONFIRMED: 'Intake documents confirmation withdrawn',
+  APPROVED: 'Documents approved by the Head',
+  FINDINGS_RECORDED: 'Findings recorded',
+  ANALYSIS_COMPLETED: 'Analysis completed',
+  MEMO_APPROVED: 'Memo approved by the Head',
+  EDITED: 'Details edited',
+  DELETED: 'Deleted',
+};
+
+const appendNarcoticsIntakeEvent = (db, intakeId, eventType, actorId, fromStatus, toStatus, details = {}) =>
+  db.query(
+    `INSERT INTO narcotics_exhibit_intake_events (intake_id, event_type, from_status, to_status, actor_user_id, details)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+    [intakeId, eventType, fromStatus, toStatus, actorId, JSON.stringify(details)],
+  );
+
+const readNarcoticsIntake = async (db, intakeId) => {
+  const { rows } = await db.query(
+    `SELECT ${narcoticsIntakeProjection}
+     FROM narcotics_exhibit_intakes n ${narcoticsIntakeJoins}
+     WHERE n.id = $1`,
+    [intakeId],
+  );
+  return rows[0];
+};
+
+/**
+ * One change to a live Narcotics intake, in a transaction with the row locked.
+ * `change(client, row, req)` returns { status, error } to refuse (rolled back),
+ * or nothing / { message } to accept; the response carries the updated intake.
+ */
+const changeNarcoticsIntake = (change) => asyncHandler(async (req, res, next) => {
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.id ?? '')) {
+    return res.status(400).json({ error: 'That is not a valid Narcotics exhibit reference.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `SELECT * FROM narcotics_exhibit_intakes WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+      [req.params.id],
+    );
+    if (!rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Narcotics exhibit intake not found.' });
+    }
+    const result = await change(client, rows[0], req);
+    if (result?.error) {
+      await client.query('ROLLBACK');
+      return res.status(result.status ?? 409).json({ error: result.error });
+    }
+    const intake = await readNarcoticsIntake(client, req.params.id);
+    await client.query('COMMIT');
+    res.json({ intake, ...(result?.message ? { message: result.message } : {}) });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return next(error);
+  } finally {
+    client.release();
+  }
+});
+
+// The process an exhibit has been through, oldest first.
+app.get('/api/narcotics/intakes/:id/events', requireSession, requireNarcoticsLab, asyncHandler(async (req, res, next) => {
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.id ?? '')) {
+    return res.status(400).json({ error: 'That is not a valid Narcotics exhibit reference.' });
+  }
+  try {
+    const { rows: exhibit } = await pool.query(
+      'SELECT analysis_officer_id FROM narcotics_exhibit_intakes WHERE id = $1 AND deleted_at IS NULL',
+      [req.params.id],
+    );
+    if (!exhibit.length) return res.status(404).json({ error: 'Narcotics exhibit intake not found.' });
+    if (exhibit[0].analysis_officer_id !== req.user.id && !isNarcoticsSupervisor(req.user)) {
+      return res.status(403).json({ error: 'You can only open the process of an exhibit assigned to you.' });
+    }
+    const { rows } = await pool.query(
+      `SELECT e.event_type AS "eventType", e.from_status AS "fromStatus", e.to_status AS "toStatus", e.details,
+              TO_CHAR(e.occurred_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD HH24:MI:SS') AS "occurredAt",
+              actor.full_name AS actor
+       FROM narcotics_exhibit_intake_events e
+       JOIN users actor ON actor.id = e.actor_user_id
+       WHERE e.intake_id = $1
+       ORDER BY e.occurred_at, e.id`,
+      [req.params.id],
+    );
+    res.json({ events: rows.map((row) => ({ ...row, label: NARCOTICS_EVENT_LABELS[row.eventType] ?? row.eventType })) });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+// Only the Head of Narcotics assigns (or transfers) an exhibit, with a work allocation form.
+app.post('/api/narcotics/intakes/:id/assign', requireSession, requireNarcoticsLab, (req, res, next) => {
+  if (req.user.role !== 'SUPER_ADMIN' && !isNarcoticsHead(req.user)) {
+    return res.status(403).json({ error: 'Only the Head of Narcotics can assign an Analysis Officer.' });
+  }
+  const { analysisOfficerId, remarks } = req.body ?? {};
+  if (!/^[0-9a-f-]{36}$/i.test(analysisOfficerId ?? '')) {
+    return res.status(400).json({ error: 'Choose a valid Narcotics Analysis Officer.' });
+  }
+  if (!validAllocationRemarks(remarks)) {
+    return res.status(400).json({ error: `Fill in the work allocation remarks: describe what the analyst must do (at least ${WORK_ALLOCATION_REMARKS_MIN} characters).` });
+  }
+  return next();
+}, changeNarcoticsIntake(async (client, intake, req) => {
+  const { analysisOfficerId, remarks } = req.body;
+  const isTransfer = intake.status === 'Under Analysis' && !!intake.analysis_officer_id;
+  if (intake.status !== 'Awaiting Assignment' && !isTransfer) {
+    return { error: 'This exhibit has already been assigned or completed. Refresh the Narcotics register.' };
+  }
+  if (isTransfer && intake.analysis_officer_id === analysisOfficerId) {
+    return { error: 'Choose a different Analysis Officer to transfer this exhibit.' };
+  }
+  const { rows: officer } = await client.query(
+    `SELECT id, full_name FROM users
+     WHERE id = $1 AND department = 'Narcotics' AND status = 'ACTIVE' AND role = ANY($2::text[])`,
+    [analysisOfficerId, [...narcoticsLabRoles].filter((role) => role !== 'HEAD_OF_DEPARTMENT')],
+  );
+  if (!officer.length) return { status: 400, error: 'Choose an active Narcotics Analysis Officer.' };
+  const { rows: previous } = await client.query('SELECT full_name FROM users WHERE id = $1', [intake.analysis_officer_id]);
+  await client.query(
+    `UPDATE narcotics_exhibit_intakes
+     SET status = 'Under Analysis', analysis_officer_id = $2, assigned_by = $3, assigned_at = NOW(), updated_at = NOW()
+     WHERE id = $1`,
+    [intake.id, analysisOfficerId, req.user.id],
+  );
+  const allocation = await recordWorkAllocation(client, {
+    department: 'Narcotics',
+    recordType: 'NARCOTICS_INTAKE',
+    recordId: intake.id,
+    labReference: intake.lab_reference,
+    subject: `${intake.exhibit_type} · ${intake.number_of_items} item${intake.number_of_items === 1 ? '' : 's'} (${intake.packaging}) · CR ${intake.cr_number} · from ${intake.police_station}`,
+    remarks,
+    analystId: analysisOfficerId,
+    analystName: officer[0].full_name,
+    head: { id: req.user.id, email: req.user.email, full_name: req.user.fullName ?? req.user.full_name ?? req.user.name },
+  });
+  await appendNarcoticsIntakeEvent(client, intake.id, isTransfer ? 'TRANSFERRED' : 'ASSIGNED', req.user.id, intake.status, 'Under Analysis', {
+    ...(isTransfer ? { previousOfficer: previous[0]?.full_name } : {}),
+    analysisOfficer: officer[0].full_name,
+    analysisOfficerId,
+    allocationForm: allocation.form_number,
+  });
+  await audit(client, req.user.id, req.user.email, isTransfer ? 'NARCOTICS_EXHIBIT_TRANSFERRED' : 'NARCOTICS_EXHIBIT_ASSIGNED', 'narcotics_exhibit_intake', intake.id, {
+    labReference: intake.lab_reference,
+    analysisOfficerId,
+    analysisOfficer: officer[0].full_name,
+  });
+}));
+
+// Anyone in Narcotics ticks (or unticks) that the intake documents are fine. The Head
+// cannot approve the documents or the memo while it is unticked.
+app.post('/api/narcotics/intakes/:id/documents-check', requireSession, requireNarcoticsLab, (req, res, next) => {
+  if (req.user.department !== 'Narcotics') {
+    return res.status(403).json({ error: 'Only Narcotics staff can confirm the intake documents.' });
+  }
+  if (typeof req.body?.confirmed !== 'boolean') {
+    return res.status(400).json({ error: 'Say whether the intake documents are confirmed.' });
+  }
+  return next();
+}, changeNarcoticsIntake(async (client, intake, req) => {
+  const { confirmed } = req.body;
+  if (intake.memo_approved_at) return { error: 'The memo has already been approved, so this can no longer be changed.' };
+  if (!confirmed && intake.approved_at) {
+    return { error: 'The Head has already approved the intake documents, so this can no longer be unticked.' };
+  }
+  await client.query(
+    `UPDATE narcotics_exhibit_intakes
+     SET documents_confirmed_at = CASE WHEN $2::boolean THEN NOW() ELSE NULL END,
+         documents_confirmed_by = CASE WHEN $2::boolean THEN $3::uuid ELSE NULL END,
+         updated_at = NOW()
+     WHERE id = $1`,
+    [intake.id, confirmed, req.user.id],
+  );
+  await appendNarcoticsIntakeEvent(client, intake.id, confirmed ? 'DOCUMENTS_CONFIRMED' : 'DOCUMENTS_UNCONFIRMED', req.user.id, intake.status, intake.status);
+  await audit(client, req.user.id, req.user.email, confirmed ? 'NARCOTICS_DOCUMENTS_CONFIRMED' : 'NARCOTICS_DOCUMENTS_UNCONFIRMED', 'narcotics_exhibit_intake', intake.id, {
+    labReference: intake.lab_reference,
+  });
+}));
+
+// The Head of Narcotics approves the intake documents once they are confirmed fine.
+app.post('/api/narcotics/intakes/:id/approve', requireSession, requireNarcoticsLab, (req, res, next) => {
+  if (req.user.role !== 'SUPER_ADMIN' && !isNarcoticsHead(req.user)) {
+    return res.status(403).json({ error: 'Only the Head of Narcotics can approve these documents.' });
+  }
+  return next();
+}, changeNarcoticsIntake(async (client, intake, req) => {
+  if (intake.approved_at) return { error: 'These documents have already been approved.' };
+  if (!intake.documents_confirmed_at) {
+    return { error: 'The documents must be confirmed fine (the tick box) before the Head approves them.' };
+  }
+  await client.query(
+    'UPDATE narcotics_exhibit_intakes SET approved_by = $2, approved_at = NOW(), updated_at = NOW() WHERE id = $1',
+    [intake.id, req.user.id],
+  );
+  await appendNarcoticsIntakeEvent(client, intake.id, 'APPROVED', req.user.id, intake.status, intake.status);
+  await audit(client, req.user.id, req.user.email, 'NARCOTICS_EXHIBIT_APPROVED', 'narcotics_exhibit_intake', intake.id, {
+    labReference: intake.lab_reference,
+  });
+}));
+
+// The assigned officer (or the Head) records the findings. Saving them completes
+// the analysis, as in Water; they can be corrected until the memo is approved,
+// after which only the Head can change them.
+app.post('/api/narcotics/intakes/:id/findings', requireSession, requireNarcoticsLab, (req, res, next) => {
+  const { testsPerformed, substanceIdentified, netWeight, findings } = req.body ?? {};
+  const tests = Array.isArray(testsPerformed) ? [...new Set(testsPerformed)] : null;
+  if (
+    !tests || !tests.length || tests.some((test) => !NARCOTICS_TESTS.has(test)) ||
+    typeof substanceIdentified !== 'string' || substanceIdentified.trim().length < 2 || substanceIdentified.trim().length > 200 ||
+    (netWeight != null && (typeof netWeight !== 'string' || netWeight.trim().length > 100)) ||
+    typeof findings !== 'string' || findings.trim().length < 20 || findings.trim().length > 5000
+  ) {
+    return res.status(400).json({ error: 'Choose the tests performed, the substance identified, and write the findings (at least 20 characters).' });
+  }
+  return next();
+}, changeNarcoticsIntake(async (client, intake, req) => {
+  const { testsPerformed, substanceIdentified, netWeight, findings } = req.body;
+  const isHead = isNarcoticsHead(req.user);
+  if (intake.analysis_officer_id !== req.user.id && !isHead) {
+    return { status: 403, error: 'Only the assigned Analysis Officer or the Head of Narcotics can record the findings.' };
+  }
+  if (intake.memo_approved_at && !isHead) {
+    return { status: 403, error: 'The memo has been approved, so only the Head of Narcotics can change the findings.' };
+  }
+  if (!['Under Analysis', 'Analysis Complete'].includes(intake.status)) {
+    return { error: 'Findings are recorded once the exhibit is assigned and under analysis.' };
+  }
+  await client.query(
+    `UPDATE narcotics_exhibit_intakes
+     SET tests_performed = $2::text[], substance_identified = $3, net_weight = $4, findings = $5,
+         findings_recorded_at = NOW(), findings_recorded_by = $6, updated_at = NOW()
+     WHERE id = $1`,
+    [
+      intake.id, [...new Set(testsPerformed)], substanceIdentified.trim(),
+      typeof netWeight === 'string' && netWeight.trim() ? netWeight.trim() : null, findings.trim(), req.user.id,
+    ],
+  );
+  await appendNarcoticsIntakeEvent(client, intake.id, 'FINDINGS_RECORDED', req.user.id, intake.status, intake.status, {
+    substanceIdentified: substanceIdentified.trim(),
+  });
+  await audit(client, req.user.id, req.user.email, 'NARCOTICS_EXHIBIT_FINDINGS_RECORDED', 'narcotics_exhibit_intake', intake.id, {
+    labReference: intake.lab_reference,
+  });
+  if (intake.status === 'Under Analysis') {
+    await client.query(
+      `UPDATE narcotics_exhibit_intakes
+       SET status = 'Analysis Complete', completed_by = $2, completed_at = NOW(), updated_at = NOW()
+       WHERE id = $1`,
+      [intake.id, req.user.id],
+    );
+    await appendNarcoticsIntakeEvent(client, intake.id, 'ANALYSIS_COMPLETED', req.user.id, 'Under Analysis', 'Analysis Complete');
+    await audit(client, req.user.id, req.user.email, 'NARCOTICS_ANALYSIS_COMPLETED', 'narcotics_exhibit_intake', intake.id, {
+      labReference: intake.lab_reference,
+    });
+  }
+}));
+
+// The Head approves the memo (the analysis report) once the analysis is complete.
+// Approving the memo covers the intake documents too, so the Head does it in one step.
+app.post('/api/narcotics/intakes/:id/memo', requireSession, requireNarcoticsLab, (req, res, next) => {
+  if (!isNarcoticsHead(req.user)) {
+    return res.status(403).json({ error: 'Only the Head of Narcotics can approve the memo.' });
+  }
+  return next();
+}, changeNarcoticsIntake(async (client, intake, req) => {
+  if (intake.memo_approved_at) return { error: 'The memo has already been approved.' };
+  if (intake.status !== 'Analysis Complete' || !intake.findings?.trim()) {
+    return { error: 'The memo can be approved once the draft report of analysis is submitted and the analysis is complete.' };
+  }
+  if (!intake.documents_confirmed_at) {
+    return { error: 'Confirm that the intake documents are fine before approving the memo.' };
+  }
+  // The findings are the Draft Report of Analysis (Cannabis); it must be checked and approved first.
+  const { rows: draft } = await client.query('SELECT status FROM narcotics_draft_reports WHERE intake_id = $1', [intake.id]);
+  if (!draft.length || draft[0].status !== 'APPROVED') {
+    return { error: 'Check and approve the Draft Report of Analysis (Cannabis) before approving the memo.' };
+  }
+  if (!intake.approved_at) {
+    await client.query('UPDATE narcotics_exhibit_intakes SET approved_by = $2, approved_at = NOW() WHERE id = $1', [intake.id, req.user.id]);
+    await appendNarcoticsIntakeEvent(client, intake.id, 'APPROVED', req.user.id, intake.status, intake.status);
+  }
+  await client.query(
+    'UPDATE narcotics_exhibit_intakes SET memo_approved_by = $2, memo_approved_at = NOW(), updated_at = NOW() WHERE id = $1',
+    [intake.id, req.user.id],
+  );
+  await appendNarcoticsIntakeEvent(client, intake.id, 'MEMO_APPROVED', req.user.id, intake.status, intake.status);
+  await audit(client, req.user.id, req.user.email, 'NARCOTICS_MEMO_APPROVED', 'narcotics_exhibit_intake', intake.id, {
+    labReference: intake.lab_reference,
+  });
+}));
+
+/* -------------- Narcotics Draft Report of Analysis (Cannabis) -------------- */
+// Keep in step with CannabisResultKey in src/narcoticsDraftReport.ts.
+const CANNABIS_RESULT_KEYS = new Set([
+  'seedsLeavesStalks', 'odour', 'trichomeStalks', 'cystolithicTrichomes', 'colorimetric', 'uvVis', 'gcms',
+]);
+
+const cannabisReportProjection = `
+  d.id,
+  d.intake_id AS "intakeId",
+  d.sample_k_no AS "sampleKNo",
+  COALESCE(TO_CHAR(d.date_received, 'YYYY-MM-DD'), '') AS "dateReceived",
+  d.submitted_by AS "submittedBy",
+  COALESCE(TO_CHAR(d.date_analysed, 'YYYY-MM-DD'), '') AS "dateAnalysed",
+  d.envelope_marked AS "envelopeMarked",
+  d.police_station AS "policeStation",
+  d.cr_number AS "crNumber",
+  d.accused,
+  d.containing,
+  d.results,
+  d.quantity,
+  d.gck_no AS "gckNo",
+  d.status,
+  d.analyst_signature AS "analystSignature",
+  analysed.full_name AS "analysedBy",
+  TO_CHAR(d.analysed_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "analysedDate",
+  d.checker_signature AS "checkerSignature",
+  checker.full_name AS "checkedBy",
+  TO_CHAR(d.checked_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "checkedDate",
+  d.unlock_reason AS "unlockReason",
+  editor.full_name AS "updatedBy",
+  TO_CHAR(d.updated_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD HH24:MI') AS "updatedAt"`;
+const cannabisReportJoins = `
+  LEFT JOIN users analysed ON analysed.id = d.analysed_by
+  LEFT JOIN users checker ON checker.id = d.checked_by
+  JOIN users editor ON editor.id = d.updated_by`;
+
+const selectCannabisReport = async (db, intakeId) => {
+  const { rows } = await db.query(
+    `SELECT ${cannabisReportProjection} FROM narcotics_draft_reports d ${cannabisReportJoins} WHERE d.intake_id = $1`,
+    [intakeId],
+  );
+  return rows[0] ?? null;
+};
+
+// The assigned officer (or the Head) writes the report while the exhibit is in
+// analysis or complete, and until the memo is approved.
+const canWriteCannabisReport = (user, intake) =>
+  ['Under Analysis', 'Analysis Complete'].includes(intake.status) && !intake.memo_approved_at &&
+  (intake.analysis_officer_id === user.id || isNarcoticsHead(user));
+
+const validCannabisReport = (b) => {
+  const text = (v, max) => v == null || (typeof v === 'string' && v.length <= max);
+  const day = (v) => v == null || v === '' || isValidDay(v);
+  if (typeof b?.sampleKNo !== 'string' || !b.sampleKNo.trim() || b.sampleKNo.length > 60) return 'Enter the sample K no.';
+  if (!day(b.dateReceived)) return 'Enter a valid date received.';
+  if (!day(b.dateAnalysed)) return 'Enter a valid date analysed.';
+  if (b.dateReceived && b.dateAnalysed && b.dateAnalysed < b.dateReceived) return 'The date analysed cannot be before the date received.';
+  if (!text(b.submittedBy, 300) || !text(b.envelopeMarked, 300) || !text(b.policeStation, 200) || !text(b.crNumber, 100) ||
+      !text(b.accused, 2000) || !text(b.containing, 2000) || !text(b.quantity, 300) || !text(b.gckNo, 100)) {
+    return 'One of the report fields is too long.';
+  }
+  if (!b.results || typeof b.results !== 'object' || Array.isArray(b.results) ||
+      Object.entries(b.results).some(([key, value]) => !CANNABIS_RESULT_KEYS.has(key) || typeof value !== 'string' || value.length > 300)) {
+    return 'A test result was not recognised or is too long (300 characters at most).';
+  }
+  if (b.analystSignature != null && b.analystSignature !== '' && !draftReportImage(b.analystSignature)) {
+    return 'The signature must be a PNG or JPEG image under 300 KB.';
+  }
+  return null;
+};
+const cannabisReportValues = (b) => [
+  b.sampleKNo.trim(), b.dateReceived || null, (b.submittedBy ?? '').trim(), b.dateAnalysed || null,
+  (b.envelopeMarked ?? '').trim(), (b.policeStation ?? '').trim(), (b.crNumber ?? '').trim(), (b.accused ?? '').trim(),
+  (b.containing ?? '').trim(), JSON.stringify(b.results ?? {}), (b.quantity ?? '').trim(), (b.gckNo ?? '').trim(),
+  b.analystSignature || null,
+];
+const CANNABIS_REPORT_COLUMNS = `sample_k_no = $2, date_received = $3::date, submitted_by = $4, date_analysed = $5::date,
+  envelope_marked = $6, police_station = $7, cr_number = $8, accused = $9, containing = $10, results = $11::jsonb,
+  quantity = $12, gck_no = $13, analyst_signature = $14, updated_by = $15, updated_at = NOW()`;
+
+// Saves (creating if needed) the report's fields in one transaction with the exhibit locked.
+const writeCannabisReport = async (db, intake, body, userId) => {
+  await db.query(
+    `INSERT INTO narcotics_draft_reports (intake_id, sample_k_no, created_by, updated_by)
+     VALUES ($1, $2, $3, $3) ON CONFLICT (intake_id) DO NOTHING`,
+    [intake.id, body.sampleKNo.trim(), userId],
+  );
+  await db.query(
+    `UPDATE narcotics_draft_reports SET ${CANNABIS_REPORT_COLUMNS} WHERE intake_id = $1`,
+    [intake.id, ...cannabisReportValues(body), userId],
+  );
+};
+
+/** One change to an exhibit's cannabis report, with the exhibit and report locked. */
+const cannabisReportChange = (change) => asyncHandler(async (req, res, next) => {
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.id ?? '')) return res.status(404).json({ error: 'Narcotics exhibit not found.' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: intakes } = await client.query(
+      'SELECT * FROM narcotics_exhibit_intakes WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+      [req.params.id],
+    );
+    if (!intakes.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Narcotics exhibit not found.' });
+    }
+    const { rows: reports } = await client.query('SELECT * FROM narcotics_draft_reports WHERE intake_id = $1 FOR UPDATE', [req.params.id]);
+    const refusal = await change(client, intakes[0], reports[0] ?? null, req);
+    if (refusal) {
+      await client.query('ROLLBACK');
+      return res.status(refusal.status).json({ error: refusal.error });
+    }
+    const report = await selectCannabisReport(client, req.params.id);
+    // Submitting completes the analysis, so the exhibit is returned too.
+    const intake = await readNarcoticsIntake(client, req.params.id);
+    await client.query('COMMIT');
+    res.json({ report, intake });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    return next(error);
+  } finally {
+    client.release();
+  }
+});
+
+// The tests on the cannabis report, under the names the register and memo use.
+const CANNABIS_TESTS_PERFORMED = ['Physical examination', 'Microscopic examination', 'Fast Blue B test', 'UV-Vis', 'GC-MS'];
+const CANNABIS_FINDING_LABELS = {
+  seedsLeavesStalks: 'Seeds, leaves and stalks',
+  odour: 'Odour (characteristic bhang smell)',
+  trichomeStalks: 'Stalks of multicellular trichomes',
+  cystolithicTrichomes: 'Cystolithic and non-cystolithic trichomes',
+  colorimetric: 'Colorimetric test (Fast Blue B)',
+  uvVis: 'UV/Visible spectrophotometry',
+  gcms: 'GC/MS',
+};
+
+/** What the GC/MS result says was found, in the words the register shows. */
+const cannabisSubstance = (gcms) => {
+  const value = (gcms ?? '').trim();
+  if (/presence of delta-?9|^positive$/i.test(value)) return 'Cannabis sativa (bhang)';
+  if (/absence|^negative$/i.test(value)) return 'No controlled substance detected';
+  return value.slice(0, 200) || 'Not stated';
+};
+
+/**
+ * The submitted draft report is the exhibit's findings: it is written to the
+ * exhibit (tests, substance, quantity and a plain summary for the memo) and the
+ * analysis is marked complete, as saving findings used to do.
+ */
+const recordCannabisFindings = async (db, intake, body, user) => {
+  const userId = user.id;
+  const results = body.results ?? {};
+  const line = (keys) => keys.map((key) => `${CANNABIS_FINDING_LABELS[key]}: ${results[key] || '—'}`).join('; ');
+  const summary = [
+    `Physical tests — ${line(['seedsLeavesStalks', 'odour', 'trichomeStalks', 'cystolithicTrichomes'])}.`,
+    `Chemical tests — ${line(['colorimetric', 'uvVis', 'gcms'])}.`,
+    body.quantity?.trim() && `Quantity: ${body.quantity.trim()}.`,
+  ].filter(Boolean).join('\n');
+  await db.query(
+    `UPDATE narcotics_exhibit_intakes
+     SET tests_performed = $2::text[], substance_identified = $3, net_weight = $4, findings = $5,
+         findings_recorded_at = NOW(), findings_recorded_by = $6, updated_at = NOW()
+     WHERE id = $1`,
+    [intake.id, CANNABIS_TESTS_PERFORMED, cannabisSubstance(results.gcms), body.quantity?.trim() || null, summary, userId],
+  );
+  await appendNarcoticsIntakeEvent(db, intake.id, 'FINDINGS_RECORDED', userId, intake.status, intake.status, {
+    source: 'Draft Report of Analysis (Cannabis)',
+  });
+  if (intake.status === 'Under Analysis') {
+    await db.query(
+      `UPDATE narcotics_exhibit_intakes
+       SET status = 'Analysis Complete', completed_by = $2, completed_at = NOW(), updated_at = NOW()
+       WHERE id = $1`,
+      [intake.id, userId],
+    );
+    await appendNarcoticsIntakeEvent(db, intake.id, 'ANALYSIS_COMPLETED', userId, 'Under Analysis', 'Analysis Complete');
+    await audit(db, userId, user.email, 'NARCOTICS_ANALYSIS_COMPLETED', 'narcotics_exhibit_intake', intake.id, {
+      labReference: intake.lab_reference,
+    });
+  }
+};
+
+app.get('/api/narcotics/intakes/:id/draft-report', requireSession, requireNarcoticsLab, asyncHandler(async (req, res, next) => {
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.id ?? '')) return res.status(404).json({ error: 'Narcotics exhibit not found.' });
+  try {
+    const { rows } = await pool.query(
+      'SELECT * FROM narcotics_exhibit_intakes WHERE id = $1 AND deleted_at IS NULL',
+      [req.params.id],
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Narcotics exhibit not found.' });
+    const intake = rows[0];
+    if (intake.analysis_officer_id !== req.user.id && !isNarcoticsSupervisor(req.user)) {
+      return res.status(403).json({ error: 'Only the assigned Analysis Officer or a supervisor can open this report.' });
+    }
+    res.json({
+      report: await selectCannabisReport(pool, intake.id),
+      canWrite: canWriteCannabisReport(req.user, intake),
+      isAnalyst: intake.analysis_officer_id === req.user.id,
+      canApprove: isNarcoticsHead(req.user),
+      canUnlock: req.user.role === 'SUPER_ADMIN',
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+app.put('/api/narcotics/intakes/:id/draft-report', requireSession, requireNarcoticsLab, cannabisReportChange(async (db, intake, report, req) => {
+  if (report && report.status !== 'DRAFT') return { status: 409, error: 'This draft report has been submitted and can no longer be edited.' };
+  if (!canWriteCannabisReport(req.user, intake)) {
+    return { status: 403, error: 'Only the assigned Analysis Officer or the Head can edit this report, while the exhibit is in analysis and before the memo is approved.' };
+  }
+  const invalid = validCannabisReport(req.body);
+  if (invalid) return { status: 400, error: invalid };
+  await writeCannabisReport(db, intake, req.body, req.user.id);
+  await audit(db, req.user.id, req.user.email, report ? 'NARCOTICS_DRAFT_REPORT_SAVED' : 'NARCOTICS_DRAFT_REPORT_CREATED', 'narcotics_exhibit_intake', intake.id, {
+    labReference: intake.lab_reference,
+  });
+  return null;
+}));
+
+// The Analysis Officer signs it and sends it to the Head of Narcotics.
+app.post('/api/narcotics/intakes/:id/draft-report/submit', requireSession, requireNarcoticsLab, cannabisReportChange(async (db, intake, report, req) => {
+  if (report && report.status !== 'DRAFT') return { status: 409, error: 'This draft report has already been submitted.' };
+  if (intake.analysis_officer_id !== req.user.id || !canWriteCannabisReport(req.user, intake)) {
+    return { status: 403, error: 'Only the Analysis Officer assigned this exhibit can submit its draft report.' };
+  }
+  const invalid = validCannabisReport(req.body);
+  if (invalid) return { status: 400, error: invalid };
+  if (!req.body.analystSignature) return { status: 400, error: 'Sign the draft report before submitting it.' };
+  // It is the exhibit's findings, so it must be complete before it is submitted.
+  if (!req.body.dateReceived || !req.body.dateAnalysed || !req.body.submittedBy?.trim()) {
+    return { status: 400, error: 'Fill in the date received, date analysed and submitted by before submitting.' };
+  }
+  if ([...CANNABIS_RESULT_KEYS].some((key) => !req.body.results?.[key]?.trim())) {
+    return { status: 400, error: 'Enter a result for every test before submitting.' };
+  }
+  await writeCannabisReport(db, intake, req.body, req.user.id);
+  await db.query(
+    `UPDATE narcotics_draft_reports SET status = 'SUBMITTED', analysed_by = $2, analysed_at = NOW() WHERE intake_id = $1`,
+    [intake.id, req.user.id],
+  );
+  await recordCannabisFindings(db, intake, req.body, req.user);
+  await createReceptionActivityNotification(db, {
+    recipientRole: 'HEAD_OF_DEPARTMENT',
+    recipientDepartment: 'Narcotics',
+    title: `Draft report to check — ${intake.lab_reference}`,
+    message: `${req.user.name ?? req.user.fullName ?? 'The Analysis Officer'} submitted the Draft Report of Analysis (Cannabis) for ${intake.lab_reference}. Check and sign it to approve.`,
+    type: 'info',
+    linkAction: 'WORK_ALLOCATION',
+    relatedRecordType: 'NARCOTICS_INTAKE',
+    relatedRecordId: intake.id,
+  });
+  await audit(db, req.user.id, req.user.email, 'NARCOTICS_DRAFT_REPORT_SUBMITTED', 'narcotics_exhibit_intake', intake.id, {
+    labReference: intake.lab_reference,
+  });
+  return null;
+}));
+
+// The Head of Narcotics signs "Checked By", which approves and locks it.
+app.post('/api/narcotics/intakes/:id/draft-report/approve', requireSession, requireNarcoticsLab, cannabisReportChange(async (db, intake, report, req) => {
+  if (!isNarcoticsHead(req.user)) return { status: 403, error: 'Only the Head of Narcotics can check and approve a draft report.' };
+  if (!report || report.status !== 'SUBMITTED') {
+    return { status: 409, error: report?.status === 'APPROVED' ? 'This draft report is already approved.' : 'The Analysis Officer has not submitted this draft report yet.' };
+  }
+  const signature = req.body?.checkerSignature;
+  if (!draftReportImage(signature)) return { status: 400, error: 'Sign the draft report (PNG or JPEG under 300 KB) to approve it.' };
+  await db.query(
+    `UPDATE narcotics_draft_reports SET status = 'APPROVED', checker_signature = $2, checked_by = $3, checked_at = NOW(),
+       updated_by = $3, updated_at = NOW() WHERE intake_id = $1`,
+    [intake.id, signature, req.user.id],
+  );
+  if (intake.analysis_officer_id) {
+    await createReceptionActivityNotification(db, {
+      recipientUserId: intake.analysis_officer_id,
+      title: `Draft report approved — ${intake.lab_reference}`,
+      message: `The Head of Narcotics checked and approved the Draft Report of Analysis (Cannabis) for ${intake.lab_reference}.`,
+      type: 'success',
+      linkAction: 'WORK_ALLOCATION',
+      relatedRecordType: 'NARCOTICS_INTAKE',
+      relatedRecordId: intake.id,
+    });
+  }
+  await audit(db, req.user.id, req.user.email, 'NARCOTICS_DRAFT_REPORT_APPROVED', 'narcotics_exhibit_intake', intake.id, {
+    labReference: intake.lab_reference,
+  });
+  return null;
+}));
+
+// Super Admin only: back to Draft, both signatures cleared.
+app.post('/api/narcotics/intakes/:id/draft-report/unlock', requireSession, requireNarcoticsLab, cannabisReportChange(async (db, intake, report, req) => {
+  if (req.user.role !== 'SUPER_ADMIN') return { status: 403, error: 'Only an administrator can unlock a draft report.' };
+  if (!report || report.status === 'DRAFT') return { status: 409, error: 'This draft report is not locked.' };
+  if (intake.memo_approved_at) return { status: 409, error: 'The memo has been approved from this report, so it can no longer be unlocked.' };
+  const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+  if (reason.length < 5 || reason.length > 500) return { status: 400, error: 'Give a reason for unlocking (5–500 characters).' };
+  await db.query(
+    `UPDATE narcotics_draft_reports SET status = 'DRAFT', analysed_by = NULL, analysed_at = NULL, analyst_signature = NULL,
+       checked_by = NULL, checked_at = NULL, checker_signature = NULL,
+       unlocked_by = $2, unlocked_at = NOW(), unlock_reason = $3, updated_by = $2, updated_at = NOW()
+     WHERE intake_id = $1`,
+    [intake.id, req.user.id, reason],
+  );
+  await audit(db, req.user.id, req.user.email, 'NARCOTICS_DRAFT_REPORT_UNLOCKED', 'narcotics_exhibit_intake', intake.id, {
+    labReference: intake.lab_reference,
+    reason,
+  });
+  return null;
+}));
+
+// A registered intake can be corrected before analysis starts: by the officer who
+// received the exhibit (once) or by the Head of Narcotics (any time before analysis).
+// The submitting officer's details come from reception and are never edited here.
+app.patch('/api/narcotics/intakes/:id', requireSession, requireNarcoticsLab, (req, res, next) => {
+  if (!narcoticsIntakeFields(req.body)) return res.status(400).json({ error: NARCOTICS_FIELDS_ERROR });
+  return next();
+}, changeNarcoticsIntake(async (client, intake, req) => {
+  const fields = narcoticsIntakeFields(req.body);
+  const isHead = isNarcoticsHead(req.user);
+  const isReceiver = intake.receiving_officer_id === req.user.id;
+  if (!isHead && !(isReceiver && !intake.edited_at)) {
+    return {
+      status: 403,
+      error: isReceiver
+        ? 'You have already used your one edit of this intake. Ask the Head of Narcotics to make further changes.'
+        : 'Only the officer who received this exhibit, or the Head of Narcotics, can edit the intake.',
+    };
+  }
+  if (intake.status !== 'Awaiting Assignment') {
+    return { error: 'Analysis has started, so the intake can no longer be edited.' };
+  }
+  const { rows: receiver } = await client.query(
+    `SELECT id FROM users WHERE id = $1 AND department = 'Narcotics' AND status = 'ACTIVE' AND role = ANY($2::text[])`,
+    [fields.receivingOfficerId, [...narcoticsLabRoles]],
+  );
+  if (!receiver.length) return { status: 400, error: 'Choose an active Narcotics receiving officer.' };
+  const { rows: currentDate } = await client.query(`SELECT TO_CHAR((NOW() AT TIME ZONE 'Africa/Nairobi')::date, 'YYYY-MM-DD') AS today`);
+  if (fields.dateReceived > currentDate[0].today) return { status: 400, error: 'Date received cannot be in the future.' };
+  await client.query(
+    `UPDATE narcotics_exhibit_intakes
+     SET cr_number = $2, documents_received = $3::text[], receiving_officer_id = $4, date_received = $5::date,
+         time_received = $6::time, exhibit_type = $7, number_of_items = $8, packaging = $9, seal_condition = $10,
+         seal_number = $11, markings = $12, declared_weight = $13, colour_appearance = $14, description = $15,
+         edited_by = $16, edited_at = NOW(), updated_at = NOW()
+     WHERE id = $1`,
+    [
+      intake.id, fields.crNumber, fields.documents, fields.receivingOfficerId, fields.dateReceived, fields.timeReceived,
+      fields.exhibitType, fields.items, fields.packaging, fields.sealCondition, fields.sealNumber, fields.markings,
+      fields.declaredWeight, fields.colourAppearance, fields.description, req.user.id,
+    ],
+  );
+  await appendNarcoticsIntakeEvent(client, intake.id, 'EDITED', req.user.id, intake.status, intake.status);
+  await audit(client, req.user.id, req.user.email, 'NARCOTICS_EXHIBIT_EDITED', 'narcotics_exhibit_intake', intake.id, {
+    labReference: intake.lab_reference,
+  });
+}));
+
+// Only the Head of Narcotics removes an intake. It is a soft delete: the record
+// leaves the register but its history and audit entries remain.
+app.delete('/api/narcotics/intakes/:id', requireSession, requireNarcoticsLab, (req, res, next) => {
+  if (!isNarcoticsHead(req.user)) {
+    return res.status(403).json({ error: 'Only the Head of Narcotics can delete an exhibit intake.' });
+  }
+  return next();
+}, changeNarcoticsIntake(async (client, intake, req) => {
+  await client.query(
+    'UPDATE narcotics_exhibit_intakes SET deleted_at = NOW(), deleted_by = $2, updated_at = NOW() WHERE id = $1',
+    [intake.id, req.user.id],
+  );
+  await appendNarcoticsIntakeEvent(client, intake.id, 'DELETED', req.user.id, intake.status, intake.status);
+  await audit(client, req.user.id, req.user.email, 'NARCOTICS_EXHIBIT_DELETED', 'narcotics_exhibit_intake', intake.id, {
+    labReference: intake.lab_reference,
+    statusWhenDeleted: intake.status,
+  });
+  return { message: `${intake.lab_reference} was deleted.` };
 }));
 
 // The Head of Water & Environment approves the intake documents at the memo stage, before approving the
@@ -3728,7 +4644,7 @@ app.delete('/api/food-drug/intakes/:id', requireSession, requireFoodDrugLab, asy
   }
 }));
 
-const WORK_ALLOCATION_DEPARTMENT = { WATER_INTAKE: 'Water', FOOD_DRUG_INTAKE: FOOD_DRUG };
+const WORK_ALLOCATION_DEPARTMENT = { WATER_INTAKE: 'Water', FOOD_DRUG_INTAKE: FOOD_DRUG, NARCOTICS_INTAKE: 'Narcotics' };
 app.get('/api/work-allocations', requireSession, asyncHandler(async (req, res, next) => {
   const { recordType, recordId } = req.query;
   const department = WORK_ALLOCATION_DEPARTMENT[recordType];

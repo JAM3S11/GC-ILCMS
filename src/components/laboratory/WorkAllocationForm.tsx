@@ -124,7 +124,7 @@ export const WorkAllocationDialog: React.FC<WorkAllocationDialogProps> = ({
       >
         <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-800">
           <div className="flex items-start gap-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400">
               <ClipboardSignature className="h-5 w-5" />
             </span>
             <div>
@@ -168,7 +168,7 @@ export const WorkAllocationDialog: React.FC<WorkAllocationDialogProps> = ({
               className={`mt-1.5 w-full rounded-lg border bg-white px-3 py-2.5 text-sm leading-relaxed text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 dark:bg-slate-950 dark:text-white ${
                 remarksShort
                   ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500/20'
-                  : 'border-slate-300 focus:border-amber-500 focus:ring-amber-500/20 dark:border-slate-700'
+                  : 'border-slate-300 focus:border-teal-500 focus:ring-teal-500/20 dark:border-slate-700'
               }`}
             />
             <span className={`mt-1 block text-[11px] ${remarksShort ? 'text-rose-500' : 'text-slate-500 dark:text-slate-400'}`}>
@@ -204,7 +204,7 @@ export const WorkAllocationDialog: React.FC<WorkAllocationDialogProps> = ({
           <span className="text-[11px] text-slate-500 dark:text-slate-400">The form number is issued when you submit.</span>
           <div className="flex gap-2">
             <Button onClick={onClose} disabled={saving}>Cancel</Button>
-            <Button type="submit" variant="primary" icon={Send} disabled={!canSubmit || saving}>
+            <Button type="submit" variant="primaryTeal" icon={Send} disabled={!canSubmit || saving}>
               {saving ? 'Allocating…' : isTransfer ? 'Transfer and send copy' : 'Allocate and send copy'}
             </Button>
           </div>
@@ -301,7 +301,7 @@ export const WorkAllocationViewer: React.FC<WorkAllocationViewerProps> = ({ reco
               />
             )}
             {current && (
-              <Button variant="primary" icon={Download} disabled={downloading} onClick={() => void download()}>
+              <Button variant="primaryTeal" icon={Download} disabled={downloading} onClick={() => void download()}>
                 {downloading ? 'Preparing…' : 'Download (.docx)'}
               </Button>
             )}

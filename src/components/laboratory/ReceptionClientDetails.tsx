@@ -112,7 +112,7 @@ export const ReceptionClientDetails: React.FC<ReceptionClientDetailsProps> = ({
               className={`mt-1.5 w-full rounded-lg border bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 dark:bg-slate-950 dark:text-white ${
                 poBoxInvalid
                   ? 'border-rose-400 focus:border-rose-500 focus:ring-rose-500/20'
-                  : 'border-slate-300 focus:border-amber-500 focus:ring-amber-500/20 dark:border-slate-700'
+                  : 'border-slate-300 focus:border-teal-500 focus:ring-teal-500/20 dark:border-slate-700'
               }`}
             />
             <span className={`mt-1 block text-[11px] ${poBoxInvalid ? 'text-rose-500' : 'text-slate-400'}`}>

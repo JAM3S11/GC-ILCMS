@@ -71,7 +71,7 @@ export const A4PreviewDialog: React.FC<{
             </span>
             <div className="flex items-center gap-2">
               <Button size="sm" icon={Printer} onClick={onPrint}>Print</Button>
-              <Button size="sm" variant="primary" icon={Download} disabled={downloading} onClick={onDownload}>
+              <Button size="sm" variant="primaryTeal" icon={Download} disabled={downloading} onClick={onDownload}>
                 {downloading ? 'Preparing…' : 'Download PDF'}
               </Button>
               <button type="button" onClick={onClose} aria-label="Close preview" className="rounded-md p-1 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">

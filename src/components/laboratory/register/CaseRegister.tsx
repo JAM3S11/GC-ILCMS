@@ -52,7 +52,7 @@ interface CaseRegisterProps<S extends string> {
 const csvCell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
 
 const selectClass =
-  'h-8 rounded-lg border border-slate-200 bg-white pl-2.5 pr-7 text-xs text-slate-900 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white';
+  'h-8 rounded-lg border border-slate-200 bg-white pl-2.5 pr-7 text-xs text-slate-900 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white';
 
 export function CaseRegister<S extends string>({
   laboratory,
@@ -402,5 +402,5 @@ const Officer: React.FC<{ name?: string | null }> = ({ name }) =>
       <span className="truncate text-slate-900 dark:text-white">{name}</span>
     </span>
   ) : (
-    <StatusPill tone="amber" dot={false}>Not assigned</StatusPill>
+    <StatusPill tone="teal" dot={false}>Not assigned</StatusPill>
   );

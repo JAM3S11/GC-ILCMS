@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, FlaskConical, TestTube, Droplets, LogOut, Bell, FileText, Settings, ShieldCheck, Building2, ClipboardList, UserCheck, Users, ScrollText, FolderOpen } from 'lucide-react';
+import { LayoutDashboard, FlaskConical, TestTube, Droplets, Pill, LogOut, Bell, FileText, Settings, ShieldCheck, Building2, ClipboardList, UserCheck, Users, ScrollText, FolderOpen } from 'lucide-react';
 import { LaboratoryDepartment, User, UserRole } from '../../types';
 
 /**
@@ -35,8 +35,8 @@ export const APP_NAV_GROUPS: { title: string; items: NavItem[] }[] = [
           'RECEPTIONIST', 'ADMINISTRATOR', 'CLERK', 'CEO',
           'ANALYST', 'SENIOR_CHEMIST', 'HEAD_OF_DEPARTMENT',
         ],
-        // Water handles its clients from the Exhibit Laboratory page.
-        hideForDepartments: ['Water'],
+        // Water and Narcotics handle their clients from the Exhibit Laboratory page.
+        hideForDepartments: ['Water', 'Narcotics'],
       },
       {
         // The department register. Water staff (analysis officers and interns included) find
@@ -45,7 +45,7 @@ export const APP_NAV_GROUPS: { title: string; items: NavItem[] }[] = [
         label: 'Exhibit Laboratory',
         icon: FlaskConical,
         roles: ['ANALYST', 'SENIOR_CHEMIST', 'HEAD_OF_DEPARTMENT'],
-        departments: ['Food & Drugs', 'Water'],
+        departments: ['Food & Drugs', 'Water', 'Narcotics'],
       },
       {
         id: 'food-drug-intake',
@@ -58,6 +58,12 @@ export const APP_NAV_GROUPS: { title: string; items: NavItem[] }[] = [
         label: 'Exhibit Intake',
         icon: Droplets,
         departments: ['Water'],
+      },
+      {
+        id: 'narcotics-intake',
+        label: 'Exhibit Intake',
+        icon: Pill,
+        departments: ['Narcotics'],
       },
       {
         id: 'check-out',
@@ -151,6 +157,8 @@ const DETAIL_VIEWS: Record<string, { section: string; label: string }> = {
   'exhibit-case-file': { section: 'Exhibit Laboratory', label: 'Exhibit case file' },
   'food-drug-case-file': { section: 'Exhibit Laboratory', label: 'Sample case file' },
   'water-intake-edit': { section: 'Exhibit Intake', label: 'Edit submission' },
+  'narcotics-intake-edit': { section: 'Exhibit Intake', label: 'Edit submission' },
+  'narcotics-case-file': { section: 'Exhibit Laboratory', label: 'Exhibit case file' },
   'register-visitor': { section: 'Visitor Register', label: 'Register visitor' },
   'lab-bay': { section: 'Operations', label: 'Visitor Register' },
   reception: { section: 'Operations', label: 'Visitor Register' },

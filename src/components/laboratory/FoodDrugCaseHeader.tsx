@@ -6,12 +6,12 @@ import { CaseFileContentsSection } from './CaseFileContents';
 
 const STATUS_TONE: Record<FoodDrugIntakeStatus, Tone> = {
   'Awaiting Approval': 'rose',
-  'Awaiting Assignment': 'amber',
+  'Awaiting Assignment': 'teal',
   'Under Analysis': 'sky',
   Reported: 'emerald',
 };
 
-/** A sample still in the laboratory after this many days is flagged amber. */
+/** A sample still in the laboratory after this many days is flagged as overdue. */
 const DAYS_IN_LAB_WARNING = 14;
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -106,7 +106,7 @@ const ProgressTrack: React.FC<{ sections: CaseFileContentsSection[]; onSelect: (
           {sections.map((s) => (
             <span
               key={s.id}
-              className={`h-2 w-2 rounded-full ${s.state === 'done' ? 'bg-emerald-600' : s.state === 'current' ? 'bg-amber-500' : 'bg-slate-300 dark:bg-slate-600'}`}
+              className={`h-2 w-2 rounded-full ${s.state === 'done' ? 'bg-emerald-600' : s.state === 'current' ? 'bg-teal-300' : 'bg-slate-300 dark:bg-slate-600'}`}
             />
           ))}
         </div>
@@ -136,13 +136,13 @@ const ProgressTrack: React.FC<{ sections: CaseFileContentsSection[]; onSelect: (
               >
                 <span
                   className={`block h-1.5 rounded-full transition-colors ${
-                    done ? 'bg-emerald-600' : active ? 'bg-amber-500' : 'bg-slate-200 group-hover:bg-slate-300 dark:bg-slate-700 dark:group-hover:bg-slate-600'
+                    done ? 'bg-emerald-600' : active ? 'bg-teal-300' : 'bg-slate-200 group-hover:bg-slate-300 dark:bg-slate-700 dark:group-hover:bg-slate-600'
                   }`}
                 />
                 <span className="mt-2 flex items-center gap-1.5 text-xs font-medium text-slate-800 group-hover:text-slate-950 dark:text-slate-100 dark:group-hover:text-white">
                   <span
                     className={`flex h-4 w-4 shrink-0 items-center justify-center rounded text-[9px] font-semibold text-white ${
-                      done ? 'bg-emerald-600' : active ? 'bg-amber-600' : 'bg-slate-400 dark:bg-slate-600'
+                      done ? 'bg-emerald-600' : active ? 'bg-teal-300' : 'bg-slate-400 dark:bg-slate-600'
                     }`}
                   >
                     {done ? <Check className="h-2.5 w-2.5" /> : s.number}
@@ -151,7 +151,7 @@ const ProgressTrack: React.FC<{ sections: CaseFileContentsSection[]; onSelect: (
                 </span>
                 <span
                   className={`mt-0.5 block truncate pl-[1.375rem] text-[11px] ${
-                    done ? 'text-emerald-700 dark:text-emerald-400' : active ? 'text-amber-700 dark:text-amber-300' : 'text-slate-500 dark:text-slate-400'
+                    done ? 'text-emerald-700 dark:text-emerald-400' : active ? 'text-teal-700 dark:text-teal-300' : 'text-slate-500 dark:text-slate-400'
                   }`}
                 >
                   {s.note ?? (done ? 'Complete' : active ? 'In progress' : 'Pending')}
@@ -233,14 +233,14 @@ export const FoodDrugCaseHeader: React.FC<FoodDrugCaseHeaderProps> = ({ intake, 
             className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3 ${
               next.done
                 ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-500/30 dark:bg-emerald-500/10'
-                : 'border-amber-200 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/10'
+                : 'border-teal-200 bg-teal-50 dark:border-teal-500/30 dark:bg-teal-500/10'
             }`}
           >
             <div className="flex min-w-0 items-start gap-2.5">
               {next.done ? (
                 <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-400" />
               ) : (
-                <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-300" />
+                <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 text-teal-700 dark:text-teal-300" />
               )}
               <p className="text-sm text-slate-800 dark:text-slate-100">
                 <span className="font-semibold">{next.done ? 'Complete: ' : 'Next: '}</span>
@@ -252,7 +252,7 @@ export const FoodDrugCaseHeader: React.FC<FoodDrugCaseHeaderProps> = ({ intake, 
                 <span
                   title={overdue ? `In the laboratory longer than ${DAYS_IN_LAB_WARNING} days` : 'Counted from the day the sample was received'}
                   className={`inline-flex items-center gap-1 text-xs font-medium tabular-nums ${
-                    overdue ? 'text-amber-800 dark:text-amber-200' : 'text-slate-600 dark:text-slate-300'
+                    overdue ? 'text-teal-800 dark:text-teal-200' : 'text-slate-600 dark:text-slate-300'
                   }`}
                 >
                   <Hourglass className="h-3.5 w-3.5" />

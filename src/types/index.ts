@@ -185,6 +185,109 @@ export type WaterTestType = 'Full Chemical Analysis' | 'Specific Chemical Analys
 export type WaterSourceCategory = 'Potable Water' | 'Effluent Water';
 export type WaterIntakeStatus = 'Awaiting Approval' | 'Awaiting Assignment' | 'Under Analysis' | 'Analysis Complete';
 
+export type NarcoticsIntakeStatus = 'Awaiting Assignment' | 'Under Analysis' | 'Analysis Complete';
+
+/** A Narcotics exhibit as stored in narcotics_exhibit_intakes. */
+export interface NarcoticsIntake {
+  id: string; // PostgreSQL UUID
+  labReference: string; // e.g. K2034/2026
+  crNumber: string; // police CR (crime report) number
+  receptionVisitId: string;
+  /** The submitting officer, copied from the reception record. */
+  officerName: string;
+  badgeNumber: string;
+  officerMobile: string;
+  policeStation: string;
+  documentsReceived: string[];
+  documentsConfirmedAt?: string;
+  documentsConfirmedBy?: string;
+  receivingOfficer: string;
+  receivingOfficerId: string;
+  dateReceived: string;
+  timeReceived: string; // HH:MM
+  exhibitType: string;
+  numberOfItems: number;
+  packaging: string;
+  sealCondition: ExhibitItem['condition'];
+  sealNumber?: string;
+  markings?: string;
+  declaredWeight?: string;
+  colourAppearance?: string;
+  description: string;
+  status: NarcoticsIntakeStatus;
+  analysisOfficer?: string;
+  analysisOfficerId?: string;
+  assignedBy?: string;
+  assignedDate?: string;
+  completedBy?: string;
+  completedDate?: string;
+  /** Recorded by the Analysis Officer; saving them completes the analysis. */
+  testsPerformed?: string[];
+  substanceIdentified?: string;
+  netWeight?: string;
+  findings?: string;
+  findingsRecordedAt?: string; // 'YYYY-MM-DD HH24:MI', Africa/Nairobi
+  findingsRecordedBy?: string;
+  /** The Head's approval of the intake documents. */
+  approvedBy?: string;
+  approvedDate?: string;
+  /** The Head's approval of the memo; after this only the Head can change the findings. */
+  memoApprovedBy?: string;
+  memoApprovedDate?: string;
+  edited?: boolean;
+  editedDate?: string;
+  registeredBy: string;
+  createdAt: string;
+}
+
+/** A saved Draft Report of Analysis (Cannabis), one per Narcotics exhibit. */
+export interface NarcoticsDraftReport {
+  id: string;
+  intakeId: string;
+  sampleKNo: string;
+  dateReceived: string;
+  submittedBy: string;
+  dateAnalysed: string;
+  envelopeMarked: string;
+  policeStation: string;
+  crNumber: string;
+  accused: string;
+  containing: string;
+  results: Record<string, string>;
+  quantity: string;
+  gckNo: string;
+  status: 'DRAFT' | 'SUBMITTED' | 'APPROVED';
+  analystSignature?: string | null;
+  analysedBy?: string;
+  analysedDate?: string;
+  checkerSignature?: string | null;
+  checkedBy?: string;
+  checkedDate?: string;
+  unlockReason?: string | null;
+  updatedBy: string;
+  updatedAt: string;
+}
+
+/** What the intake form sends to POST /api/narcotics/intakes. */
+export interface NarcoticsIntakeDraft {
+  receptionVisitId: string;
+  crNumber: string;
+  documentsReceived: string[];
+  documentsConfirmed: boolean;
+  receivingOfficerId: string;
+  dateReceived: string;
+  timeReceived: string;
+  exhibitType: string;
+  numberOfItems: number;
+  packaging: string;
+  sealCondition: ExhibitItem['condition'];
+  sealNumber?: string;
+  markings?: string;
+  declaredWeight?: string;
+  colourAppearance?: string;
+  description: string;
+}
+
 export interface WaterIntake {
   id: string; // PostgreSQL UUID
   labReference: string; // e.g. GC/MOI/WAT/VOL I/001/2026
@@ -532,7 +635,7 @@ export interface FoodDrugWorksheet {
   updatedAt?: string;
 }
 
-export type WorkAllocationRecordType = 'WATER_INTAKE' | 'FOOD_DRUG_INTAKE';
+export type WorkAllocationRecordType = 'WATER_INTAKE' | 'FOOD_DRUG_INTAKE' | 'NARCOTICS_INTAKE';
 
 /** A work allocation form: the Head keeps the original, the analyst gets a copy. */
 export interface WorkAllocation {

@@ -61,7 +61,7 @@ type BenchFilter = 'active' | 'mine' | 'approval' | 'assignment' | 'reported' | 
 
 const STATUS_TONE: Record<FoodDrugIntakeStatus, Tone> = {
   'Awaiting Approval': 'rose',
-  'Awaiting Assignment': 'amber',
+  'Awaiting Assignment': 'teal',
   'Under Analysis': 'sky',
   Reported: 'emerald',
 };
@@ -156,7 +156,7 @@ export const FoodDrugLaboratoryView: React.FC<FoodDrugLaboratoryViewProps> = ({
         meta={<StatusPill tone="emerald" pulse>Live register</StatusPill>}
         actions={
           onOpenIntake && (
-            <Button variant="primary" icon={Plus} onClick={onOpenIntake}>
+            <Button variant="primaryTeal" icon={Plus} onClick={onOpenIntake}>
               Register sample
             </Button>
           )
@@ -168,7 +168,7 @@ export const FoodDrugLaboratoryView: React.FC<FoodDrugLaboratoryViewProps> = ({
           label="Samples in queue"
           value={active.length}
           icon={TestTube}
-          tone="amber"
+          tone="teal"
           hint={`${intakes.length} in the register`}
           action={{ label: 'View queue', onClick: () => setFilter('active') }}
         />
@@ -209,7 +209,7 @@ export const FoodDrugLaboratoryView: React.FC<FoodDrugLaboratoryViewProps> = ({
       {clients.length > 0 && (
         <Panel
           icon={Users}
-          tone="amber"
+          tone="teal"
           title="Clients at the laboratory"
           description={`${clients.length} ${clients.length === 1 ? 'client' : 'clients'} sent by reception to receive or register`}
           flush
@@ -226,7 +226,7 @@ export const FoodDrugLaboratoryView: React.FC<FoodDrugLaboratoryViewProps> = ({
                       {visit.station} · <span className="font-mono">{visit.visitNumber}</span> · in at {visit.timeIn}
                     </div>
                   </div>
-                  <StatusPill tone={waiting ? 'sky' : 'amber'}>{waiting ? 'Waiting at reception' : 'In the laboratory'}</StatusPill>
+                  <StatusPill tone={waiting ? 'sky' : 'teal'}>{waiting ? 'Waiting at reception' : 'In the laboratory'}</StatusPill>
                   {registered ? (
                     <span className="text-[11px] text-slate-500 dark:text-slate-400">
                       Registered · <span className="font-mono">{registered.id}</span>
@@ -239,7 +239,7 @@ export const FoodDrugLaboratoryView: React.FC<FoodDrugLaboratoryViewProps> = ({
                         </Button>
                       )}
                       {onRegisterSample && (
-                        <Button size="xs" variant="primary" icon={Plus} onClick={() => onRegisterSample(visit)}>
+                        <Button size="xs" variant="primaryTeal" icon={Plus} onClick={() => onRegisterSample(visit)}>
                           Register sample
                         </Button>
                       )}

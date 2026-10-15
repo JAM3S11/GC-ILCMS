@@ -42,7 +42,7 @@ import { canEditWaterIntake, canEditWaterResults, canPrintWaterCertificate, wate
 
 const STATUS_TONE: Record<WaterIntake['status'], Tone> = {
   'Awaiting Approval': 'rose',
-  'Awaiting Assignment': 'amber',
+  'Awaiting Assignment': 'teal',
   'Under Analysis': 'sky',
   'Analysis Complete': 'emerald',
 };
@@ -327,7 +327,7 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
         checked={!!intake.documentsConfirmedAt}
         disabled={confirming}
         onChange={(event) => void setDocumentsConfirmed(event.target.checked)}
-        className="mt-0.5 h-4 w-4 rounded border-slate-300 text-amber-500 focus:ring-amber-500"
+        className="mt-0.5 h-4 w-4 rounded border-slate-300 text-teal-500 focus:ring-teal-500"
       />
       <span>
         Intake documents are approved
@@ -467,7 +467,7 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
             {viewingAllocation && (
               <WorkAllocationViewer recordType="WATER_INTAKE" recordId={intake.id} onClose={() => setViewingAllocation(false)} />
             )}
-            <Button variant="primary" icon={Printer} onClick={() => window.print()}>
+            <Button variant="primaryTeal" icon={Printer} onClick={() => window.print()}>
               Print case file
             </Button>
           </span>
@@ -496,7 +496,7 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
                 <Fact label="Packaging">{intake.packaging ?? '—'}</Fact>
                 <Fact label="Condition">
                   {intake.condition ? (
-                    <StatusPill tone={intake.condition === 'Intact & Sealed' ? 'emerald' : 'amber'}>{intake.condition}</StatusPill>
+                    <StatusPill tone={intake.condition === 'Intact & Sealed' ? 'emerald' : 'teal'}>{intake.condition}</StatusPill>
                   ) : (
                     '—'
                   )}
@@ -584,7 +584,7 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
                   Full-screen preview
                 </Button>
                 {canPrint && !issued && (
-                  <Button size="sm" variant="primary" icon={CheckCircle2} disabled={!!approveBlocker || issuing} onClick={() => void approveMemo()}>
+                  <Button size="sm" variant="primaryTeal" icon={CheckCircle2} disabled={!!approveBlocker || issuing} onClick={() => void approveMemo()}>
                     {issuing ? 'Approving…' : 'Approve memo'}
                   </Button>
                 )}
@@ -669,7 +669,7 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
             )}
             {canPrint && isComplete && !issued && (
               <div className="space-y-2 border-t border-slate-200 bg-slate-50 px-4 py-3 print:hidden dark:border-slate-800 dark:bg-slate-950/50">
-                <Button variant="primary" className="w-full" icon={CheckCircle2} disabled={!!approveBlocker || issuing} onClick={() => void approveMemo()}>
+                <Button variant="primaryTeal" className="w-full" icon={CheckCircle2} disabled={!!approveBlocker || issuing} onClick={() => void approveMemo()}>
                   {issuing ? 'Approving…' : 'Approve memo'}
                 </Button>
                 <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
@@ -733,7 +733,7 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
                 </Button>
               )}
               {canPrint && !issued && (
-                <Button size="sm" variant="primary" icon={CheckCircle2} disabled={!!approveBlocker || issuing} onClick={() => void approveMemo()}>
+                <Button size="sm" variant="primaryTeal" icon={CheckCircle2} disabled={!!approveBlocker || issuing} onClick={() => void approveMemo()}>
                   {issuing ? 'Approving…' : 'Approve memo'}
                 </Button>
               )}
@@ -759,7 +759,7 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
 
 const CERT_STATUS: Record<WaterCertificate['status'], { label: string; tone: Tone }> = {
   CURRENT: { label: 'Valid', tone: 'emerald' },
-  SUPERSEDED: { label: 'Superseded', tone: 'amber' },
+  SUPERSEDED: { label: 'Superseded', tone: 'teal' },
   REVOKED: { label: 'Revoked', tone: 'rose' },
 };
 
@@ -797,7 +797,7 @@ const CertificatePanel: React.FC<{
         <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-3 text-[12px] text-slate-600 dark:text-slate-300">
           <span>This memo was approved before certificates were signed. Sign it to give it a serial and QR code.</span>
           {canManage && (
-            <Button size="sm" variant="primary" icon={ShieldCheck} disabled={busy} onClick={onSign}>
+            <Button size="sm" variant="primaryTeal" icon={ShieldCheck} disabled={busy} onClick={onSign}>
               Sign certificate
             </Button>
           )}
@@ -830,7 +830,7 @@ const CertificatePanel: React.FC<{
             {shown.status === 'REVOKED' ? ` · Revoked ${formatStamp(shown.revokedAt)}${shown.revokedBy ? ` by ${shown.revokedBy}` : ''}: ${shown.revokeReason}` : ''}
           </p>
           {state?.outdated && (
-            <p className="flex items-start gap-1.5 rounded-md bg-amber-50 px-2.5 py-2 text-[11px] text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+            <p className="flex items-start gap-1.5 rounded-md bg-teal-50 px-2.5 py-2 text-[11px] text-teal-800 dark:bg-teal-950/40 dark:text-teal-200">
               <TriangleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
               The results or exhibit details changed after this certificate was signed. The verify page still shows the signed figures; reissue to sign the new ones.
             </p>

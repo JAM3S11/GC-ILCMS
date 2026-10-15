@@ -87,7 +87,7 @@ export const OfficerVerificationModal: React.FC<OfficerVerificationModalProps> =
         {/* Modal Header */}
         <div className="flex items-center justify-between border-b border-slate-200 pb-4 dark:border-slate-800">
           <div className="flex items-center gap-3">
-            <span className="p-2 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20">
+            <span className="p-2 rounded-xl bg-teal-500/10 text-teal-400 border border-teal-500/20">
               <ShieldCheck className="w-5 h-5" />
             </span>
             <div>
@@ -116,7 +116,7 @@ export const OfficerVerificationModal: React.FC<OfficerVerificationModalProps> =
             <span className="text-slate-500 dark:text-slate-400 font-mono text-[11px] uppercase tracking-wider">
               Recorded by Reception ({visitor.receptionistName})
             </span>
-            <span className="text-amber-400 font-mono text-[11px]">Time In: {visitor.timeIn}</span>
+            <span className="text-teal-400 font-mono text-[11px]">Time In: {visitor.timeIn}</span>
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
@@ -142,7 +142,7 @@ export const OfficerVerificationModal: React.FC<OfficerVerificationModalProps> =
             </div>
             <div>
               <span className="text-slate-500 dark:text-slate-400 block text-[10px]">Target Laboratory:</span>
-              <span className="text-amber-400 font-semibold">{visitor.laboratory}</span>
+              <span className="text-teal-400 font-semibold">{visitor.laboratory}</span>
             </div>
           </div>
         </div>
@@ -156,7 +156,7 @@ export const OfficerVerificationModal: React.FC<OfficerVerificationModalProps> =
           className="space-y-4 text-xs"
         >
           <div className="border-t border-slate-200 pt-3 dark:border-slate-800">
-            <h3 className="font-bold text-slate-900 text-xs uppercase tracking-wider font-mono text-amber-400 mb-3 dark:text-white">
+            <h3 className="font-bold text-slate-900 text-xs uppercase tracking-wider font-mono text-teal-400 mb-3 dark:text-white">
               Confirm &amp; Record Receiving Verification Data
             </h3>
 
@@ -167,7 +167,7 @@ export const OfficerVerificationModal: React.FC<OfficerVerificationModalProps> =
                   type="text"
                   value={officerName}
                   onChange={(e) => setOfficerName(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-900 focus:border-amber-400 outline-none dark:bg-slate-950 dark:border-slate-800 dark:text-white"
+                  className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-900 focus:border-teal-400 outline-none dark:bg-slate-950 dark:border-slate-800 dark:text-white"
                   required
                 />
               </div>
@@ -178,7 +178,7 @@ export const OfficerVerificationModal: React.FC<OfficerVerificationModalProps> =
                   type="text"
                   value={nationalId}
                   onChange={(e) => setNationalId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-900 font-mono focus:border-amber-400 outline-none dark:bg-slate-950 dark:border-slate-800 dark:text-white"
+                  className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-900 font-mono focus:border-teal-400 outline-none dark:bg-slate-950 dark:border-slate-800 dark:text-white"
                   required
                 />
               </div>
@@ -189,7 +189,7 @@ export const OfficerVerificationModal: React.FC<OfficerVerificationModalProps> =
                   type="text"
                   value={badgeNumber}
                   onChange={(e) => setBadgeNumber(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-900 font-mono focus:border-amber-400 outline-none dark:bg-slate-950 dark:border-slate-800 dark:text-white"
+                  className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-900 font-mono focus:border-teal-400 outline-none dark:bg-slate-950 dark:border-slate-800 dark:text-white"
                   required
                 />
               </div>
@@ -200,7 +200,7 @@ export const OfficerVerificationModal: React.FC<OfficerVerificationModalProps> =
                   type="text"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-900 focus:border-amber-400 outline-none dark:bg-slate-950 dark:border-slate-800 dark:text-white"
+                  className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-900 focus:border-teal-400 outline-none dark:bg-slate-950 dark:border-slate-800 dark:text-white"
                   required
                 />
               </div>
@@ -211,7 +211,7 @@ export const OfficerVerificationModal: React.FC<OfficerVerificationModalProps> =
                   type="text"
                   value={station}
                   onChange={(e) => setStation(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-900 focus:border-amber-400 outline-none dark:bg-slate-950 dark:border-slate-800 dark:text-white"
+                  className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-900 focus:border-teal-400 outline-none dark:bg-slate-950 dark:border-slate-800 dark:text-white"
                   required
                 />
               </div>
@@ -222,7 +222,7 @@ export const OfficerVerificationModal: React.FC<OfficerVerificationModalProps> =
                   type="text"
                   value={receivingAnalyst}
                   onChange={(e) => setReceivingAnalyst(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-900 focus:border-amber-400 outline-none dark:bg-slate-950 dark:border-slate-800 dark:text-white"
+                  className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-900 focus:border-teal-400 outline-none dark:bg-slate-950 dark:border-slate-800 dark:text-white"
                   required
                 />
               </div>
@@ -233,7 +233,7 @@ export const OfficerVerificationModal: React.FC<OfficerVerificationModalProps> =
                   type="date"
                   value={verificationDate}
                   onChange={(e) => setVerificationDate(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-900 font-mono focus:border-amber-400 outline-none dark:bg-slate-950 dark:border-slate-800 dark:text-white"
+                  className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-900 font-mono focus:border-teal-400 outline-none dark:bg-slate-950 dark:border-slate-800 dark:text-white"
                   required
                 />
               </div>
@@ -244,7 +244,7 @@ export const OfficerVerificationModal: React.FC<OfficerVerificationModalProps> =
                   type="text"
                   value={verificationTime}
                   onChange={(e) => setVerificationTime(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-900 font-mono focus:border-amber-400 outline-none dark:bg-slate-950 dark:border-slate-800 dark:text-white"
+                  className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-900 font-mono focus:border-teal-400 outline-none dark:bg-slate-950 dark:border-slate-800 dark:text-white"
                   required
                 />
               </div>
@@ -276,7 +276,7 @@ export const OfficerVerificationModal: React.FC<OfficerVerificationModalProps> =
                 <label
                   className={`p-3 rounded-xl border flex items-center gap-2 cursor-pointer transition-all ${
                     verificationStatus === 'VERIFICATION REQUIRED'
-                      ? 'bg-amber-500/10 border-amber-500/40 text-amber-300'
+                      ? 'bg-teal-500/10 border-teal-500/40 text-teal-300'
                       : 'bg-slate-50 border-slate-200 text-slate-500 dark:bg-slate-950 dark:border-slate-800 dark:text-slate-500 dark:text-slate-400'
                   }`}
                 >
@@ -286,9 +286,9 @@ export const OfficerVerificationModal: React.FC<OfficerVerificationModalProps> =
                     value="VERIFICATION REQUIRED"
                     checked={verificationStatus === 'VERIFICATION REQUIRED'}
                     onChange={() => setVerificationStatus('VERIFICATION REQUIRED')}
-                    className="accent-amber-500"
+                    className="accent-teal-500"
                   />
-                  <Clock className="w-4 h-4 text-amber-400" />
+                  <Clock className="w-4 h-4 text-teal-400" />
                   <span className="font-bold">VERIFICATION REQUIRED</span>
                 </label>
               </div>
@@ -302,14 +302,14 @@ export const OfficerVerificationModal: React.FC<OfficerVerificationModalProps> =
                 rows={2}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-900 focus:border-amber-400 outline-none dark:bg-slate-950 dark:border-slate-800 dark:text-white"
+                className="w-full px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-slate-900 focus:border-teal-400 outline-none dark:bg-slate-950 dark:border-slate-800 dark:text-white"
               />
             </div>
           </div>
 
           {/* Institutional Compliance Notice */}
           <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-slate-500 flex items-start gap-2.5 text-[11px] leading-relaxed dark:bg-slate-950 dark:border-slate-800 dark:text-slate-500 dark:text-slate-400">
-            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+            <AlertCircle className="w-4 h-4 text-teal-400 shrink-0 mt-0.5" />
             <span>
               <strong>Prototype System Notice:</strong> This internal verification confirms the physical National Police Service credentials and documents presented at the laboratory bay. The prototype operates on departmental chain-of-custody protocols without asserting a live connection to external civil registry databases.
             </span>
@@ -338,7 +338,7 @@ export const OfficerVerificationModal: React.FC<OfficerVerificationModalProps> =
               <button
                 type="button"
                 onClick={() => handleSubmit(true)}
-                className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs transition-colors shadow-md flex items-center justify-center gap-1.5 flex-1 sm:flex-none"
+                className="px-4 py-2 rounded-lg bg-teal-300 hover:bg-teal-200 text-[#0b3a42] font-bold text-xs transition-colors shadow-md flex items-center justify-center gap-1.5 flex-1 sm:flex-none"
               >
                 <FileCheck className="w-4 h-4" />
                 <span>Verify &amp; Proceed to Exhibit Intake →</span>

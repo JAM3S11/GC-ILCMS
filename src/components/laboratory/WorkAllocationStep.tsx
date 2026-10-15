@@ -52,7 +52,7 @@ export const WorkAllocationStep: React.FC<{ intake: FoodDrugIntake; canView: boo
       icon={ClipboardSignature}
       title="Work allocation"
       description="Issued by the Head of Department when the sample is assigned. The Head keeps the original; the analyst gets a copy."
-      status={allocated ? { label: 'Allocated', tone: 'emerald' } : { label: 'Not allocated', tone: 'amber' }}
+      status={allocated ? { label: 'Allocated', tone: 'emerald' } : { label: 'Not allocated', tone: 'teal' }}
       summary={facts}
     >
       <div className="space-y-3 px-5 py-4">

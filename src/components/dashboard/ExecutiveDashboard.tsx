@@ -43,7 +43,7 @@ type SortKey = 'active' | 'pendingReports' | 'turnaroundDays';
 const slaStatus = (d: DepartmentWorkload): { label: string; tone: Tone } => {
   const ratio = d.turnaroundDays / d.slaDays;
   if (ratio > 1) return { label: 'Over SLA', tone: 'rose' };
-  if (ratio > 0.85) return { label: 'At risk', tone: 'amber' };
+  if (ratio > 0.85) return { label: 'At risk', tone: 'teal' };
   return { label: 'On track', tone: 'emerald' };
 };
 
@@ -64,14 +64,14 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({ activeCa
         description="National caseload, departmental turnaround and matters needing executive attention."
         meta={<StatusPill tone="violet" dot={false}>Cycle 2026-Q3</StatusPill>}
         actions={
-          <Button variant="primary" icon={ArrowUpRight} onClick={() => onSelectCase(activeCase.id)}>
+          <Button variant="primary" icon={ArrowUpRight} onClick={() => onSelectCase(activeCase.id)} className="!bg-teal-300 !text-[#0b3a42] hover:!bg-teal-200 !shadow-teal-500/20">
             Priority case file
           </Button>
         }
       />
 
       <KpiGrid label="National metrics">
-        <KpiCard label="Cases this year" value="1,482" icon={TrendingUp} tone="amber" hint="+8.4% intake efficiency" />
+        <KpiCard label="Cases this year" value="1,482" icon={TrendingUp} tone="teal" hint="+8.4% intake efficiency" />
         <KpiCard label="Active in analysis" value={totalActive} icon={FlaskConical} tone="sky" hint={`Across ${DEPARTMENTS.length} departments`} />
         <KpiCard label="Mean turnaround" value="4.2" unit="days" icon={Clock} tone="emerald" hint="Down from 14 days (paper era)" />
         <KpiCard label="Reports pending review" value={totalPending} icon={FileCheck} tone="violet" hint="1 urgent · Narcotics" />
@@ -139,7 +139,7 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({ activeCa
         </Panel>
 
         <div className="space-y-5 xl:col-span-4">
-          <Panel icon={AlertTriangle} tone="amber" title="Needs attention" description={`${atRisk.length} departments at or over SLA`} flush>
+          <Panel icon={AlertTriangle} tone="teal" title="Needs attention" description={`${atRisk.length} departments at or over SLA`} flush>
             <ul className="divide-y divide-slate-100 dark:divide-slate-800">
               {atRisk.map((d) => {
                 const status = slaStatus(d);

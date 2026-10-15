@@ -26,13 +26,13 @@ interface FoodDrugLabDashboardProps {
 
 const STATUS_TONE: Record<FoodDrugIntakeStatus, Tone> = {
   'Awaiting Approval': 'rose',
-  'Awaiting Assignment': 'amber',
+  'Awaiting Assignment': 'teal',
   'Under Analysis': 'sky',
   Reported: 'emerald',
 };
 
 const SAMPLE_TONE: Record<FoodDrugSampleType, Tone> = {
-  Aflatoxin: 'amber',
+  Aflatoxin: 'teal',
   Mycotoxins: 'violet',
   Miscellaneous: 'sky',
 };
@@ -85,7 +85,7 @@ export const FoodDrugLabDashboard: React.FC<FoodDrugLabDashboardProps> = ({
 
   const pipeline: { label: string; value: number; tone: Tone }[] = [
     { label: 'Awaiting approval', value: awaitingApproval, tone: 'rose' },
-    { label: 'Awaiting assignment', value: awaitingAssignment, tone: 'amber' },
+    { label: 'Awaiting assignment', value: awaitingAssignment, tone: 'teal' },
     { label: 'Under analysis', value: underAnalysis, tone: 'sky' },
     { label: 'Reported', value: reported, tone: 'emerald' },
   ];
@@ -111,7 +111,7 @@ export const FoodDrugLabDashboard: React.FC<FoodDrugLabDashboardProps> = ({
         actions={
           <>
             <Button icon={Users} onClick={() => onNavigate('lab-bay')}>Visitor Register</Button>
-            <Button variant="primary" icon={FlaskConical} onClick={() => onNavigate('laboratory')}>Open Exhibit Laboratory</Button>
+            <Button variant="primary" icon={FlaskConical} onClick={() => onNavigate('laboratory')} className="!bg-teal-300 !text-[#0b3a42] hover:!bg-teal-200 !shadow-teal-500/20">Open Exhibit Laboratory</Button>
           </>
         }
       />
@@ -123,7 +123,7 @@ export const FoodDrugLabDashboard: React.FC<FoodDrugLabDashboardProps> = ({
       )}
 
       {isHead && !loadingFirstTime && (awaitingApproval > 0 || awaitingAssignment > 0) && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-teal-500/30 bg-teal-500/5 px-4 py-3 text-sm text-teal-800 dark:text-teal-200">
           <span>
             {awaitingApproval > 0 && (
               <>
@@ -151,7 +151,7 @@ export const FoodDrugLabDashboard: React.FC<FoodDrugLabDashboardProps> = ({
       )}
 
       <KpiGrid label="Food & Drugs metrics">
-        <KpiCard label="Total samples" value={loadingValue(intakes.length)} icon={TestTube} tone="amber" hint={`${receivedToday} received today`} />
+        <KpiCard label="Total samples" value={loadingValue(intakes.length)} icon={TestTube} tone="teal" hint={`${receivedToday} received today`} />
         <KpiCard label="Awaiting approval" value={loadingValue(awaitingApproval)} icon={ClipboardList} tone="rose" hint="Documents to review" />
         <KpiCard label="Awaiting assignment" value={loadingValue(awaitingAssignment)} icon={Inbox} tone="violet" hint="Waiting for an officer" />
         <KpiCard label="Under analysis" value={loadingValue(underAnalysis)} icon={FlaskConical} tone="sky" hint={mine > 0 ? `${mine} assigned to you` : 'Assigned and in progress'} />
@@ -162,7 +162,7 @@ export const FoodDrugLabDashboard: React.FC<FoodDrugLabDashboardProps> = ({
         <Panel
           className="xl:col-span-8"
           icon={TrendingUp}
-          tone="amber"
+          tone="teal"
           title="Weekly sample intake"
           description={`${weekly.reduce((n, week) => n + week.value, 0)} samples received in the last 8 weeks`}
         >
@@ -176,7 +176,7 @@ export const FoodDrugLabDashboard: React.FC<FoodDrugLabDashboardProps> = ({
                     <span className="text-[11px] tabular-nums text-slate-500 dark:text-slate-400">{week.value}</span>
                     <div className="flex min-h-0 w-full flex-1 items-end justify-center">
                       <div
-                        className="w-full max-w-10 rounded-t-md bg-amber-500/75 transition-all"
+                        className="w-full max-w-10 rounded-t-md bg-teal-300/90 transition-all"
                         style={{ height: `${Math.max(week.value > 0 ? 8 : 2, (week.value / maxWeekly) * 100)}%` }}
                         title={`${week.value} sample${week.value === 1 ? '' : 's'}`}
                       />
@@ -204,7 +204,7 @@ export const FoodDrugLabDashboard: React.FC<FoodDrugLabDashboardProps> = ({
               ))}
             </div>
           </Panel>
-          <Panel icon={TestTube} tone="amber" title="By sample type">
+          <Panel icon={TestTube} tone="teal" title="By sample type">
             <div className="space-y-3.5">
               {bySampleType.map((row) => (
                 <MeterRow key={row.type} label={row.type} value={row.value} total={Math.max(1, intakes.length)} tone={SAMPLE_TONE[row.type]} />
@@ -216,7 +216,7 @@ export const FoodDrugLabDashboard: React.FC<FoodDrugLabDashboardProps> = ({
 
       <Panel
         icon={ClipboardList}
-        tone="amber"
+        tone="teal"
         title="Latest samples"
         description="The most recent records in the Food & Drugs register"
         actions={<Button size="sm" onClick={() => onNavigate('laboratory')}>View all</Button>}

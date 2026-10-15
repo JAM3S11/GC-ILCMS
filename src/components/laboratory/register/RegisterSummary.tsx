@@ -78,7 +78,7 @@ export function RegisterSummary<S extends string>({
           label: 'No officer allocated',
           hint: 'Open files without an analysis officer',
           value: rows.filter((row) => !row.officer && !isClosed(row.status)).length,
-          tone: 'amber',
+          tone: 'teal',
           icon: UserX,
         },
         {

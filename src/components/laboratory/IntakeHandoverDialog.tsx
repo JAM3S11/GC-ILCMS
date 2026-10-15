@@ -64,7 +64,7 @@ export const IntakeHandoverDialog: React.FC<IntakeHandoverDialogProps> = ({ visi
             <Button onClick={onClose} disabled={sending}>
               Not now
             </Button>
-            <Button variant="primary" icon={Send} onClick={() => void send()} disabled={sending}>
+            <Button variant="primaryTeal" icon={Send} onClick={() => void send()} disabled={sending}>
               {sending ? 'Notifying…' : 'Notify reception — ready for checkout'}
             </Button>
           </div>

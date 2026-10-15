@@ -295,7 +295,7 @@ export const LaboratoryWorksheetSection: React.FC<LaboratoryWorksheetSectionProp
 
   const showSampleData = import.meta.env.DEV || currentUser.role === 'SUPER_ADMIN';
   const inputCls =
-    'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white';
+    'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white';
   const readCls =
     'w-full whitespace-pre-wrap break-words rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-200';
   const attachments = worksheet?.attachments ?? [];
@@ -321,7 +321,7 @@ export const LaboratoryWorksheetSection: React.FC<LaboratoryWorksheetSectionProp
           )}
           <Button size="sm" icon={Eye} onClick={() => setPreviewOpen(true)}>Preview A4</Button>
           <Button size="sm" icon={Printer} onClick={() => setPrinting(true)}>Print</Button>
-          <Button size="sm" variant="primary" icon={Download} disabled={downloading} onClick={() => void downloadPdf()}>
+          <Button size="sm" variant="primaryTeal" icon={Download} disabled={downloading} onClick={() => void downloadPdf()}>
             {downloading ? 'Preparing…' : 'Download PDF'}
           </Button>
         </div>
@@ -500,12 +500,12 @@ export const LaboratoryWorksheetSection: React.FC<LaboratoryWorksheetSectionProp
               )}
               {meta.canSubmit && (
                 confirmingSubmit ? (
-                  <Button variant="primary" icon={Send} disabled={!!busy} onClick={() => void run('submit')}>
+                  <Button variant="primaryTeal" icon={Send} disabled={!!busy} onClick={() => void run('submit')}>
                     {busy === 'submit' ? 'Submitting…' : 'Confirm — submit for checking'}
                   </Button>
                 ) : (
                   <Button
-                    variant="primary"
+                    variant="primaryTeal"
                     icon={Send}
                     disabled={!!missing.length || !!busy || !values.analystSignature}
                     title={!values.analystSignature ? 'Sign the worksheet first' : 'Locks the worksheet and sends it to the Head of Department'}
@@ -516,7 +516,7 @@ export const LaboratoryWorksheetSection: React.FC<LaboratoryWorksheetSectionProp
                 )
               )}
               {meta.canCheck && (
-                <Button variant="primary" icon={CheckCircle2} disabled={!!busy || !checkerSignature} title={!checkerSignature ? 'Sign first' : undefined} onClick={() => void run('check')}>
+                <Button variant="primaryTeal" icon={CheckCircle2} disabled={!!busy || !checkerSignature} title={!checkerSignature ? 'Sign first' : undefined} onClick={() => void run('check')}>
                   {busy === 'check' ? 'Checking…' : 'Mark as checked'}
                 </Button>
               )}
@@ -547,7 +547,7 @@ export const LaboratoryWorksheetSection: React.FC<LaboratoryWorksheetSectionProp
   );
 };
 
-const STAGE_TONE: Record<string, Tone> = { Checked: 'emerald', 'Awaiting check': 'violet', Draft: 'amber', 'Not started': 'slate' };
+const STAGE_TONE: Record<string, Tone> = { Checked: 'emerald', 'Awaiting check': 'violet', Draft: 'teal', 'Not started': 'slate' };
 
 const SectionShell: React.FC<{ stage?: string; linkedTo?: string; summary?: CaseStepFact[]; defaultOpen?: boolean; children: React.ReactNode }> = ({
   stage = 'Not started',

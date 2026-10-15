@@ -114,8 +114,8 @@ export const PrototypeTourModal: React.FC<PrototypeTourModalProps> = ({
                   title: 'Register & secure',
                   detail: 'Reception verifies identity, seals the exhibits, and opens the official case record.',
                   icon: Shield,
-                  color: 'text-orange-400',
-                  border: 'border-orange-500/30',
+                  color: 'text-teal-400',
+                  border: 'border-teal-500/30',
                 },
                 {
                   step: 'Step 3 of 5 • Architecture',

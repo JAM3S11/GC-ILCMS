@@ -97,14 +97,14 @@ export const WaterLaboratoryView: React.FC<WaterLaboratoryViewProps> = ({
             </div>
           </div>
           {onOpenIntake && (
-            <Button variant="primary" icon={Plus} onClick={onOpenIntake} id="btn-open-intake-modal">
+            <Button variant="primaryTeal" icon={Plus} onClick={onOpenIntake} id="btn-open-intake-modal">
               Exhibit intake
             </Button>
           )}
         </div>
         <ul aria-label="Stage counts" className="mt-5 flex flex-wrap gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
           {[
-            { label: 'Awaiting assignment', count: awaiting, dot: 'bg-amber-500' },
+            { label: 'Awaiting assignment', count: awaiting, dot: 'bg-teal-300' },
             { label: 'Under analysis', count: underAnalysis, dot: 'bg-sky-500' },
             { label: 'Complete', count: complete, dot: 'bg-emerald-500' },
           ].map((stage) => (
@@ -120,7 +120,7 @@ export const WaterLaboratoryView: React.FC<WaterLaboratoryViewProps> = ({
       {clients.length > 0 && (
         <Panel
           icon={Users}
-          tone="amber"
+          tone="teal"
           title="Clients at the laboratory"
           description={`${clients.length} ${clients.length === 1 ? 'client' : 'clients'} to receive or register`}
           flush
@@ -137,10 +137,10 @@ export const WaterLaboratoryView: React.FC<WaterLaboratoryViewProps> = ({
                       {visit.officerName} · <span className="font-mono">{visit.visitNumber}</span> · in at {visit.timeIn}
                     </div>
                   </div>
-                  <StatusPill tone={waiting ? 'sky' : 'amber'}>{waiting ? 'Waiting at reception' : 'In the laboratory'}</StatusPill>
+                  <StatusPill tone={waiting ? 'sky' : 'teal'}>{waiting ? 'Waiting at reception' : 'In the laboratory'}</StatusPill>
                   {waiting ? (
                     canReceiveClients && onAcceptClient ? (
-                      <Button size="xs" variant="primary" icon={CheckCircle2} onClick={() => onAcceptClient(visit.id)}>
+                      <Button size="xs" variant="primaryTeal" icon={CheckCircle2} onClick={() => onAcceptClient(visit.id)}>
                         Accept at laboratory
                       </Button>
                     ) : (
@@ -152,7 +152,7 @@ export const WaterLaboratoryView: React.FC<WaterLaboratoryViewProps> = ({
                     </span>
                   ) : (
                     onRegisterExhibit && (
-                      <Button size="xs" variant="primary" icon={Plus} onClick={() => onRegisterExhibit(visit)}>
+                      <Button size="xs" variant="primaryTeal" icon={Plus} onClick={() => onRegisterExhibit(visit)}>
                         Register exhibit
                       </Button>
                     )
@@ -201,7 +201,7 @@ export const WaterLaboratoryView: React.FC<WaterLaboratoryViewProps> = ({
           </div>
         </Panel>
       ) : (
-        <Panel icon={FlaskConical} tone="amber" title="Sample mix" description={`${intakes.length} ${intakes.length === 1 ? 'exhibit' : 'exhibits'} received`}>
+        <Panel icon={FlaskConical} tone="teal" title="Sample mix" description={`${intakes.length} ${intakes.length === 1 ? 'exhibit' : 'exhibits'} received`}>
           {sampleMixContent}
         </Panel>
       )}

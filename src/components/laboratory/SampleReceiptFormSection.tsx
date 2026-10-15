@@ -218,7 +218,7 @@ export const SampleReceiptFormSection: React.FC<SampleReceiptFormSectionProps> =
 
   const showSampleData = import.meta.env.DEV || currentUser.role === 'SUPER_ADMIN';
   const inputCls =
-    'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white';
+    'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white';
   const readCls =
     'w-full truncate rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-200';
 
@@ -241,7 +241,7 @@ export const SampleReceiptFormSection: React.FC<SampleReceiptFormSectionProps> =
           )}
           <Button size="sm" icon={Eye} onClick={() => setPreviewOpen(true)}>Preview A4</Button>
           <Button size="sm" icon={Printer} onClick={() => setPrinting(true)}>Print</Button>
-          <Button size="sm" variant="primary" icon={Download} disabled={downloading} onClick={() => void downloadPdf()}>
+          <Button size="sm" variant="primaryTeal" icon={Download} disabled={downloading} onClick={() => void downloadPdf()}>
             {downloading ? 'Preparing…' : 'Download PDF'}
           </Button>
         </div>
@@ -427,7 +427,7 @@ export const SampleReceiptFormSection: React.FC<SampleReceiptFormSectionProps> =
                   : missing.length ? `Still to fill in: ${missing.join(', ')}.` : dirty ? 'Ready to save.' : `Saved ${form?.updatedAt}.`)}
             </span>
             {canEdit && (
-              <Button type="submit" variant="primary" icon={Save} disabled={!!missing.length || saving || !dirty}>
+              <Button type="submit" variant="primaryTeal" icon={Save} disabled={!!missing.length || saving || !dirty}>
                 {saving ? 'Saving…' : form ? 'Update receipt form' : 'Save receipt form'}
               </Button>
             )}
@@ -471,7 +471,7 @@ const SectionShell: React.FC<{ saved: boolean; summary?: CaseStepFact[]; childre
     icon={FileText}
     title="Analytical sample receipt form"
     description="Sender and submitter details come from reception and cannot be changed here (marked with a lock). Use Preview A4 to see the printed form."
-    status={saved ? { label: 'Saved', tone: 'emerald' } : { label: 'Not saved yet', tone: 'amber' }}
+    status={saved ? { label: 'Saved', tone: 'emerald' } : { label: 'Not saved yet', tone: 'teal' }}
     summary={summary}
     defaultOpen={!saved}
   >

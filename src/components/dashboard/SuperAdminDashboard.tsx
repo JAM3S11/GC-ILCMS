@@ -227,7 +227,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           <button
             type="button"
             onClick={() => onNavigate('super-admin:users')}
-            className="inline-flex h-9 items-center gap-2 rounded-lg bg-amber-500 px-3 text-sm font-semibold text-slate-950 shadow-sm hover:bg-amber-400"
+            className="inline-flex h-9 items-center gap-2 rounded-lg bg-teal-300 px-3 text-sm font-semibold text-[#0b3a42] shadow-sm shadow-teal-500/20 hover:bg-teal-200"
           >
             <UserPlus className="h-4 w-4" /> Invite user
           </button>
@@ -264,14 +264,14 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           <ul className="divide-y divide-slate-100 dark:divide-slate-800">
             {attention.map((item) => (
               <li key={item.text} className="flex items-center gap-3 px-5 py-3">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-300">
                   <item.icon className="h-4 w-4" />
                 </span>
                 <span className="min-w-0 flex-1 text-sm text-slate-700 dark:text-slate-200">{item.text}</span>
                 <button
                   type="button"
                   onClick={item.onClick}
-                  className="inline-flex shrink-0 items-center gap-1 text-sm font-medium text-amber-700 hover:text-amber-600 dark:text-amber-400"
+                  className="inline-flex shrink-0 items-center gap-1 text-sm font-medium text-teal-700 hover:text-teal-600 dark:text-teal-300"
                 >
                   {item.action} <ArrowRight className="h-3.5 w-3.5" />
                 </button>
@@ -321,7 +321,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                 <div key={d.date.toISOString()} className="group relative flex h-full flex-1 flex-col justify-end" title={`${d.date.toLocaleDateString(undefined, { dateStyle: 'medium' })}: ${d.count} ${d.count === 1 ? 'event' : 'events'}`}>
                   <span className="mb-1 text-center text-[11px] tabular-nums text-slate-500 opacity-0 transition-opacity group-hover:opacity-100 dark:text-slate-400">{d.count}</span>
                   <div
-                    className="w-full rounded-t-[4px] bg-amber-500 transition-colors group-hover:bg-amber-400"
+                    className="w-full rounded-t-[4px] bg-teal-300 transition-colors group-hover:bg-teal-200"
                     style={{ height: `${Math.max(d.count === 0 ? 2 : 6, (d.count / peak) * 100)}%`, opacity: d.count === 0 ? 0.25 : 1 }}
                   />
                 </div>
@@ -402,7 +402,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
                     <div className="truncate text-[13px] font-medium text-slate-900 dark:text-white">{u.fullName}</div>
                     <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">{humanise(u.role)}</div>
                   </div>
-                  <StatusPill tone={u.status === 'ACTIVE' ? 'emerald' : u.status === 'DISABLED' ? 'rose' : 'amber'} dot>
+                  <StatusPill tone={u.status === 'ACTIVE' ? 'emerald' : u.status === 'DISABLED' ? 'rose' : 'teal'} dot>
                     {u.status === 'PENDING_INVITE' ? 'Invited' : humanise(u.status)}
                   </StatusPill>
                 </li>

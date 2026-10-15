@@ -64,7 +64,7 @@ export const IntakeEditDialog: React.FC<IntakeEditDialogProps> = ({
           </button>
         </div>
 
-        <div className="flex items-start gap-2 border-b border-amber-500/20 bg-amber-500/5 px-5 py-2.5 text-xs text-amber-700 dark:text-amber-300">
+        <div className="flex items-start gap-2 border-b border-teal-500/20 bg-teal-500/5 px-5 py-2.5 text-xs text-teal-700 dark:text-teal-300">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           An intake can be edited only once. After you save, it is locked and cannot be edited again.
         </div>
@@ -79,7 +79,7 @@ export const IntakeEditDialog: React.FC<IntakeEditDialogProps> = ({
 
         <div className="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-3.5 dark:border-slate-800 dark:bg-slate-950/40">
           <Button onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button type="submit" variant="primary" disabled={!canSave || saving}>
+          <Button type="submit" variant="primaryTeal" disabled={!canSave || saving}>
             {saving ? 'Saving…' : 'Save changes (final)'}
           </Button>
         </div>

@@ -49,7 +49,7 @@ const PAPER_SAMPLE: Partial<Editable> = {
 
 const STATUS: Record<FoodDrugDraftReport['status'] | 'NEW', { label: string; tone: Tone }> = {
   NEW: { label: 'Not started', tone: 'slate' },
-  DRAFT: { label: 'Draft', tone: 'amber' },
+  DRAFT: { label: 'Draft', tone: 'teal' },
   SUBMITTED: { label: 'Awaiting approval', tone: 'violet' },
   APPROVED: { label: 'Approved', tone: 'emerald' },
 };
@@ -223,7 +223,7 @@ export const DraftReportSection: React.FC<DraftReportSectionProps> = ({ intake, 
 
   const showSampleData = import.meta.env.DEV || currentUser.role === 'SUPER_ADMIN';
   const inputCls =
-    'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white';
+    'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white';
   const readCls =
     'w-full whitespace-pre-wrap break-words rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-200';
   const text = (key: keyof FoodDrugDraftReportFields, rows = 0, extra = '') =>
@@ -248,7 +248,7 @@ export const DraftReportSection: React.FC<DraftReportSectionProps> = ({ intake, 
   const overall = approvedCount === keys.length && keys.length
     ? { label: 'All approved', tone: 'emerald' as Tone }
     : awaiting ? { label: 'Awaiting approval', tone: 'violet' as Tone }
-    : data.reports.length ? { label: 'In progress', tone: 'amber' as Tone }
+    : data.reports.length ? { label: 'In progress', tone: 'teal' as Tone }
     : { label: 'Not started', tone: 'slate' as Tone };
 
   return (
@@ -292,7 +292,7 @@ export const DraftReportSection: React.FC<DraftReportSectionProps> = ({ intake, 
             <div className="flex flex-wrap gap-2">
               <Button size="sm" icon={Eye} onClick={() => setPreviewOpen(true)}>Preview A4</Button>
               <Button size="sm" icon={Printer} onClick={() => setPrinting(true)}>Print</Button>
-              <Button size="sm" variant="primary" icon={Download} disabled={downloading} onClick={() => void downloadPdf()}>
+              <Button size="sm" variant="primaryTeal" icon={Download} disabled={downloading} onClick={() => void downloadPdf()}>
                 {downloading ? 'Preparing…' : 'Download PDF'}
               </Button>
             </div>
@@ -382,7 +382,7 @@ export const DraftReportSection: React.FC<DraftReportSectionProps> = ({ intake, 
             </Group>
 
             {data.canUnlock && report && report.status !== 'DRAFT' && (
-              <div className="flex flex-col gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 sm:flex-row sm:items-center dark:border-amber-800 dark:bg-amber-950/30">
+              <div className="flex flex-col gap-2 rounded-lg border border-teal-300 bg-teal-50 p-3 sm:flex-row sm:items-center dark:border-teal-800 dark:bg-teal-950/30">
                 <input value={unlockReason} onChange={(e) => setUnlockReason(e.target.value)} maxLength={500} placeholder="Reason for unlocking (required)" className={inputCls} />
                 <Button size="sm" icon={Unlock} disabled={unlockReason.trim().length < 5 || !!busy} onClick={() => void unlock()}>
                   {busy === 'unlock' ? 'Unlocking…' : 'Unlock (admin)'}
@@ -406,12 +406,12 @@ export const DraftReportSection: React.FC<DraftReportSectionProps> = ({ intake, 
                 )}
                 {canEdit && data.isAnalyst && (
                   confirmingSubmit ? (
-                    <Button variant="primary" icon={Send} disabled={!!busy} onClick={() => void submit()}>
+                    <Button variant="primaryTeal" icon={Send} disabled={!!busy} onClick={() => void submit()}>
                       {busy === 'submit' ? 'Submitting…' : 'Confirm — send for approval'}
                     </Button>
                   ) : (
                     <Button
-                      variant="primary"
+                      variant="primaryTeal"
                       icon={FileSignature}
                       disabled={!!missing.length || !!busy || !values.analystSignature || !values.analyticalReport.trim()}
                       title={!values.analystSignature ? 'Sign first' : !values.analyticalReport.trim() ? 'Write the analytical report first' : 'Locks the report and sends it to the Head of Department'}
@@ -422,7 +422,7 @@ export const DraftReportSection: React.FC<DraftReportSectionProps> = ({ intake, 
                   )
                 )}
                 {data.canApprove && report?.status === 'SUBMITTED' && (
-                  <Button variant="primary" icon={CheckCircle2} disabled={!!busy || !checkerSignature} title={!checkerSignature ? 'Sign first' : undefined} onClick={() => void approve()}>
+                  <Button variant="primaryTeal" icon={CheckCircle2} disabled={!!busy || !checkerSignature} title={!checkerSignature ? 'Sign first' : undefined} onClick={() => void approve()}>
                     {busy === 'approve' ? 'Approving…' : 'Approve'}
                   </Button>
                 )}

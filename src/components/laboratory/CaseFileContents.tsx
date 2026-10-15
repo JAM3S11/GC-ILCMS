@@ -35,7 +35,7 @@ interface CaseFileContentsProps {
 
 const STATE_META: Record<CaseFileSectionState, { label: string; icon: React.ComponentType<{ className?: string }>; className: string }> = {
   done: { label: 'Complete', icon: CheckCircle2, className: 'text-emerald-700 dark:text-emerald-400' },
-  current: { label: 'In progress', icon: CircleDot, className: 'text-amber-700 dark:text-amber-300' },
+  current: { label: 'In progress', icon: CircleDot, className: 'text-teal-700 dark:text-teal-300' },
   pending: { label: 'Pending', icon: Circle, className: 'text-slate-400 dark:text-slate-500' },
 };
 
@@ -103,17 +103,17 @@ export const CaseFileContents: React.FC<CaseFileContentsProps> = ({
                 aria-current={active ? 'location' : undefined}
                 className={`relative flex w-full cursor-pointer items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${
                   active
-                    ? 'bg-amber-50 dark:bg-amber-400/10'
+                    ? 'bg-teal-50 dark:bg-teal-400/10'
                     : 'hover:bg-slate-100 dark:hover:bg-slate-800/70'
                 }`}
               >
-                {active && <span aria-hidden="true" className="absolute inset-y-2 left-0 w-1 rounded-r bg-amber-500" />}
+                {active && <span aria-hidden="true" className="absolute inset-y-2 left-0 w-1 rounded-r bg-teal-300" />}
                 <span
                   className={`mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded text-[10px] font-semibold tabular-nums ${
                     section.state === 'done'
                       ? 'bg-emerald-600 text-white'
                       : active
-                        ? 'bg-amber-600 text-white'
+                        ? 'bg-teal-300 text-[#0b3a42]'
                         : 'bg-slate-800 text-white dark:bg-slate-700'
                   }`}
                 >
@@ -122,7 +122,7 @@ export const CaseFileContents: React.FC<CaseFileContentsProps> = ({
                 <span className="min-w-0 flex-1">
                   <span
                     className={`block text-[13px] leading-snug ${
-                      active ? 'font-semibold text-amber-900 dark:text-amber-100' : 'font-medium text-slate-800 dark:text-slate-100'
+                      active ? 'font-semibold text-teal-900 dark:text-teal-100' : 'font-medium text-slate-800 dark:text-slate-100'
                     }`}
                   >
                     {section.title}

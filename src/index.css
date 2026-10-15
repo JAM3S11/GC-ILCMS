@@ -34,8 +34,8 @@
 
 /* ---------------------------------------------------------------------------
    BRAND ACCENT RAMP
-   Light theme wears the GC-ILCMS brand orange (#f26522); dark theme keeps the
-   original gold ramp. The Tailwind `amber-*` tokens are re-pointed at these
+   Amber utilities are mapped onto the light turquoise-green brand accent in
+   both themes. The Tailwind `amber-*` tokens are re-pointed at these
    theme-aware variables, so every existing accent utility (`text-amber-500`,
    `bg-amber-600/10`, `border-amber-400`, …) resolves per theme without
    touching a single component file. `inline` makes the utilities emit the
@@ -60,7 +60,7 @@
   --color-sidebar-primary: var(--sidebar-primary);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar: var(--sidebar);
-  /* shadcn/ui base tokens, mapped onto the slate + brand amber palette. */
+  /* shadcn/ui base tokens, mapped onto the slate + turquoise palette. */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-primary: var(--gc-amber-500);
@@ -77,19 +77,19 @@
 }
 
 :root {
-  /* Brand orange, anchored on #f26522. */
-  --gc-amber-50: #fff7ed;
-  --gc-amber-100: #ffedd5;
-  --gc-amber-200: #fed7aa;
-  --gc-amber-300: #fdba74;
-  --gc-amber-400: #fb923c;
-  --gc-amber-500: #f26522;
-  --gc-amber-600: #d9541a;
-  --gc-amber-700: #b8430f;
-  --gc-amber-800: #99300d;
-  --gc-amber-900: #7c270b;
-  --gc-accent-rgb: 242 101 34;
-  /* shadcn/ui tokens (light): slate rail with brand amber accents. */
+  /* Light turquoise-green accent ramp, centered on #5eead4. */
+  --gc-amber-50: #f0fdfa;
+  --gc-amber-100: #ccfbf1;
+  --gc-amber-200: #99f6e4;
+  --gc-amber-300: #5eead4;
+  --gc-amber-400: #5eead4;
+  --gc-amber-500: #5eead4;
+  --gc-amber-600: #2dd4bf;
+  --gc-amber-700: #0f766e;
+  --gc-amber-800: #115e59;
+  --gc-amber-900: #134e4a;
+  --gc-accent-rgb: 94 234 212;
+  /* shadcn/ui tokens (light): slate rail with turquoise accents. */
   --background: #ffffff;
   --foreground: #0f172a;
   --secondary: #f1f5f9;
@@ -106,19 +106,19 @@
   --sidebar-ring: var(--gc-amber-500);
 }
 
-/* Higher specificity than `:root` so the dark ramp always wins. */
+/* Keep the turquoise accent ramp consistent in dark mode. */
 html.dark {
-  --gc-amber-50: #fffbeb;
-  --gc-amber-100: #fef3c7;
-  --gc-amber-200: #fde68a;
-  --gc-amber-300: #fcd34d;
-  --gc-amber-400: #fbbf24;
-  --gc-amber-500: #f59e0b;
-  --gc-amber-600: #d97706;
-  --gc-amber-700: #b45309;
-  --gc-amber-800: #92400e;
-  --gc-amber-900: #78350f;
-  --gc-accent-rgb: 245 158 11;
+  --gc-amber-50: #f0fdfa;
+  --gc-amber-100: #ccfbf1;
+  --gc-amber-200: #99f6e4;
+  --gc-amber-300: #5eead4;
+  --gc-amber-400: #5eead4;
+  --gc-amber-500: #5eead4;
+  --gc-amber-600: #2dd4bf;
+  --gc-amber-700: #0f766e;
+  --gc-amber-800: #115e59;
+  --gc-amber-900: #134e4a;
+  --gc-accent-rgb: 94 234 212;
 }
 
 /* ---------------------------------------------------------------------------

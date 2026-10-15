@@ -222,7 +222,7 @@ export const WaterCertificatePreview: React.FC<WaterCertificatePreviewProps> = (
   return (
     <div className={printMode ? 'w-full' : 'print-area w-full'} aria-label="Certificate of Analysis of Water">
       {!issued && !printMode && (
-        <div className="mb-3 rounded border border-dashed border-amber-400 bg-amber-50 px-3 py-1.5 text-center text-[11px] font-semibold uppercase tracking-wider text-amber-700 print:hidden">
+        <div className="mb-3 rounded border border-dashed border-teal-400 bg-teal-50 px-3 py-1.5 text-center text-[11px] font-semibold uppercase tracking-wider text-teal-700 print:hidden">
           Draft preview — not valid until the Head approves and signs it
         </div>
       )}

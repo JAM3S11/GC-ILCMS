@@ -12,6 +12,8 @@ import {
   FoodDrugIntake,
   LaboratoryDepartment,
   WaterIntake,
+  NarcoticsIntake,
+  NarcoticsIntakeDraft,
   ReceptionVisitDraft,
 } from './types';
 import { FlaskConical } from 'lucide-react';
@@ -50,6 +52,9 @@ import { WaterEditAccess, WaterIntakeEdit, WaterSenderEdit, canEditWaterIntake, 
 import { FoodDrugIntakeEdit } from './components/laboratory/FoodDrugIntakeEditModal';
 import { FoodDrugLaboratoryView } from './components/laboratory/FoodDrugLaboratoryView';
 import { FoodDrugCaseFile } from './components/laboratory/FoodDrugCaseFile';
+import { NarcoticsLaboratoryView } from './components/laboratory/NarcoticsLaboratoryView';
+import { NarcoticsIntakeEdit, NarcoticsIntakePage } from './components/laboratory/NarcoticsIntakePage';
+import { NarcoticsCaseFile } from './components/laboratory/NarcoticsCaseFile';
 import { DigitalCaseFile } from './components/case/DigitalCaseFile';
 import { ReferenceDatabaseView } from './components/reference/ReferenceDatabaseView';
 import { ExecutiveDashboard } from './components/dashboard/ExecutiveDashboard';
@@ -73,7 +78,7 @@ const RECEPTIONIST_VIEWS = new Set(['dashboard', 'register-visitor', 'lab-bay', 
 
 // Every member of these departments (interns included) works the laboratory
 // workspace, since each of them registers submissions for the section.
-const LABORATORY_WORKSPACE_DEPARTMENTS: LaboratoryDepartment[] = ['Food & Drugs', 'Water'];
+const LABORATORY_WORKSPACE_DEPARTMENTS: LaboratoryDepartment[] = ['Food & Drugs', 'Water', 'Narcotics'];
 
 const canAccessLaboratoryWorkspace = (user?: User | null) =>
   !!user &&
@@ -178,7 +183,14 @@ export default function App() {
         : undefined,
     [visitors, selectedIntakeVisitId],
   );
-  const officerVerified = !!intakeVisitor &&
+  const chosenNarcoticsVisitor = useMemo(
+    () =>
+      selectedIntakeVisitId
+        ? visitors.find((v) => v.id === selectedIntakeVisitId && v.status !== 'Departed' && v.laboratory === 'Narcotics')
+        : undefined,
+    [visitors, selectedIntakeVisitId],
+  );
+  const officerVerified =!!intakeVisitor &&
     intakeVisitor.status !== 'Awaiting Laboratory Reception' &&
     intakeVisitor.status !== 'Departed';
 
@@ -321,8 +333,8 @@ export default function App() {
     if (!currentUser) return;
     if (isReceptionist(currentUser.role) && !RECEPTIONIST_VIEWS.has(activeView)) {
       setActiveView('dashboard');
-    } else if (activeView === 'lab-bay' && currentUser.department === 'Water' && currentUser.role !== 'SUPER_ADMIN') {
-      // Water handles its clients from the Exhibit Laboratory page.
+    } else if (activeView === 'lab-bay' && (currentUser.department === 'Water' || currentUser.department === 'Narcotics') && currentUser.role !== 'SUPER_ADMIN') {
+      // Water and Narcotics handle their clients from the Exhibit Laboratory page.
       setActiveView('laboratory');
     } else if (activeView === 'laboratory' && !canAccessLaboratoryWorkspace(currentUser)) {
       setActiveView('dashboard');
@@ -335,6 +347,12 @@ export default function App() {
     } else if (activeView === 'food-drug-intake' && currentUser.department !== 'Food & Drugs') {
       setActiveView('dashboard');
     } else if (activeView === 'water-intake' && currentUser.department !== 'Water') {
+      setActiveView('dashboard');
+    } else if (
+      ['narcotics-intake', 'narcotics-intake-edit', 'narcotics-case-file'].includes(activeView) &&
+      currentUser.department !== 'Narcotics' &&
+      !(activeView === 'narcotics-case-file' && currentUser.role === 'SUPER_ADMIN')
+    ) {
       setActiveView('dashboard');
     }
   }, [currentUser?.role, currentUser?.department, activeView]);
@@ -458,6 +476,45 @@ export default function App() {
     }, 15_000);
     return () => window.clearInterval(intervalId);
   }, [currentUser?.id, currentUser?.role, currentUser?.department, loadWaterIntakes]);
+
+  // Narcotics exhibits and staff, refreshed every 15 seconds like Water's register.
+  const [narcoticsIntakes, setNarcoticsIntakes] = useState<NarcoticsIntake[]>([]);
+  const [narcoticsIntakesLoading, setNarcoticsIntakesLoading] = useState(false);
+  const [narcoticsIntakesError, setNarcoticsIntakesError] = useState('');
+  const [narcoticsStaff, setNarcoticsStaff] = useState<Pick<User, 'id' | 'name' | 'role'>[]>([]);
+  const narcoticsOfficers = useMemo(() => narcoticsStaff.filter((u) => u.role !== 'HEAD_OF_DEPARTMENT'), [narcoticsStaff]);
+  // The Narcotics exhibit whose case file is open, when activeView is 'narcotics-case-file'.
+  const [activeNarcoticsIntakeId, setActiveNarcoticsIntakeId] = useState<string | null>(null);
+
+  const loadNarcoticsIntakes = useCallback(async () => {
+    try {
+      const result = await apiRequest<{
+        intakes: NarcoticsIntake[];
+        officers: Pick<User, 'id' | 'name' | 'role'>[];
+      }>('/api/narcotics/intakes');
+      setNarcoticsIntakes(result.intakes);
+      setNarcoticsStaff(result.officers);
+      setNarcoticsIntakesError('');
+    } catch (error) {
+      setNarcoticsIntakesError(error instanceof Error ? error.message : 'Unable to load Narcotics exhibits.');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser || (currentUser.role !== 'SUPER_ADMIN' && currentUser.department !== 'Narcotics')) {
+      setNarcoticsIntakes([]);
+      setNarcoticsStaff([]);
+      setNarcoticsIntakesError('');
+      setNarcoticsIntakesLoading(false);
+      return;
+    }
+    setNarcoticsIntakesLoading(true);
+    void loadNarcoticsIntakes().finally(() => setNarcoticsIntakesLoading(false));
+    const intervalId = window.setInterval(() => {
+      void loadNarcoticsIntakes();
+    }, 15_000);
+    return () => window.clearInterval(intervalId);
+  }, [currentUser?.id, currentUser?.role, currentUser?.department, loadNarcoticsIntakes]);
 
   const loadReceptionVisits = useCallback(async (showLoading = true) => {
     if (!currentUser) {
@@ -636,6 +693,11 @@ export default function App() {
       return;
     }
 
+    if (!isSuperAdmin && view === 'narcotics-intake' && currentUser.department !== 'Narcotics') {
+      showToast('Narcotics exhibit intake is restricted to Narcotics staff.');
+      return;
+    }
+
     if (!isSuperAdmin && view === 'laboratory' && !canAccessLaboratoryWorkspace(currentUser)) {
       showToast('Laboratory Workspace is restricted to Analyst and Head of Department roles, and Food & Drugs staff.');
       return;
@@ -649,7 +711,7 @@ export default function App() {
     }
 
     // Going to the intake form from the menu starts blank; Open intake sets the client itself.
-    if (view === 'water-intake' || view === 'food-drug-intake') setSelectedIntakeVisitId(null);
+    if (view === 'water-intake' || view === 'food-drug-intake' || view === 'narcotics-intake') setSelectedIntakeVisitId(null);
 
     // A laboratory's case register ('case-file:food') opens Case File on that lab.
     if (view.startsWith(CASE_REGISTER_NAV_PREFIX)) {
@@ -812,7 +874,9 @@ export default function App() {
               ? 'water-intake'
               : canRegister && currentUser?.department === 'Food & Drugs' && visit.laboratory === 'Food & Drugs'
                 ? 'food-drug-intake'
-                : 'lab-bay',
+                : currentUser?.department === 'Narcotics' && visit.laboratory === 'Narcotics'
+                  ? (canRegister ? 'narcotics-intake' : 'laboratory')
+                  : 'lab-bay',
           );
         } catch (cause) {
           showToast(cause instanceof Error ? cause.message : 'Could not load the visitor record.');
@@ -827,6 +891,9 @@ export default function App() {
         if (notification.relatedRecordType === 'WATER_INTAKE' && notification.relatedRecordId) {
           setActiveWaterIntakeId(notification.relatedRecordId);
           setActiveView('exhibit-case-file');
+        } else if (notification.relatedRecordType === 'NARCOTICS_INTAKE' && notification.relatedRecordId) {
+          setActiveNarcoticsIntakeId(notification.relatedRecordId);
+          setActiveView('narcotics-case-file');
         } else if (notification.relatedRecordType === 'FOOD_DRUG_INTAKE' && notification.relatedRecordId) {
           setActiveFoodDrugIntakeId(notification.relatedRecordId);
           setActiveView('food-drug-case-file');
@@ -1129,6 +1196,72 @@ export default function App() {
     return savedIntake;
   };
 
+  const handleNarcoticsIntakeUpdated = useCallback((intake: NarcoticsIntake) => {
+    setNarcoticsIntakes((previous) => [intake, ...previous.filter((item) => item.id !== intake.id)]);
+  }, []);
+
+  // Only the Head of Narcotics assigns or transfers (enforced by the API), with a work allocation form.
+  const handleAssignNarcoticsIntake = async (intakeId: string, officerId: string, remarks: string): Promise<boolean> => {
+    const transferred = !!narcoticsIntakes.find((item) => item.id === intakeId)?.analysisOfficerId;
+    const { intake } = await apiRequest<{ intake: NarcoticsIntake }>(
+      `/api/narcotics/intakes/${encodeURIComponent(intakeId)}/assign`,
+      { method: 'POST', body: JSON.stringify({ analysisOfficerId: officerId, remarks }) },
+    );
+    handleNarcoticsIntakeUpdated(intake);
+    showToast(`${intake.labReference} ${transferred ? 'transferred' : 'assigned'} to ${intake.analysisOfficer}.`);
+    return true;
+  };
+
+  const openNarcoticsCaseFile = (intake: NarcoticsIntake) => {
+    setActiveNarcoticsIntakeId(intake.id);
+    setActiveView('narcotics-case-file');
+  };
+
+  // The intake form in edit mode; returns to wherever the edit was opened from.
+  const [editingNarcoticsIntake, setEditingNarcoticsIntake] = useState<{ intake: NarcoticsIntake; returnTo: string } | null>(null);
+  const openNarcoticsIntakeEdit = (intake: NarcoticsIntake, returnTo = 'laboratory') => {
+    setEditingNarcoticsIntake({ intake, returnTo });
+    setActiveView('narcotics-intake-edit');
+  };
+  const closeNarcoticsIntakeEdit = () => {
+    const returnTo = editingNarcoticsIntake?.returnTo ?? 'laboratory';
+    setEditingNarcoticsIntake(null);
+    setActiveView(returnTo);
+  };
+  const handleSaveNarcoticsIntakeEdit = async (intakeId: string, fields: NarcoticsIntakeEdit) => {
+    const { intake } = await apiRequest<{ intake: NarcoticsIntake }>(
+      `/api/narcotics/intakes/${encodeURIComponent(intakeId)}`,
+      { method: 'PATCH', body: JSON.stringify(fields) },
+    );
+    handleNarcoticsIntakeUpdated(intake);
+    showToast(`${intake.labReference} updated.`);
+    closeNarcoticsIntakeEdit();
+  };
+
+  // Only the Head of Narcotics deletes an intake (enforced by the API).
+  const handleDeleteNarcoticsIntake = async (intakeId: string) => {
+    try {
+      const result = await apiRequest<{ message?: string }>(`/api/narcotics/intakes/${encodeURIComponent(intakeId)}`, { method: 'DELETE' });
+      setNarcoticsIntakes((previous) => previous.filter((item) => item.id !== intakeId));
+      showToast(result.message ?? 'The exhibit was deleted.');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not delete the Narcotics exhibit.');
+    }
+  };
+
+  const handleRegisterNarcoticsIntake = async (draft: NarcoticsIntakeDraft): Promise<NarcoticsIntake> => {
+    const { intake } = await apiRequest<{ intake: NarcoticsIntake }>('/api/narcotics/intakes', {
+      method: 'POST',
+      body: JSON.stringify(draft),
+    });
+    handleNarcoticsIntakeUpdated(intake);
+    showToast(`Exhibit registered as ${intake.labReference}.`);
+    // The server resolved this visit's lab notification for the whole department.
+    void loadReceptionActivityNotifications();
+    void loadReceptionVisits(false);
+    return intake;
+  };
+
   // Labs whose intake is recorded in the browser tell the server the visitor's
   // intake is registered, so the lab notification reads as seen for the whole
   // department and reception stops resending.
@@ -1405,10 +1538,15 @@ export default function App() {
 
   const isFoodDrugUser = currentUser?.role === 'SUPER_ADMIN' || currentUser?.department === 'Food & Drugs';
   const isWaterUser = currentUser?.role === 'SUPER_ADMIN' || currentUser?.department === 'Water';
+  const isNarcoticsUser = currentUser?.role === 'SUPER_ADMIN' || currentUser?.department === 'Narcotics';
 
   // Every intake button funnels through here: Food & Drugs staff go to the
   // registration page, everyone else gets the generic exhibit intake modal.
   const openIntake = () => {
+    if (currentUser?.department === 'Narcotics') {
+      handleNavigateView('narcotics-intake');
+      return;
+    }
     // Water's intake form can be opened and filled before a client arrives; registering stays locked until reception notifies the lab.
     if (isWaterUser) {
       handleNavigateView('water-intake');
@@ -1457,7 +1595,7 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col selection:bg-amber-500 selection:text-slate-950 font-sans dark:bg-slate-950 dark:text-slate-100">
       {/* Toast popup */}
       {toastMessage && (
-        <div role="status" aria-live="polite" className="fixed bottom-5 right-5 z-50 px-4 py-2.5 rounded-xl bg-amber-500 text-slate-950 font-bold text-xs shadow-2xl flex items-center gap-2 border border-amber-400 animate-fade-in">
+        <div role="status" aria-live="polite" className="fixed top-5 right-5 z-50 px-4 py-2.5 rounded-xl bg-teal-300 text-teal-950 font-bold text-xs shadow-2xl flex items-center gap-2 border border-teal-200 animate-fade-in">
           <span>{toastMessage}</span>
         </div>
       )}
@@ -1546,6 +1684,8 @@ export default function App() {
                   currentUser={currentUser}
                   activeCase={activeCase}
                   visitors={visitors}
+                  visitorsLoading={visitsLoading}
+                  narcoticsIntakes={narcoticsIntakes}
                   waterIntakes={waterIntakes}
                   waterIntakesLoading={waterIntakesLoading}
                   waterIntakesError={waterIntakesError}
@@ -1712,7 +1852,7 @@ export default function App() {
               </div>
             )}
 
-            {activeView === 'laboratory' && canAccessLaboratoryWorkspace(currentUser) && intakeVisitor && currentUser.department !== 'Water' && currentUser.department !== 'Food & Drugs' && (
+            {activeView === 'laboratory' && canAccessLaboratoryWorkspace(currentUser) && intakeVisitor && currentUser.department !== 'Water' && currentUser.department !== 'Food & Drugs' && currentUser.department !== 'Narcotics' && (
               <LaboratoryWorkspace
                 currentDepartment={currentUser.department || 'Narcotics'}
                 activeCase={activeCase}
@@ -1783,7 +1923,76 @@ export default function App() {
                 onDelete={handleDeleteFoodDrugIntake}
               />
             )}
-            {activeView === 'laboratory' && canAccessLaboratoryWorkspace(currentUser) && !intakeVisitor && currentUser.department !== 'Water' && currentUser.department !== 'Food & Drugs' && (
+            {activeView === 'laboratory' && canAccessLaboratoryWorkspace(currentUser) && currentUser.department === 'Narcotics' && (
+              <NarcoticsLaboratoryView
+                intakes={narcoticsIntakes}
+                isLoading={narcoticsIntakesLoading}
+                error={narcoticsIntakesError}
+                currentUser={currentUser}
+                officers={narcoticsOfficers}
+                onAssign={handleAssignNarcoticsIntake}
+                onOpenCaseFile={openNarcoticsCaseFile}
+                onEdit={(intake) => openNarcoticsIntakeEdit(intake)}
+                onDelete={(intakeId) => void handleDeleteNarcoticsIntake(intakeId)}
+                onOpenIntake={openIntake}
+                clients={visitors.filter((v) => v.laboratory === 'Narcotics' && ((v.status === 'Awaiting Laboratory Reception' && !!v.labNotificationSentAt) || v.status === 'In Laboratory'))}
+                canReceiveClients={['ANALYST', 'SENIOR_CHEMIST', 'HEAD_OF_DEPARTMENT'].includes(currentUser.role)}
+                onAcceptClient={(visitId) => void transitionReceptionVisit(visitId, 'lab-received')}
+                onRegisterExhibit={(visit) => {
+                  setSelectedIntakeVisitId(visit.id);
+                  setActiveView('narcotics-intake');
+                }}
+              />
+            )}
+            {activeView === 'narcotics-intake' && isNarcoticsUser && (
+              <NarcoticsIntakePage
+                key={chosenNarcoticsVisitor?.id ?? 'no-client'}
+                visitor={chosenNarcoticsVisitor ?? null}
+                currentUserId={currentUser.id}
+                staffMembers={narcoticsStaff}
+                intakes={narcoticsIntakes}
+                onSaveIntake={async (draft) => {
+                  const intake = await handleRegisterNarcoticsIntake(draft);
+                  handleNavigateView('laboratory');
+                  // As with Water: offer to tell reception the officer can be checked out.
+                  if (chosenNarcoticsVisitor) setIntakeHandoverVisit(chosenNarcoticsVisitor);
+                  return intake;
+                }}
+                onCancel={() => handleNavigateView('laboratory')}
+              />
+            )}
+            {activeView === 'narcotics-intake-edit' && isNarcoticsUser && editingNarcoticsIntake && (
+              <NarcoticsIntakePage
+                key={`edit-${editingNarcoticsIntake.intake.id}`}
+                visitor={null}
+                currentUserId={currentUser.id}
+                staffMembers={narcoticsStaff}
+                intakes={narcoticsIntakes}
+                editIntake={editingNarcoticsIntake.intake}
+                onSaveEdit={handleSaveNarcoticsIntakeEdit}
+                onSaveIntake={async () => { throw new Error('Not available while editing.'); }}
+                onCancel={closeNarcoticsIntakeEdit}
+              />
+            )}
+            {activeView === 'narcotics-case-file' && isNarcoticsUser && (() => {
+              const intake = narcoticsIntakes.find((item) => item.id === activeNarcoticsIntakeId);
+              return intake ? (
+                <NarcoticsCaseFile
+                  key={intake.id}
+                  intake={intake}
+                  currentUser={currentUser}
+                  onBack={() => setActiveView('laboratory')}
+                  onEdit={(item) => openNarcoticsIntakeEdit(item, 'narcotics-case-file')}
+                  onIntakeUpdated={handleNarcoticsIntakeUpdated}
+                />
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center dark:border-slate-700 dark:bg-slate-900">
+                  <h2 className="text-sm font-bold text-slate-900 dark:text-white">{narcoticsIntakesLoading ? 'Loading the exhibit…' : 'Exhibit not found'}</h2>
+                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">Open an exhibit's case file from the Exhibit Laboratory register.</p>
+                </div>
+              );
+            })()}
+            {activeView === 'laboratory' && canAccessLaboratoryWorkspace(currentUser) && !intakeVisitor && currentUser.department !== 'Water' && currentUser.department !== 'Food & Drugs' && currentUser.department !== 'Narcotics' && (
               <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center dark:border-slate-700 dark:bg-slate-900">
                 <FlaskConical className="mx-auto h-8 w-8 text-slate-400" />
                 <h2 className="mt-3 text-sm font-bold text-slate-900 dark:text-white">No active reception visits</h2>

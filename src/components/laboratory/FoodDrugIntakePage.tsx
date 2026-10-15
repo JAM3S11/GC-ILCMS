@@ -87,7 +87,7 @@ const SAMPLE_TYPE_INFO: Record<FoodDrugSampleType, { description: string; exampl
 
 const STATUS_TONE: Record<FoodDrugIntakeStatus, Tone> = {
   'Awaiting Approval': 'rose',
-  'Awaiting Assignment': 'amber',
+  'Awaiting Assignment': 'teal',
   'Under Analysis': 'sky',
   Reported: 'emerald',
 };
@@ -210,7 +210,7 @@ export const FoodDrugIntakePage: React.FC<FoodDrugIntakePageProps> = ({
       <DashboardHeader
         breadcrumb={['Laboratory', 'Food & Drugs', 'Register sample']}
         title="Register sample"
-        meta={<StatusPill tone="amber" dot={false}>{nextId}</StatusPill>}
+        meta={<StatusPill tone="teal" dot={false}>{nextId}</StatusPill>}
         description="Record a food, drug or chemical substance sample received by the Foods, Drugs and Chemical Substances Section."
         actions={
           <Button icon={ArrowLeft} onClick={onCancel}>
@@ -231,7 +231,7 @@ export const FoodDrugIntakePage: React.FC<FoodDrugIntakePageProps> = ({
               Client details come from reception record {reception.visitNumber}, registered by {reception.receptionistName}, and cannot be edited here.
             </div>
           ) : (
-            <div role="status" className="flex items-center gap-2 border-b border-amber-500/20 bg-amber-500/5 px-5 py-2.5 text-xs text-amber-700 dark:text-amber-300">
+            <div role="status" className="flex items-center gap-2 border-b border-teal-500/20 bg-teal-500/5 px-5 py-2.5 text-xs text-teal-700 dark:text-teal-300">
               <FileText className="h-3.5 w-3.5 shrink-0" />
               No client has been sent to Food &amp; Drugs yet. You can fill in the sample details now, but the sample can only be registered once reception has notified this laboratory.
             </div>
@@ -274,14 +274,14 @@ export const FoodDrugIntakePage: React.FC<FoodDrugIntakePageProps> = ({
                     onClick={() => setSampleType(type)}
                     className={`flex w-full items-start gap-4 px-4 py-3.5 text-left transition-colors ${
                       selected
-                        ? 'bg-amber-500/5'
+                        ? 'bg-teal-500/5'
                         : 'hover:bg-slate-50 dark:hover:bg-slate-800/40'
                     }`}
                   >
                     {/* Radio indicator */}
                     <span
                       className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 transition-colors ${
-                        selected ? 'border-amber-500 bg-amber-500 text-white' : 'border-slate-300 dark:border-slate-600'
+                        selected ? 'border-teal-300 bg-teal-300 text-[#0b3a42]' : 'border-slate-300 dark:border-slate-600'
                       }`}
                     >
                       {selected && <Check className="h-3 w-3" strokeWidth={3} />}
@@ -291,7 +291,7 @@ export const FoodDrugIntakePage: React.FC<FoodDrugIntakePageProps> = ({
                       <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
                         <span
                           className={`flex items-center gap-1.5 text-sm font-semibold ${
-                            selected ? 'text-amber-700 dark:text-amber-400' : 'text-slate-900 dark:text-white'
+                            selected ? 'text-teal-700 dark:text-teal-400' : 'text-slate-900 dark:text-white'
                           }`}
                         >
                           <FlaskConical className="h-3.5 w-3.5 opacity-70" />
@@ -353,7 +353,7 @@ export const FoodDrugIntakePage: React.FC<FoodDrugIntakePageProps> = ({
             <div className="flex items-center gap-3">
               <div className="h-1.5 w-28 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
                 <div
-                  className="h-full rounded-full bg-amber-500 transition-all"
+                  className="h-full rounded-full bg-teal-300 transition-all"
                   style={{ width: `${(doneCount / checks.length) * 100}%` }}
                 />
               </div>
@@ -363,7 +363,7 @@ export const FoodDrugIntakePage: React.FC<FoodDrugIntakePageProps> = ({
             </div>
             <div className="flex gap-2">
               <Button onClick={onCancel}>Cancel</Button>
-              <Button type="submit" variant="primary" icon={Check} disabled={!canSubmit || saving}>
+              <Button type="submit" variant="primaryTeal" icon={Check} disabled={!canSubmit || saving}>
                 {saving ? 'Saving…' : 'Add record'}
               </Button>
             </div>
@@ -377,7 +377,7 @@ export const FoodDrugIntakePage: React.FC<FoodDrugIntakePageProps> = ({
 
         {/* ------------------------------ Aside ----------------------------- */}
         <aside className="space-y-5 lg:sticky lg:top-4 lg:col-span-4">
-          <Panel icon={ClipboardList} tone="amber" title="Record preview" description={`${nextId} · ${today}`}>
+          <Panel icon={ClipboardList} tone="teal" title="Record preview" description={`${nextId} · ${today}`}>
             <ul className="space-y-2.5">
               {checks.map((c) => (
                 <li key={c.label} className="flex items-start gap-2.5 text-xs">
@@ -406,7 +406,7 @@ export const FoodDrugIntakePage: React.FC<FoodDrugIntakePageProps> = ({
                 <li key={s.title} className="flex gap-3">
                   <span
                     className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${
-                      s.active ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
+                      s.active ? 'bg-teal-300 text-[#0b3a42]' : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
                     }`}
                   >
                     {i + 1}
