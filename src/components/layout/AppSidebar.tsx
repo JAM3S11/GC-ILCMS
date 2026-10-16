@@ -94,8 +94,8 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
 
   const groups: SidebarNavGroup[] = (isSuperAdmin ? SUPER_ADMIN_NAV_GROUPS : APP_NAV_GROUPS).map((group) => ({
     title: group.title,
-    // Super Admin groups fold away so the long operations list stays tidy.
-    collapsible: isSuperAdmin,
+    // Every group folds away, so each user can tuck sections they rarely use.
+    collapsible: true,
     items: group.items
       .filter((item) => canSeeNavItem(currentUser, item))
       .map((item) => ({

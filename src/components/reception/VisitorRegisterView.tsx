@@ -340,7 +340,7 @@ export const VisitorRegisterView: React.FC<VisitorRegisterViewProps> = ({
   return (
     <DashboardPage>
       <DashboardHeader
-        breadcrumb={['Operations', 'Visitor Register']}
+        breadcrumb={['Front Office', 'Visitor Register']}
         title="Visitor Register"
         description="The front office's record of every client: arrival, handover to the laboratory, and check-out."
         meta={

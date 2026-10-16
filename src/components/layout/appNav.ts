@@ -20,33 +20,27 @@ export type NavItem = {
   children?: { id: string; label: string }[];
 };
 
+/**
+ * Department staff sidebar, grouped the same way as the Super Admin's: an
+ * overview, the laboratory floor in workflow order (intake, then analysis),
+ * the front office, then records. Groups a user has no items in are hidden.
+ */
 export const APP_NAV_GROUPS: { title: string; items: NavItem[] }[] = [
   {
-    title: 'Operations',
+    title: 'Overview',
     items: [
       { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
       {
-        // Not an analysis page: this is the reception/client handover board -
-        // who is in the building, which bay, and checking clients out.
-        id: 'lab-bay',
-        label: 'Visitor Register',
-        icon: Building2,
-        roles: [
-          'RECEPTIONIST', 'ADMINISTRATOR', 'CLERK', 'CEO',
-          'ANALYST', 'SENIOR_CHEMIST', 'HEAD_OF_DEPARTMENT',
-        ],
-        // Water and Narcotics handle their clients from the Exhibit Laboratory page.
-        hideForDepartments: ['Water', 'Narcotics'],
+        id: 'notifications',
+        label: 'Notifications',
+        icon: Bell,
+        roles: ['RECEPTIONIST', 'ADMINISTRATOR', 'CLERK', 'CEO'],
       },
-      {
-        // The department register. Water staff (analysis officers and interns included) find
-        // their own exhibits under its "Assigned to me" view.
-        id: 'laboratory',
-        label: 'Exhibit Laboratory',
-        icon: FlaskConical,
-        roles: ['ANALYST', 'SENIOR_CHEMIST', 'HEAD_OF_DEPARTMENT'],
-        departments: ['Food & Drugs', 'Water', 'Narcotics'],
-      },
+    ],
+  },
+  {
+    title: 'Laboratory',
+    items: [
       {
         id: 'food-drug-intake',
         label: 'Exhibit Intake',
@@ -66,17 +60,43 @@ export const APP_NAV_GROUPS: { title: string; items: NavItem[] }[] = [
         departments: ['Narcotics'],
       },
       {
+        // The department register. Water staff (analysis officers and interns included) find
+        // their own exhibits under its "Assigned to me" view.
+        id: 'laboratory',
+        label: 'Exhibit Laboratory',
+        icon: FlaskConical,
+        roles: ['ANALYST', 'SENIOR_CHEMIST', 'HEAD_OF_DEPARTMENT'],
+        departments: ['Food & Drugs', 'Water', 'Narcotics'],
+      },
+    ],
+  },
+  {
+    title: 'Front Office',
+    items: [
+      {
+        // Not an analysis page: this is the reception/client handover board -
+        // who is in the building, which bay, and checking clients out.
+        id: 'lab-bay',
+        label: 'Visitor Register',
+        icon: Building2,
+        roles: [
+          'RECEPTIONIST', 'ADMINISTRATOR', 'CLERK', 'CEO',
+          'ANALYST', 'SENIOR_CHEMIST', 'HEAD_OF_DEPARTMENT',
+        ],
+        // Water and Narcotics handle their clients from the Exhibit Laboratory page.
+        hideForDepartments: ['Water', 'Narcotics'],
+      },
+      {
         id: 'check-out',
         label: 'Check Out',
         icon: LogOut,
         roles: ['RECEPTIONIST', 'ADMINISTRATOR', 'CLERK', 'CEO'],
       },
-      {
-        id: 'notifications',
-        label: 'Notifications',
-        icon: Bell,
-        roles: ['RECEPTIONIST', 'ADMINISTRATOR', 'CLERK', 'CEO'],
-      },
+    ],
+  },
+  {
+    title: 'Records',
+    items: [
       { id: 'case-file', label: 'Case File', icon: FileText, roles: ['ADMINISTRATOR', 'CLERK', 'CEO'] },
     ],
   },
@@ -160,8 +180,8 @@ const DETAIL_VIEWS: Record<string, { section: string; label: string }> = {
   'narcotics-intake-edit': { section: 'Exhibit Intake', label: 'Edit submission' },
   'narcotics-case-file': { section: 'Exhibit Laboratory', label: 'Exhibit case file' },
   'register-visitor': { section: 'Visitor Register', label: 'Register visitor' },
-  'lab-bay': { section: 'Operations', label: 'Visitor Register' },
-  reception: { section: 'Operations', label: 'Visitor Register' },
+  'lab-bay': { section: 'Front Office', label: 'Visitor Register' },
+  reception: { section: 'Front Office', label: 'Visitor Register' },
   references: { section: 'Operations', label: 'Reference database' },
   executive: { section: 'Operations', label: 'Executive overview' },
   audit: { section: 'Operations', label: 'Audit trail' },
