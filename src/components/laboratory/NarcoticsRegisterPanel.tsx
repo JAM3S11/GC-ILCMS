@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRightLeft,
   BadgeCheck,
@@ -32,9 +32,16 @@ interface NarcoticsRegisterPanelProps {
   onOpenCaseFile: (intake: NarcoticsIntake) => void;
   onEdit: (intake: NarcoticsIntake) => void;
   onDelete: (intakeId: string) => void;
+  /** Register tab to open on ('all', 'mine', 'awaiting', 'analysis', 'complete'), e.g. from the sidebar. */
+  initialRegisterView?: string;
+  /** Told whenever the open tab changes, so the sidebar can highlight it. */
+  onRegisterViewChange?: (view: string) => void;
 }
 
 type Stage = 'all' | 'awaiting' | 'analysis' | 'complete';
+
+const STAGES: Stage[] = ['all', 'awaiting', 'analysis', 'complete'];
+const stageOf = (view?: string): Stage => (STAGES.includes(view as Stage) ? (view as Stage) : 'all');
 
 const allocationSubject = (intake: NarcoticsIntake) =>
   `${intake.exhibitType} · ${intake.numberOfItems} item${intake.numberOfItems === 1 ? '' : 's'} (${intake.packaging}) · CR ${intake.crNumber} · from ${intake.policeStation}`;
@@ -43,10 +50,15 @@ const th = 'sticky top-0 border-b border-slate-200 bg-white px-4 py-3 text-[11px
 const td = 'border-b border-slate-100 px-4 py-4 align-middle dark:border-slate-800/70';
 
 export const NarcoticsRegisterPanel: React.FC<NarcoticsRegisterPanelProps> = (props) => {
-  const { intakes, isLoading = false, currentUser } = props;
-  const [stage, setStage] = useState<Stage>('all');
-  const [mineOnly, setMineOnly] = useState(false);
+  const { intakes, isLoading = false, currentUser, initialRegisterView, onRegisterViewChange } = props;
+  const [stage, setStage] = useState<Stage>(() => stageOf(initialRegisterView));
+  const [mineOnly, setMineOnly] = useState(initialRegisterView === 'mine');
   const [query, setQuery] = useState('');
+
+  // Report the open tab ("Assigned to me" wins over the stage) to the sidebar.
+  useEffect(() => {
+    onRegisterViewChange?.(mineOnly ? 'mine' : stage);
+  }, [stage, mineOnly, onRegisterViewChange]);
 
   const byStage: Record<Stage, NarcoticsIntake[]> = {
     all: intakes,

@@ -29,7 +29,7 @@ import { IntakeHandoverDialog } from './components/laboratory/IntakeHandoverDial
 import { Header } from './components/common/Header';
 import { DashboardLayout } from './components/layout/DashboardLayout';
 import { AppSidebar } from './components/layout/AppSidebar';
-import { CASE_REGISTER_NAV_PREFIX } from './components/layout/appNav';
+import { CASE_REGISTER_NAV_PREFIX, LAB_REGISTER_NAV_PREFIX, defaultLabRegisterView } from './components/layout/appNav';
 import { GovBanner } from './components/layout/GovBanner';
 import { PrototypeToolbar } from './components/common/PrototypeToolbar';
 import { GlobalSearchModal } from './components/common/GlobalSearchModal';
@@ -120,6 +120,10 @@ export default function App() {
   // Super Admin case files page: which laboratory's list is shown, and the open Food & Drugs case file.
   const [caseFileLaboratory, setCaseFileLaboratory] = useState<CaseFileLaboratory>('water');
   const [caseFileFoodDrugId, setCaseFileFoodDrugId] = useState<string | null>(null);
+  // Exhibit Laboratory: the register tab picked from the sidebar (null = the department's default),
+  // and a counter that re-opens the page on that tab even when it is already showing.
+  const [labRegisterView, setLabRegisterView] = useState<string | null>(null);
+  const [labRegisterNonce, setLabRegisterNonce] = useState(0);
   // The exhibit whose case file is open, when activeView is 'exhibit-case-file'.
   const [activeWaterIntakeId, setActiveWaterIntakeId] = useState<string | null>(null);
   const [waterIntakesLoading, setWaterIntakesLoading] = useState(false);
@@ -486,6 +490,40 @@ export default function App() {
   // The Narcotics exhibit whose case file is open, when activeView is 'narcotics-case-file'.
   const [activeNarcoticsIntakeId, setActiveNarcoticsIntakeId] = useState<string | null>(null);
 
+  // Sidebar counts for each Exhibit Laboratory register tab, using the same status
+  // rules as the department's register. 'mine' is the officer's unfinished work.
+  const labRegisterCounts = useMemo((): Record<string, number> => {
+    const me = currentUser?.id;
+    if (currentUser?.department === 'Food & Drugs') {
+      return {
+        all: foodDrugIntakes.length,
+        active: foodDrugIntakes.filter((i) => i.status !== 'Reported').length,
+        mine: foodDrugIntakes.filter((i) => i.analystId === me && i.status !== 'Reported').length,
+        approval: foodDrugIntakes.filter((i) => i.status === 'Awaiting Approval').length,
+        assignment: foodDrugIntakes.filter((i) => i.status === 'Awaiting Assignment').length,
+        reported: foodDrugIntakes.filter((i) => i.status === 'Reported').length,
+      };
+    }
+    if (currentUser?.department === 'Narcotics') {
+      return {
+        all: narcoticsIntakes.length,
+        mine: narcoticsIntakes.filter((i) => i.analysisOfficerId === me && i.status === 'Under Analysis').length,
+        awaiting: narcoticsIntakes.filter((i) => i.status === 'Awaiting Assignment').length,
+        analysis: narcoticsIntakes.filter((i) => i.status === 'Under Analysis').length,
+        complete: narcoticsIntakes.filter((i) => i.status === 'Analysis Complete').length,
+      };
+    }
+    return {
+      all: waterIntakes.length,
+      mine: myExhibitsCount,
+      awaiting: waterIntakes.filter((i) => i.status === 'Awaiting Assignment' || i.status === 'Awaiting Approval').length,
+      analysis: waterIntakes.filter((i) => i.status === 'Under Analysis').length,
+      complete: waterIntakes.filter((i) => i.status === 'Analysis Complete').length,
+    };
+  }, [currentUser?.id, currentUser?.department, foodDrugIntakes, narcoticsIntakes, waterIntakes, myExhibitsCount]);
+  const resolvedLabRegisterView = labRegisterView
+    ?? (currentUser ? defaultLabRegisterView(currentUser, labRegisterCounts.mine ?? 0) : 'all');
+
   const loadNarcoticsIntakes = useCallback(async () => {
     try {
       const result = await apiRequest<{
@@ -712,6 +750,17 @@ export default function App() {
 
     // Going to the intake form from the menu starts blank; Open intake sets the client itself.
     if (view === 'water-intake' || view === 'food-drug-intake' || view === 'narcotics-intake') setSelectedIntakeVisitId(null);
+
+    // A register shortcut ('laboratory:mine') opens Exhibit Laboratory on that tab;
+    // plain 'laboratory' (dashboard buttons) opens the department's default tab.
+    if (view.startsWith(LAB_REGISTER_NAV_PREFIX)) {
+      setLabRegisterView(view.slice(LAB_REGISTER_NAV_PREFIX.length));
+      setLabRegisterNonce((n) => n + 1);
+      view = 'laboratory';
+    } else if (view === 'laboratory') {
+      setLabRegisterView(null);
+      setLabRegisterNonce((n) => n + 1);
+    }
 
     // A laboratory's case register ('case-file:food') opens Case File on that lab.
     if (view.startsWith(CASE_REGISTER_NAV_PREFIX)) {
@@ -1630,6 +1679,8 @@ export default function App() {
               superAdminTab={superAdminTab}
               caseRegister={caseFileLaboratory}
               caseRegisterCounts={{ water: waterIntakes.length, food: foodDrugIntakes.length }}
+              labRegisterView={resolvedLabRegisterView}
+              labRegisterCounts={labRegisterCounts}
             />
           }
           topbar={
@@ -1882,6 +1933,9 @@ export default function App() {
             )}
             {activeView === 'laboratory' && canAccessLaboratoryWorkspace(currentUser) && currentUser.department === 'Water' && (
               <WaterLaboratoryView
+                key={`lab-register-${labRegisterNonce}`}
+                initialRegisterView={resolvedLabRegisterView}
+                onRegisterViewChange={setLabRegisterView}
                 intakes={waterIntakes}
                 currentUser={currentUser}
                 officers={waterOfficers}
@@ -1901,6 +1955,9 @@ export default function App() {
             )}
             {activeView === 'laboratory' && canAccessLaboratoryWorkspace(currentUser) && currentUser.department === 'Food & Drugs' && (
               <FoodDrugLaboratoryView
+                key={`lab-register-${labRegisterNonce}`}
+                initialRegisterView={resolvedLabRegisterView}
+                onRegisterViewChange={setLabRegisterView}
                 intakes={foodDrugIntakes}
                 currentUser={currentUser}
                 officers={foodDrugOfficers}
@@ -1925,6 +1982,9 @@ export default function App() {
             )}
             {activeView === 'laboratory' && canAccessLaboratoryWorkspace(currentUser) && currentUser.department === 'Narcotics' && (
               <NarcoticsLaboratoryView
+                key={`lab-register-${labRegisterNonce}`}
+                initialRegisterView={resolvedLabRegisterView}
+                onRegisterViewChange={setLabRegisterView}
                 intakes={narcoticsIntakes}
                 isLoading={narcoticsIntakesLoading}
                 error={narcoticsIntakesError}

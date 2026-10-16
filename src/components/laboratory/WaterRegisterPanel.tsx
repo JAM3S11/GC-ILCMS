@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowRightLeft,
   CheckCircle2,
@@ -51,10 +51,17 @@ interface WaterRegisterPanelProps {
   onEdit?: (intake: WaterIntake) => void;
   /** Head of Department only. */
   onDelete?: (intakeId: string) => void;
+  /** Register tab to open on ('all', 'mine', 'awaiting', 'analysis', 'complete'), e.g. from the sidebar. */
+  initialRegisterView?: string;
+  /** Told whenever the open tab changes, so the sidebar can highlight it. */
+  onRegisterViewChange?: (view: string) => void;
 }
 
 /** Where the exhibit is in the process. Ownership ("mine", a specific officer) is a separate filter. */
 type Stage = 'all' | 'awaiting' | 'analysis' | 'complete';
+
+const STAGES: Stage[] = ['all', 'awaiting', 'analysis', 'complete'];
+const stageOf = (view?: string): Stage => (STAGES.includes(view as Stage) ? (view as Stage) : 'all');
 
 const STATUS_TONE: Record<WaterIntakeStatus, Tone> = {
   'Awaiting Approval': 'rose',
@@ -78,6 +85,8 @@ export const WaterRegisterPanel: React.FC<WaterRegisterPanelProps> = ({
   onOpenCaseFile,
   onEdit,
   onDelete,
+  initialRegisterView,
+  onRegisterViewChange,
 }) => {
   const isHead = currentUser.role === 'HEAD_OF_DEPARTMENT';
   const awaiting = intakes.filter((i) => i.status === 'Awaiting Assignment' || i.status === 'Awaiting Approval');
@@ -92,10 +101,15 @@ export const WaterRegisterPanel: React.FC<WaterRegisterPanelProps> = ({
     return [...seen.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
   }, [intakes]);
   const complete = intakes.filter((i) => i.status === 'Analysis Complete');
-  const [stage, setStage] = useState<Stage>('all');
-  const [mineOnly, setMineOnly] = useState(false);
+  const [stage, setStage] = useState<Stage>(() => stageOf(initialRegisterView));
+  const [mineOnly, setMineOnly] = useState(initialRegisterView === 'mine');
   const [officerFilter, setOfficerFilter] = useState('');
   const [query, setQuery] = useState('');
+
+  // Report the open tab ("Assigned to me" wins over the stage) to the sidebar.
+  useEffect(() => {
+    onRegisterViewChange?.(mineOnly ? 'mine' : stage);
+  }, [stage, mineOnly, onRegisterViewChange]);
 
   const inStage: Record<Stage, WaterIntake[]> = {
     all: intakes,

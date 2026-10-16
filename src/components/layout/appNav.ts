@@ -118,6 +118,44 @@ export const SUPER_ADMIN_NAV_PREFIX = 'super-admin:';
 /** Prefix of the sidebar ids that open one laboratory's case register ('case-file:water'). */
 export const CASE_REGISTER_NAV_PREFIX = 'case-file:';
 
+/** Prefix of the sidebar ids that open one tab of the Exhibit Laboratory register ('laboratory:mine'). */
+export const LAB_REGISTER_NAV_PREFIX = 'laboratory:';
+
+/**
+ * The shortcuts listed under Exhibit Laboratory: the register's own tabs for
+ * the user's department, so the sidebar and the page always agree. Heads of
+ * Department allocate rather than analyse, so they get no "Assigned to me".
+ */
+export const labRegisterViews = (user: Pick<User, 'role' | 'department'>): { id: string; label: string }[] => {
+  const mine = user.role === 'HEAD_OF_DEPARTMENT' ? [] : [{ id: 'mine', label: 'Assigned to me' }];
+  if (user.department === 'Food & Drugs') {
+    return [
+      { id: 'active', label: 'In progress' },
+      ...mine,
+      { id: 'approval', label: 'Awaiting approval' },
+      { id: 'assignment', label: 'Awaiting assignment' },
+      { id: 'reported', label: 'Reported' },
+      { id: 'all', label: 'All samples' },
+    ];
+  }
+  if (user.department === 'Water' || user.department === 'Narcotics') {
+    return [
+      { id: 'all', label: 'All exhibits' },
+      ...mine,
+      { id: 'awaiting', label: 'Awaiting assignment' },
+      { id: 'analysis', label: 'Under analysis' },
+      { id: 'complete', label: 'Completed' },
+    ];
+  }
+  return [];
+};
+
+/** The register tab Exhibit Laboratory opens on when no shortcut was chosen. */
+export const defaultLabRegisterView = (user: Pick<User, 'role' | 'department'>, mineCount: number): string => {
+  if (user.department !== 'Food & Drugs') return 'all';
+  return user.role !== 'HEAD_OF_DEPARTMENT' && mineCount > 0 ? 'mine' : 'active';
+};
+
 const appNavItem = (id: string): NavItem => {
   const item = APP_NAV_GROUPS.flatMap((group) => group.items).find((entry) => entry.id === id);
   if (!item) throw new Error(`Unknown nav item: ${id}`);

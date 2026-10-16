@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { ChevronRight } from 'lucide-react';
 import {
   SidebarGroup,
@@ -14,6 +14,7 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import type { SidebarFolds } from './useSidebarFolds';
 
 /* ---------------------------------------------------------------------------
  * SidebarNav — generic, data-driven navigation for any <Sidebar>.
@@ -72,15 +73,40 @@ const badgeClass = (tone: SidebarNavItem['badgeTone']) =>
 
 const formatBadge = (n: number) => (n > 99 ? '99+' : n);
 
+// Fold-state keys, namespaced so a group title can never clash with an item id.
+const groupKey = (title: string) => `group:${title}`;
+const itemKey = (id: string) => `item:${id}`;
+
 interface SidebarNavProps {
   groups: SidebarNavGroup[];
   activeId?: string;
   onSelect: (id: string) => void;
+  /** Remembers folded groups and sub-menus; without it they all start open each visit. */
+  folds?: SidebarFolds;
 }
 
-export const SidebarNav: React.FC<SidebarNavProps> = ({ groups, activeId, onSelect }) => {
+export const SidebarNav: React.FC<SidebarNavProps> = ({ groups, activeId, onSelect, folds }) => {
   const { isMobile, setOpenMobile, state } = useSidebar();
   const iconRail = state === 'collapsed' && !isMobile;
+
+  const foldProps = (key: string) =>
+    folds
+      ? { open: folds.isOpen(key), onOpenChange: (open: boolean) => folds.setOpen(key, open) }
+      : { defaultOpen: true };
+
+  // Arriving at a page inside a folded section (from search, a dashboard
+  // button...) unfolds it, so a remembered fold never hides where the user is.
+  useEffect(() => {
+    if (!folds || !activeId) return;
+    groups.forEach((group) => {
+      const item = group.items.find((entry) => entry.id === activeId || entry.children?.some((child) => child.id === activeId));
+      if (!item) return;
+      if (group.collapsible && group.title && !folds.isOpen(groupKey(group.title))) folds.setOpen(groupKey(group.title), true);
+      if (item.id !== activeId && !folds.isOpen(itemKey(item.id))) folds.setOpen(itemKey(item.id), true);
+    });
+    // Only on navigation: folding the current section by hand must stick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId]);
 
   const select = (id: string) => {
     onSelect(id);
@@ -117,7 +143,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ groups, activeId, onSele
     }
 
     return (
-      <Collapsible key={item.id} asChild defaultOpen className="group/subnav">
+      <Collapsible key={item.id} asChild {...foldProps(itemKey(item.id))} className="group/subnav">
         <SidebarMenuItem>
           <CollapsibleTrigger asChild>
             <SidebarMenuButton
@@ -174,7 +200,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ groups, activeId, onSele
 
         if (group.collapsible && group.title) {
           return (
-            <Collapsible key={key} defaultOpen className="group/collapsible">
+            <Collapsible key={key} {...foldProps(groupKey(group.title))} className="group/collapsible">
               <SidebarGroup>
                 <SidebarGroupLabel asChild className={`${labelClass} hover:text-slate-700 dark:hover:text-slate-200`}>
                   <CollapsibleTrigger>

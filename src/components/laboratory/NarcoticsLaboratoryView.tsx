@@ -28,6 +28,9 @@ interface NarcoticsLaboratoryViewProps {
   onAcceptClient?: (visitId: string) => void;
   /** Opens the intake form for an officer who has been received. */
   onRegisterExhibit?: (visit: OfficerVisitor) => void;
+  /** Register tab to open on, e.g. from a sidebar shortcut. */
+  initialRegisterView?: string;
+  onRegisterViewChange?: (view: string) => void;
 }
 
 export const NarcoticsLaboratoryView: React.FC<NarcoticsLaboratoryViewProps> = ({
@@ -45,6 +48,8 @@ export const NarcoticsLaboratoryView: React.FC<NarcoticsLaboratoryViewProps> = (
   onOpenIntake,
   onAcceptClient,
   onRegisterExhibit,
+  initialRegisterView,
+  onRegisterViewChange,
 }) => {
   const awaiting = intakes.filter((i) => i.status === 'Awaiting Assignment').length;
   const underAnalysis = intakes.filter((i) => i.status === 'Under Analysis').length;
@@ -150,6 +155,8 @@ export const NarcoticsLaboratoryView: React.FC<NarcoticsLaboratoryViewProps> = (
         onOpenCaseFile={onOpenCaseFile}
         onEdit={onEdit}
         onDelete={onDelete}
+        initialRegisterView={initialRegisterView}
+        onRegisterViewChange={onRegisterViewChange}
       />
     </DashboardPage>
   );

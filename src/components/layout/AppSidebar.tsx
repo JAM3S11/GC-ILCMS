@@ -12,17 +12,20 @@ import {
   SidebarRail,
   SidebarSeparator,
 } from '@/components/ui/sidebar';
-import { SidebarNav, SidebarNavGroup } from './SidebarNav';
+import { SidebarNav, SidebarNavGroup, SidebarNavSubItem } from './SidebarNav';
 import { Laboratory as CaseRegister } from '../laboratory/ExhibitCaseFileIndex';
 import {
   APP_NAV_GROUPS,
   CASE_REGISTER_NAV_PREFIX,
+  LAB_REGISTER_NAV_PREFIX,
   SETTINGS_NAV_ITEM,
   SUPER_ADMIN_NAV_GROUPS,
   SUPER_ADMIN_NAV_PREFIX,
   SuperAdminTab,
   canSeeNavItem,
+  labRegisterViews,
 } from './appNav';
+import { useSidebarFolds } from './useSidebarFolds';
 
 /** 'HEAD_OF_DEPARTMENT' → 'Head of department' */
 const humaniseRole = (role: string) => {
@@ -43,6 +46,10 @@ interface AppSidebarProps {
   caseRegister?: CaseRegister;
   /** Number of files in each laboratory's case register. */
   caseRegisterCounts?: Partial<Record<CaseRegister, number>>;
+  /** Which Exhibit Laboratory register tab is open ('mine', 'analysis', ...). */
+  labRegisterView?: string;
+  /** Number of exhibits in each register tab; 'mine' is the officer's unfinished work. */
+  labRegisterCounts?: Record<string, number>;
 }
 
 /** GC-ILCMS navigation: maps the role-aware nav config onto the generic SidebarNav. */
@@ -57,8 +64,12 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   superAdminCounts = {},
   caseRegister = 'water',
   caseRegisterCounts = {},
+  labRegisterView,
+  labRegisterCounts = {},
 }) => {
   const isSuperAdmin = currentUser.role === 'SUPER_ADMIN';
+  const folds = useSidebarFolds(currentUser.id);
+  const labViews = isSuperAdmin ? [] : labRegisterViews(currentUser);
   const labQualifier = departmentQualifier(currentUser.department);
   const workspace = isSuperAdmin
     ? 'System Administration'
@@ -84,13 +95,24 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
     return 0;
   };
 
-  // The Super Admin console and the case registry are each one view with tabs;
-  // highlight the open tab's item.
+  const childBadge = (id: string): Pick<SidebarNavSubItem, 'badge' | 'badgeTone'> => {
+    if (id.startsWith(LAB_REGISTER_NAV_PREFIX)) {
+      const view = id.slice(LAB_REGISTER_NAV_PREFIX.length);
+      // The officer's own unfinished work needs attention; the other tabs are plain totals.
+      return { badge: labRegisterCounts[view], badgeTone: view === 'mine' ? 'alert' : 'count' };
+    }
+    return { badge: caseRegisterCounts[id.slice(CASE_REGISTER_NAV_PREFIX.length) as CaseRegister], badgeTone: 'count' };
+  };
+
+  // The Super Admin console, the case registry and the Exhibit Laboratory
+  // register are each one view with tabs; highlight the open tab's item.
   const activeId = activeView === 'super-admin'
     ? `${SUPER_ADMIN_NAV_PREFIX}${superAdminTab === 'requests' ? 'users' : superAdminTab}`
     : activeView === 'case-file' && isSuperAdmin
       ? `${CASE_REGISTER_NAV_PREFIX}${caseRegister}`
-      : activeView;
+      : activeView === 'laboratory' && labViews.length > 0 && labRegisterView
+        ? `${LAB_REGISTER_NAV_PREFIX}${labRegisterView}`
+        : activeView;
 
   const groups: SidebarNavGroup[] = (isSuperAdmin ? SUPER_ADMIN_NAV_GROUPS : APP_NAV_GROUPS).map((group) => ({
     title: group.title,
@@ -98,15 +120,16 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
     collapsible: true,
     items: group.items
       .filter((item) => canSeeNavItem(currentUser, item))
-      .map((item) => ({
-        ...item,
-        badge: badgeFor(item.id),
-        children: item.children?.map((child) => ({
-          ...child,
-          badge: caseRegisterCounts[child.id.slice(CASE_REGISTER_NAV_PREFIX.length) as CaseRegister],
-          badgeTone: 'count' as const,
-        })),
-      })),
+      .map((item) => {
+        const children = item.id === 'laboratory' && labViews.length > 0
+          ? labViews.map((view) => ({ id: `${LAB_REGISTER_NAV_PREFIX}${view.id}`, label: view.label }))
+          : item.children;
+        return {
+          ...item,
+          badge: badgeFor(item.id),
+          children: children?.map((child) => ({ ...child, ...childBadge(child.id) })),
+        };
+      }),
   }));
 
   return (
@@ -141,7 +164,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
       </SidebarHeader>
 
       <SidebarContent>
-        <SidebarNav groups={groups} activeId={activeId} onSelect={onNavigate} />
+        <SidebarNav groups={groups} activeId={activeId} onSelect={onNavigate} folds={folds} />
       </SidebarContent>
 
       {/* Settings, system status, account */}

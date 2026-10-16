@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   Check,
@@ -55,9 +55,14 @@ interface FoodDrugLaboratoryViewProps {
   onAcceptClient?: (visitId: string) => void;
   /** Opens the intake form for this client. */
   onRegisterSample?: (visit: OfficerVisitor) => void;
+  /** Register tab to open on, e.g. from a sidebar shortcut. */
+  initialRegisterView?: string;
+  onRegisterViewChange?: (view: string) => void;
 }
 
 type BenchFilter = 'active' | 'mine' | 'approval' | 'assignment' | 'reported' | 'all';
+
+const BENCH_FILTERS: BenchFilter[] = ['active', 'mine', 'approval', 'assignment', 'reported', 'all'];
 
 const STATUS_TONE: Record<FoodDrugIntakeStatus, Tone> = {
   'Awaiting Approval': 'rose',
@@ -97,6 +102,8 @@ export const FoodDrugLaboratoryView: React.FC<FoodDrugLaboratoryViewProps> = ({
   canReceiveClients = false,
   onAcceptClient,
   onRegisterSample,
+  initialRegisterView,
+  onRegisterViewChange,
 }) => {
   const isHead = currentUser.role === 'HEAD_OF_DEPARTMENT';
   const awaitingApproval = intakes.filter((i) => i.status === 'Awaiting Approval');
@@ -107,7 +114,15 @@ export const FoodDrugLaboratoryView: React.FC<FoodDrugLaboratoryViewProps> = ({
   const mine = intakes.filter((i) => i.analystId === currentUser.id && i.status !== 'Reported');
 
   /* ---------------- Bench work ---------------- */
-  const [filter, setFilter] = useState<BenchFilter>(!isHead && mine.length > 0 ? 'mine' : 'active');
+  const [filter, setFilter] = useState<BenchFilter>(() =>
+    BENCH_FILTERS.includes(initialRegisterView as BenchFilter) && !(isHead && initialRegisterView === 'mine')
+      ? (initialRegisterView as BenchFilter)
+      : !isHead && mine.length > 0 ? 'mine' : 'active',
+  );
+  // Report the open view to the sidebar so its shortcut stays highlighted.
+  useEffect(() => {
+    onRegisterViewChange?.(filter);
+  }, [filter, onRegisterViewChange]);
   const [query, setQuery] = useState('');
   const benchRows = useMemo(() => {
     const base =

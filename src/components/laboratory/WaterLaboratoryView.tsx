@@ -31,6 +31,9 @@ interface WaterLaboratoryViewProps {
   onAcceptClient?: (visitId: string) => void;
   /** Opens the intake form for a client who has been received. */
   onRegisterExhibit?: (visit: OfficerVisitor) => void;
+  /** Register tab to open on, e.g. from a sidebar shortcut. */
+  initialRegisterView?: string;
+  onRegisterViewChange?: (view: string) => void;
 }
 
 const tally = (values: string[]) => {
@@ -52,6 +55,8 @@ export const WaterLaboratoryView: React.FC<WaterLaboratoryViewProps> = ({
   canReceiveClients = false,
   onAcceptClient,
   onRegisterExhibit,
+  initialRegisterView,
+  onRegisterViewChange,
 }) => {
   const awaiting = intakes.filter((i) => i.status === 'Awaiting Assignment' || i.status === 'Awaiting Approval').length;
   const underAnalysis = intakes.filter((i) => i.status === 'Under Analysis').length;
@@ -172,6 +177,8 @@ export const WaterLaboratoryView: React.FC<WaterLaboratoryViewProps> = ({
         onOpenCaseFile={onOpenCaseFile}
         onEdit={onEdit}
         onDelete={onDelete}
+        initialRegisterView={initialRegisterView}
+        onRegisterViewChange={onRegisterViewChange}
       />
 
       {currentUser.role === 'HEAD_OF_DEPARTMENT' ? (
