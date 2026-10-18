@@ -1,13 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ClipboardSignature,
-  ArrowLeft,
   Ban,
   ExternalLink,
   RotateCcw,
   ShieldCheck,
   CheckCircle2,
-  ClipboardCheck,
   Building2,
   Droplets,
   FileText,
@@ -21,21 +19,20 @@ import {
   Printer,
   X,
   TriangleAlert,
-  Users,
 } from 'lucide-react';
 import { User, WaterIntake, WaterIntakeEvent } from '../../types';
 import { apiRequest, ApiError } from '../../lib/api';
 import { formatKes } from '../../waterIntake';
-import { Avatar, Button, DashboardHeader, DashboardPage, StatusPill, Tone } from '../common/Dashboard';
-import { CaseStatusCard, NextStep, caseStages } from './CaseFlow';
-import { openCaseStep } from './CaseStep';
+import { Button, StatusPill, Tone } from '../common/Dashboard';
+import { NextStep, caseStages } from './CaseFlow';
+import { CaseStep, openCaseStep } from './CaseStep';
+import { CaseFileLayout, CaseFileSectionLink } from './CaseFileLayout';
 import { Portal } from '../common/Portal';
 import { ExhibitProcessTimeline, PROCESS_STEPS } from './ExhibitProcessTimeline';
 import { WaterTestResultsForm } from './WaterTestResultsForm';
 import { WorkAllocationViewer } from './WorkAllocationForm';
 import { WaterTestEntry } from '../../lib/waterTestParameters';
 import { CertificateIssue, WaterCertificatePreview } from './WaterCertificatePreview';
-import { CaseFileContents, CaseFileContentsSection } from './CaseFileContents';
 import { WaterCertificate, WaterCertificateState, fieldsFromSnapshot } from '../../lib/waterCertificates';
 import { canEditWaterIntake, canEditWaterResults, canPrintWaterCertificate, waterEditAccess } from '../../lib/waterIntakeAccess';
 
@@ -191,19 +188,6 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
 
   const analysisStarted = intake.status === 'Under Analysis' || isComplete;
 
-  const people = [
-    { role: 'Received by', name: intake.receivingOfficer, sub: intake.dateReceived },
-    { role: 'Documents approved by', name: intake.approvedBy, sub: intake.approvedDate },
-    {
-      role: 'Analysis Officer',
-      name: intake.analysisOfficer,
-      sub: intake.assignedDate
-        ? 'Assigned ' + intake.assignedDate + (intake.assignedBy ? ' by ' + intake.assignedBy : '')
-        : undefined,
-    },
-    { role: 'Sender contact', name: intake.contactPerson || intake.senderName, sub: intake.contactPersonMobile || intake.senderMobile },
-  ].filter((person): person is { role: string; name: string; sub: string | undefined } => Boolean(person.name));
-
   // Compare what is typed with what is saved, ignoring blank rows.
   const normalise = (entries: Record<string, WaterTestEntry>, remarks: string) =>
     JSON.stringify([
@@ -259,7 +243,7 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
     : { intake, entries: draft.entries, remarks: draft.remarks };
 
   const focusResults = () => {
-    document.getElementById('file-section-2')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    openCaseStep('section-2');
     window.setTimeout(() => document.querySelector<HTMLInputElement>('input[id^="result-"]')?.focus(), 400);
   };
 
@@ -412,81 +396,64 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
     [undefined, undefined, 'section-2', 'section-3', 'section-3'],
   );
 
-  // The file's contents page: each numbered section and where it stands.
-  const contentsSections: CaseFileContentsSection[] = [
-    { id: 'section-1', number: 1, title: 'Exhibit particulars', state: 'done', note: `Received ${intake.dateReceived ?? '—'}` },
-    {
-      id: 'section-2',
-      number: 2,
-      title: 'Findings',
-      state: findingsRecorded ? 'done' : analysisStarted ? 'current' : 'pending',
-      note: findingsRecorded ? 'Results recorded' : analysisStarted ? 'Under analysis' : 'Awaiting analysis',
-    },
-    {
-      id: 'section-3',
-      number: 3,
-      title: 'Memo',
-      state: issued ? 'done' : isComplete ? 'current' : 'pending',
-      note: issued ? 'Approved by the Head' : isComplete ? 'Awaiting approval' : 'Not yet issued',
-    },
+  // The steps on this page and where each one stands.
+  const sections: CaseFileSectionLink[] = [
+    { id: 'section-1', title: 'Exhibit particulars', state: 'done' },
+    { id: 'section-2', title: 'Findings', state: isComplete ? 'done' : analysisStarted ? 'current' : 'pending' },
+    { id: 'section-3', title: 'Memo', state: issued ? 'done' : isComplete ? 'current' : 'pending' },
   ];
-  const contentsProps = {
-    reference: intake.labReference ?? intake.exhibitId,
-    register: 'Water & Environment',
-    sections: contentsSections,
-  };
+  // The Head keeps the original work allocation form; the assigned analyst has a copy.
+  const canViewAllocation = !!intake.analysisOfficerId && (isOwner || isHead);
+
+  // The process history opens in a drawer: it is the record of what happened, not a step.
+  const historyContent = loading ? (
+    <p className="flex items-center gap-2 py-6 text-xs text-slate-500 dark:text-slate-400">
+      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading process…
+    </p>
+  ) : (
+    <ExhibitProcessTimeline intake={intake} events={events} loading={loading} error={loadError} />
+  );
 
   return (
-    <DashboardPage>
-      <DashboardHeader
-        breadcrumb={[backLabel, intake.exhibitId]}
-        title={[intake.testType, intake.sourceType].filter(Boolean).join(' — ') || 'Water exhibit'}
-        meta={<StatusPill tone={STATUS_TONE[intake.status]}>{intake.status}</StatusPill>}
-        description={
-          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="font-mono">{intake.exhibitId}</span>
-            <span className="text-slate-300 dark:text-slate-600">·</span>
-            <span className="font-mono">{intake.labReference}</span>
-            <span className="text-slate-300 dark:text-slate-600">·</span>
-            <span>Water &amp; Environment</span>
-          </span>
-        }
-        actions={
-          <span className="flex items-center gap-2 print:hidden">
-            <Button icon={ArrowLeft} onClick={onBack}>
-              {backLabel}
-            </Button>
-            {intake.analysisOfficerId &&
-              (intake.analysisOfficerId === currentUser.id || currentUser.role === 'HEAD_OF_DEPARTMENT') && (
-                <Button icon={ClipboardSignature} onClick={() => setViewingAllocation(true)}>
-                  {currentUser.role === 'HEAD_OF_DEPARTMENT' ? 'Allocation form' : 'Allocation form (copy)'}
-                </Button>
-              )}
-            {viewingAllocation && (
-              <WorkAllocationViewer recordType="WATER_INTAKE" recordId={intake.id} onClose={() => setViewingAllocation(false)} />
-            )}
-            <Button variant="primaryTeal" icon={Printer} onClick={() => window.print()}>
-              Print case file
-            </Button>
-          </span>
-        }
-      />
+    <CaseFileLayout
+      back={{ label: backLabel, onClick: onBack }}
+      reference={intake.labReference ?? intake.exhibitId}
+      status={{ label: intake.status, tone: STATUS_TONE[intake.status] }}
+      subtitle={[[intake.testType, intake.sourceType].filter(Boolean).join(' · ') || 'Water exhibit', intake.senderName, 'Water & Environment']}
+      next={next}
+      stages={stages}
+      receivedDate={intake.dateReceived}
+      finishedDate={intake.certificateIssuedAt}
+      more={[
+        { label: 'Print case file', icon: Printer, onClick: () => window.print() },
+        ...(canViewAllocation ? [{ label: isHead ? 'Allocation form' : 'Allocation form (copy)', icon: ClipboardSignature, onClick: () => setViewingAllocation(true) }] : []),
+        ...(canEditIntakeDetails ? [{ label: 'Edit intake details', icon: Pencil, onClick: () => onEditIntake?.(intake) }] : []),
+      ]}
+      details={[
+        { label: 'Sample no.', value: intake.exhibitId, mono: true, copy: intake.exhibitId },
+        { label: 'Sender', value: intake.senderName },
+        { label: 'Contact', value: [intake.contactPerson, intake.contactPersonMobile].filter(Boolean).join(' · ') },
+        { label: 'Received', value: [intake.dateReceived, intake.receivingOfficer].filter(Boolean).join(' · ') },
+        { label: 'Analyst', value: intake.analysisOfficer ? `${intake.analysisOfficer}${isOwner ? ' (you)' : ''}` : 'Not yet assigned' },
+        { label: 'Seal', value: intake.sealNumber, mono: true },
+        { label: 'Documents', value: intake.approvedBy ? `Approved by ${intake.approvedBy}` : intake.documentsConfirmedAt ? 'Checked' : null },
+      ]}
+      sections={sections}
+      history={{ count: events.length, content: historyContent }}
+    >
+      {viewingAllocation && (
+        <WorkAllocationViewer recordType="WATER_INTAKE" recordId={intake.id} onClose={() => setViewingAllocation(false)} />
+      )}
 
-      <CaseStatusCard
-        next={next}
-        stages={stages}
-        onSelect={openCaseStep}
-        receivedDate={intake.dateReceived}
-        finishedDate={intake.certificateIssuedAt}
-      />
-
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_18rem] 2xl:grid-cols-[14rem_minmax(0,1fr)_18rem]">
-        {/* Contents: the file's sections in order, with where each one stands */}
-        <CaseFileContents {...contentsProps} className="hidden 2xl:sticky 2xl:top-4 2xl:block" />
-
-        {/* Main record */}
-        <div className="@container min-w-0 space-y-4">
-          <FileSection number={1} icon={Droplets} title="Exhibit particulars" description="Recorded at intake. Client details come from reception.">
+          <CaseStep
+            id="section-1"
+            icon={Droplets}
+            title="Exhibit particulars"
+            description="Recorded at intake. Client details come from reception."
+            state="done"
+            summary={[{ label: 'Sender', value: intake.senderName }, { label: 'Test', value: intake.testType }, { label: 'Received', value: intake.dateReceived }]}
+          >
+            <div className="@container px-4 py-3.5">
             <div className="grid gap-x-8 gap-y-6 @2xl:grid-cols-2 @5xl:grid-cols-3">
               <FactGroup title="Reference and dates" icon={FileText}>
                 <Fact label="Reference number" mono>{intake.labReference ?? '—'}</Fact>
@@ -537,9 +504,20 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
                 {intake.remarks}
               </div>
             )}
-          </FileSection>
+            </div>
+          </CaseStep>
 
-          <FileSection number={2} icon={NotebookPen} title="Findings" description="Physical and chemical test results against the KS EAS 12:2018 limits.">
+          <CaseStep
+            id="section-2"
+            icon={NotebookPen}
+            title="Findings"
+            description="Physical and chemical test results against the KS EAS 12:2018 limits."
+            state={isComplete ? 'done' : analysisStarted ? 'current' : 'pending'}
+            status={isComplete ? { label: 'Results saved', tone: 'emerald' } : analysisStarted ? { label: 'Under analysis', tone: 'sky' } : undefined}
+            summary={[{ label: 'Recorded', value: intake.findingsRecordedAt }, { label: 'Analysis Officer', value: intake.analysisOfficer }]}
+            defaultOpen={intake.status === 'Under Analysis'}
+          >
+            <div className="px-4 py-3.5">
             <WaterTestResultsForm
               intake={intake}
               canEdit={canEditResults}
@@ -549,9 +527,20 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
               saveError={saveError}
               onSave={(payload) => void handleSaveFindings(payload)}
             />
-          </FileSection>
+            </div>
+          </CaseStep>
 
-          <FileSection number={3} icon={FileText} title="Memo" description="The Certificate of Analysis of Water, as it will be printed.">
+          <CaseStep
+            id="section-3"
+            icon={FileText}
+            title="Memo"
+            description="The Certificate of Analysis of Water, as it will be printed."
+            state={issued ? 'done' : isComplete ? 'current' : 'pending'}
+            status={issued ? { label: 'Approved', tone: 'emerald' } : isComplete ? { label: 'Awaiting approval', tone: 'amber' } : undefined}
+            summary={[{ label: 'Approved', value: intake.certificateIssuedAt ? `${intake.certificateIssuedAt}${intake.certificateIssuedBy ? ` by ${intake.certificateIssuedBy}` : ''}` : null }]}
+            defaultOpen={isComplete && !issued}
+          >
+            <div className="px-4 py-3.5">
             {canConfirmDocuments && !issued && (
               <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 print:hidden dark:border-slate-800 dark:bg-slate-950/40">{documentsCheckbox}</div>
             )}
@@ -623,52 +612,9 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
                 <WaterCertificatePreview {...previewProps} />
               </div>
             )}
-          </FileSection>
-
-          {/* The record of what happened; not a step anyone works on. */}
-          <FileSection id="section-history" icon={ClipboardCheck} title="Process history" description="Every recorded step, with who did it and when. Kept for the audit trail.">
-            {loading ? (
-              <p className="flex items-center gap-2 py-6 text-xs text-slate-500 dark:text-slate-400">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading process…
-              </p>
-            ) : (
-              <ExhibitProcessTimeline intake={intake} events={events} loading={loading} error={loadError} />
-            )}
-          </FileSection>
-        </div>
-
-        {/* Sidebar: where the file stands and what is left to do */}
-        <aside className="space-y-4 lg:sticky lg:top-4">
-          {/* Below 2xl there is no room for a third column, so the contents lead the side panel. */}
-          <CaseFileContents {...contentsProps} className="2xl:hidden" />
-          <section aria-label="People" className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
-            <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-950/50">
-              <h2 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
-                <Users className="h-3.5 w-3.5" /> People
-              </h2>
             </div>
-            <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-              {people.map((person) => (
-                <li key={person.role} className="flex items-center gap-3 px-4 py-3">
-                  <Avatar name={person.name} size="sm" />
-                  <div className="min-w-0">
-                    <div className="text-[11px] text-slate-500 dark:text-slate-400">{person.role}</div>
-                    <div className="truncate text-[13px] font-medium text-slate-900 dark:text-white">{person.name}</div>
-                    {person.sub && <div className="truncate text-[11px] text-slate-400">{person.sub}</div>}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </section>
+          </CaseStep>
 
-          {isOwner && (
-            <p className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-[11px] leading-relaxed text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
-              Assigned to you on {intake.assignedDate ?? '—'}
-              {intake.assignedBy ? ` by ${intake.assignedBy}` : ''}.
-            </p>
-          )}
-        </aside>
-      </div>
       {canPrint && currentCertificate && (
         <Portal>
           <div className="certificate-print-root" aria-hidden="true">
@@ -715,7 +661,7 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
         </div>
         </Portal>
       )}
-    </DashboardPage>
+    </CaseFileLayout>
   );
 };
 
@@ -889,37 +835,4 @@ const Fact: React.FC<{ label: string; mono?: boolean; children: React.ReactNode 
       {children}
     </dd>
   </div>
-);
-
-/** A numbered section of the official file, so the record reads in a fixed order. */
-const FileSection: React.FC<{
-  /** Omitted for records that are not a step of the process, such as the history. */
-  number?: number;
-  /** Defaults to section-{number}. */
-  id?: string;
-  icon: React.ComponentType<{ className?: string }>;
-  title: string;
-  description: string;
-  children: React.ReactNode;
-}> = ({ number, id = `section-${number}`, icon: Icon, title, description, children }) => (
-  <section
-    id={id}
-    aria-labelledby={`file-${id}`}
-    className="scroll-mt-4 overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm print:break-inside-avoid dark:border-slate-700 dark:bg-slate-900"
-  >
-    <div className="flex items-start gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-950/50">
-      {number !== undefined && (
-        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-slate-800 text-[11px] font-semibold text-white dark:bg-slate-700 dark:text-slate-100">
-          {number}
-        </span>
-      )}
-      <div className="min-w-0">
-        <h2 id={`file-${id}`} className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
-          <Icon className="h-4 w-4 text-slate-400" /> {title}
-        </h2>
-        <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">{description}</p>
-      </div>
-    </div>
-    <div className="px-4 py-3.5">{children}</div>
-  </section>
 );

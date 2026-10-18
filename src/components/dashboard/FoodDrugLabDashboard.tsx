@@ -22,6 +22,8 @@ interface FoodDrugLabDashboardProps {
   isLoading: boolean;
   error: string;
   onNavigate: (view: string) => void;
+  /** The work list and activity feed, shown under the stats strip. */
+  workSection?: React.ReactNode;
 }
 
 const STATUS_TONE: Record<FoodDrugIntakeStatus, Tone> = {
@@ -47,6 +49,7 @@ export const FoodDrugLabDashboard: React.FC<FoodDrugLabDashboardProps> = ({
   isLoading,
   error,
   onNavigate,
+  workSection,
 }) => {
   const isHead = currentUser.role === 'HEAD_OF_DEPARTMENT';
   const loadingFirstTime = isLoading && intakes.length === 0;
@@ -151,12 +154,19 @@ export const FoodDrugLabDashboard: React.FC<FoodDrugLabDashboardProps> = ({
       )}
 
       <KpiGrid label="Food & Drugs metrics">
-        <KpiCard label="Total samples" value={loadingValue(intakes.length)} icon={TestTube} tone="teal" hint={`${receivedToday} received today`} />
-        <KpiCard label="Awaiting approval" value={loadingValue(awaitingApproval)} icon={ClipboardList} tone="rose" hint="Documents to review" />
-        <KpiCard label="Awaiting assignment" value={loadingValue(awaitingAssignment)} icon={Inbox} tone="violet" hint="Waiting for an officer" />
-        <KpiCard label="Under analysis" value={loadingValue(underAnalysis)} icon={FlaskConical} tone="sky" hint={mine > 0 ? `${mine} assigned to you` : 'Assigned and in progress'} />
-        <KpiCard label="Reported" value={loadingValue(reported)} icon={FileCheck} tone="emerald" hint="Analysis recorded" />
+        <KpiCard label="Total samples" value={loadingValue(intakes.length)} icon={TestTube} hint={`${receivedToday} received today`} />
+        <KpiCard label="Awaiting approval" value={loadingValue(awaitingApproval)} icon={ClipboardList}
+          hint={awaitingApproval ? 'Documents to review' : 'Nothing to review'} status={awaitingApproval ? 'soon' : undefined}
+          action={{ label: 'Open the register', onClick: () => onNavigate('laboratory') }} />
+        <KpiCard label="Awaiting assignment" value={loadingValue(awaitingAssignment)} icon={Inbox}
+          hint={awaitingAssignment ? 'Waiting for an officer' : 'Everything is assigned'} status={awaitingAssignment ? 'soon' : undefined}
+          action={{ label: 'Open the register', onClick: () => onNavigate('laboratory') }} />
+        <KpiCard label="Under analysis" value={loadingValue(underAnalysis)} icon={FlaskConical} hint={mine > 0 ? `${mine} assigned to you` : 'Assigned and in progress'}
+          action={{ label: 'Open the register', onClick: () => onNavigate('laboratory') }} />
+        <KpiCard label="Reported" value={loadingValue(reported)} icon={FileCheck} hint="Certificate issued" status={reported ? 'good' : undefined} />
       </KpiGrid>
+
+      {workSection}
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
         <Panel

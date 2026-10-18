@@ -23,6 +23,8 @@ interface NarcoticsLabDashboardProps {
   intakes?: NarcoticsIntake[];
   isLoading: boolean;
   onNavigate: (view: string) => void;
+  /** The work list and activity feed, shown under the stats strip. */
+  workSection?: React.ReactNode;
 }
 
 const STATUS: Record<OfficerVisitor['status'], { label: string; tone: Tone }> = {
@@ -43,6 +45,7 @@ export const NarcoticsLabDashboard: React.FC<NarcoticsLabDashboardProps> = ({
   intakes = [],
   isLoading,
   onNavigate,
+  workSection,
 }) => {
   const visits = visitors.filter((visit) => visit.laboratory === 'Narcotics');
   const isHead = currentUser.role === 'HEAD_OF_DEPARTMENT';
@@ -142,6 +145,8 @@ export const NarcoticsLabDashboard: React.FC<NarcoticsLabDashboardProps> = ({
         <KpiCard label="Ready for check-out" value={loadingValue(readyForCheckOut)} icon={CheckCircle2} tone="emerald" hint="Intake complete" />
         <KpiCard label="Exhibits registered" value={loadingValue(intakes.length)} icon={ClipboardList} tone="slate" hint={`${awaitingAssignment} awaiting assignment · ${checkedOut} officers checked out`} />
       </KpiGrid>
+
+      {workSection}
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">
         <Panel

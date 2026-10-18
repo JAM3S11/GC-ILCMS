@@ -59,6 +59,8 @@ import { DigitalCaseFile } from './components/case/DigitalCaseFile';
 import { ReferenceDatabaseView } from './components/reference/ReferenceDatabaseView';
 import { ExecutiveDashboard } from './components/dashboard/ExecutiveDashboard';
 import { RoleDashboard } from './components/dashboard/RoleDashboard';
+import { DashboardWorkSection } from './components/dashboard/WorkPanels';
+import type { WorkRegister } from './lib/useDashboardWork';
 import { OfficerVerificationModal } from './components/laboratory/OfficerVerificationModal';
 import { SubmissionIntakeModal } from './components/laboratory/SubmissionIntakeModal';
 import { NotificationDrawer } from './components/notifications/NotificationDrawer';
@@ -1571,6 +1573,32 @@ export default function App() {
   const isWaterUser = currentUser?.role === 'SUPER_ADMIN' || currentUser?.department === 'Water';
   const isNarcoticsUser = currentUser?.role === 'SUPER_ADMIN' || currentUser?.department === 'Narcotics';
 
+  // The dashboard's work list and activity feed open case files directly. The rules match the
+  // case-file routes: a Water file opens for its officer, the Water Head or a Senior Chemist.
+  const canOpenRegisterFile = (register: WorkRegister, assignedToMe = false) =>
+    register === 'Water'
+      ? currentUser?.role === 'SUPER_ADMIN' || (currentUser?.department === 'Water' &&
+          (assignedToMe || currentUser.role === 'HEAD_OF_DEPARTMENT' || currentUser.role === 'SENIOR_CHEMIST'))
+      : register === 'Food & Drugs' ? isFoodDrugUser : isNarcoticsUser;
+  const openRegisterFile = (register: WorkRegister, id: string) => {
+    const superAdmin = currentUser?.role === 'SUPER_ADMIN';
+    if (register === 'Water') {
+      setActiveWaterIntakeId(id);
+      setActiveView(superAdmin ? 'case-file' : 'exhibit-case-file');
+    } else if (register === 'Food & Drugs') {
+      if (superAdmin) {
+        setCaseFileFoodDrugId(id);
+        setActiveView('case-file');
+      } else {
+        setActiveFoodDrugIntakeId(id);
+        setActiveView('food-drug-case-file');
+      }
+    } else {
+      setActiveNarcoticsIntakeId(id);
+      setActiveView('narcotics-case-file');
+    }
+  };
+
   // Every intake button funnels through here: Food & Drugs staff go to the
   // registration page, everyone else gets the generic exhibit intake modal.
   const openIntake = () => {
@@ -1711,6 +1739,7 @@ export default function App() {
                   visitors={visitors}
                   waterIntakes={waterIntakes}
                   onNavigate={handleNavigateView}
+                  workSection={<DashboardWorkSection canOpen={canOpenRegisterFile} onOpen={openRegisterFile} />}
                 />
               ) : (
                 <RoleDashboard
@@ -1731,6 +1760,8 @@ export default function App() {
                   onOpenIntakeModal={openIntake}
                   onOpenCaseFile={(id) => setActiveView('case-file')}
                   onOpenGCMS={() => setActiveView('case-file')}
+                  canOpenRegisterFile={canOpenRegisterFile}
+                  onOpenRegisterFile={openRegisterFile}
                 />
               )
             )}

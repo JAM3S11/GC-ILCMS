@@ -48,28 +48,34 @@ export type SidebarNavGroup = {
   collapsible?: boolean;
 };
 
-// Active item: brand tint + accent bar; WCAG AA text contrast in both themes.
+// The active item is a raised card (surface, hairline ring, small shadow) rather than a
+// coloured bar, like a selected tab. Icons sit dimmer than the labels so the eye reads
+// the words first; they brighten on hover and when active.
+const raised =
+  'data-[active=true]:bg-white data-[active=true]:text-slate-900 data-[active=true]:font-medium ' +
+  'data-[active=true]:shadow-[0_1px_2px_rgb(15_23_42/0.06)] data-[active=true]:ring-1 data-[active=true]:ring-slate-200 ' +
+  'dark:data-[active=true]:bg-slate-800 dark:data-[active=true]:text-white dark:data-[active=true]:ring-slate-700 ';
+
 const itemClass =
-  'relative h-9 gap-2.5 text-[13px] font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 ' +
-  'dark:text-slate-300 dark:hover:bg-slate-800/70 dark:hover:text-white ' +
-  'data-[active=true]:bg-amber-50 data-[active=true]:text-amber-800 data-[active=true]:font-semibold ' +
-  'dark:data-[active=true]:bg-amber-400/10 dark:data-[active=true]:text-amber-200 ' +
-  "data-[active=true]:before:absolute data-[active=true]:before:inset-y-1.5 data-[active=true]:before:left-0 data-[active=true]:before:w-1 data-[active=true]:before:rounded-r data-[active=true]:before:bg-amber-500 data-[active=true]:before:content-[''] " +
-  'group-data-[collapsible=icon]:data-[active=true]:before:hidden ' +
-  '[&>svg]:size-[18px] [&>svg]:text-slate-500 dark:[&>svg]:text-slate-400 ' +
-  'data-[active=true]:[&>svg]:text-amber-700 dark:data-[active=true]:[&>svg]:text-amber-300';
+  'relative h-[30px] gap-[9px] rounded-md text-[13px] font-normal text-slate-600 transition-colors ' +
+  'hover:bg-slate-200/50 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800/60 dark:hover:text-white ' +
+  raised +
+  '[&>svg]:size-4 [&>svg]:text-slate-400 [&>svg]:transition-colors dark:[&>svg]:text-slate-500 ' +
+  'hover:[&>svg]:text-slate-700 data-[active=true]:[&>svg]:text-slate-700 ' +
+  'dark:hover:[&>svg]:text-slate-200 dark:data-[active=true]:[&>svg]:text-slate-200';
 
 const subItemClass =
-  'h-8 text-[13px] text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800/70 dark:hover:text-white ' +
-  'data-[active=true]:bg-amber-50 data-[active=true]:font-semibold data-[active=true]:text-amber-800 ' +
-  'dark:data-[active=true]:bg-amber-400/10 dark:data-[active=true]:text-amber-200';
+  'h-7 rounded-md text-[13px] text-slate-600 transition-colors hover:bg-slate-200/50 hover:text-slate-900 ' +
+  'dark:text-slate-400 dark:hover:bg-slate-800/60 dark:hover:text-white ' +
+  raised;
 
-const labelClass = 'text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400';
+const labelClass = 'text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500 dark:text-slate-500';
 
+// Totals are plain tabular numbers; only things waiting on the user get the small accent badge.
 const badgeClass = (tone: SidebarNavItem['badgeTone']) =>
   tone === 'count'
-    ? 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200'
-    : 'bg-rose-600 text-white peer-data-[active=true]/menu-button:text-white';
+    ? 'bg-transparent font-medium text-slate-400 dark:text-slate-500'
+    : 'bg-amber-500 text-slate-950 dark:text-slate-950';
 
 const formatBadge = (n: number) => (n > 99 ? '99+' : n);
 
@@ -134,7 +140,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ groups, activeId, onSele
             <span>{item.label}</span>
           </SidebarMenuButton>
           {!!item.badge && (
-            <SidebarMenuBadge className={`top-2 rounded-full px-1.5 text-[10px] font-semibold ${badgeClass(item.badgeTone)}`}>
+            <SidebarMenuBadge className={`top-[7px] h-4 min-w-4 rounded-full px-1 text-[10px] font-semibold tabular-nums ${badgeClass(item.badgeTone)}`}>
               {formatBadge(item.badge)}
             </SidebarMenuBadge>
           )}
@@ -177,7 +183,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ groups, activeId, onSele
                   </SidebarMenuSubButton>
                   {!!child.badge && (
                     <span
-                      className={`pointer-events-none absolute right-1 top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[10px] font-semibold tabular-nums ${badgeClass(child.badgeTone)}`}
+                      className={`pointer-events-none absolute right-1 top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold tabular-nums ${badgeClass(child.badgeTone)}`}
                     >
                       {formatBadge(child.badge)}
                     </span>
@@ -203,9 +209,10 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ groups, activeId, onSele
             <Collapsible key={key} {...foldProps(groupKey(group.title))} className="group/collapsible">
               <SidebarGroup>
                 <SidebarGroupLabel asChild className={`${labelClass} hover:text-slate-700 dark:hover:text-slate-200`}>
-                  <CollapsibleTrigger>
+                  <CollapsibleTrigger className="group/label">
                     {group.title}
-                    <ChevronRight className="ml-auto h-3.5 w-3.5 transition-transform group-data-[state=open]/collapsible:rotate-90" />
+                    {/* The fold control only shows when the group is hovered or focused, so the rail stays quiet. */}
+                    <ChevronRight className="ml-auto h-3.5 w-3.5 opacity-0 transition group-hover/collapsible:opacity-100 group-focus-visible/label:opacity-100 group-data-[state=closed]/collapsible:opacity-100 group-data-[state=open]/collapsible:rotate-90" />
                   </CollapsibleTrigger>
                 </SidebarGroupLabel>
                 <CollapsibleContent>

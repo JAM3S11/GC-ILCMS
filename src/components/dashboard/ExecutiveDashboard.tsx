@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AlertTriangle, ArrowUpRight, Award, Building2, Clock, FileCheck, FlaskConical, Layers, TrendingUp } from 'lucide-react';
 import { ForensicCase } from '../../types';
+import { meanTurnaround, openFiles, useDashboardSummary } from '../../lib/useDashboardSummary';
 import {
   Button,
   DashboardHeader,
@@ -52,9 +53,13 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({ activeCa
 
   const sorted = [...DEPARTMENTS].sort((a, b) => b[sortBy] - a[sortBy]);
   const maxActive = Math.max(...DEPARTMENTS.map((d) => d.active));
-  const totalActive = DEPARTMENTS.reduce((s, d) => s + d.active, 0);
-  const totalPending = DEPARTMENTS.reduce((s, d) => s + d.pendingReports, 0);
   const atRisk = DEPARTMENTS.filter((d) => slaStatus(d).tone !== 'emerald');
+
+  const { summary } = useDashboardSummary();
+  const totals = summary?.totals;
+  const count = (value?: number) => (totals ? (value ?? 0).toLocaleString() : '—');
+  const overdueAfter = summary?.overdueAfterDays ?? 14;
+  const mean = totals ? meanTurnaround(totals) : null;
 
   return (
     <DashboardPage>
@@ -70,11 +75,25 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({ activeCa
         }
       />
 
+      {/* Real counts from the Water, Food & Drugs and Narcotics registers. */}
       <KpiGrid label="National metrics">
-        <KpiCard label="Cases this year" value="1,482" icon={TrendingUp} tone="teal" hint="+8.4% intake efficiency" />
-        <KpiCard label="Active in analysis" value={totalActive} icon={FlaskConical} tone="sky" hint={`Across ${DEPARTMENTS.length} departments`} />
-        <KpiCard label="Mean turnaround" value="4.2" unit="days" icon={Clock} tone="emerald" hint="Down from 14 days (paper era)" />
-        <KpiCard label="Reports pending review" value={totalPending} icon={FileCheck} tone="violet" hint="1 urgent · Narcotics" />
+        <KpiCard label="Registered this year" value={count(totals?.thisYear)} icon={TrendingUp} hint={`${count(totals?.registeredToday)} today`} />
+        <KpiCard label="Under analysis" value={count(totals?.inAnalysis)} icon={FlaskConical} hint={`${count(totals ? openFiles(totals) : 0)} not yet issued`} />
+        <KpiCard
+          label="Mean turnaround"
+          value={totals ? mean ?? '—' : '—'}
+          unit={mean !== null ? 'days' : undefined}
+          icon={Clock}
+          hint={mean === null ? 'Nothing issued in the last 90 days' : mean <= overdueAfter ? `Within the ${overdueAfter}-day target` : `Over the ${overdueAfter}-day target`}
+          status={mean === null ? undefined : mean <= overdueAfter ? 'good' : 'attention'}
+        />
+        <KpiCard
+          label="Awaiting sign-off"
+          value={count(totals?.awaitingSignOff)}
+          icon={FileCheck}
+          hint={!totals ? undefined : totals.overdue ? `${totals.overdue} over ${overdueAfter} days in the lab · need attention` : `None over ${overdueAfter} days in the lab`}
+          status={!totals ? undefined : totals.overdue ? 'attention' : 'good'}
+        />
       </KpiGrid>
 
       <div className="grid grid-cols-1 gap-5 xl:grid-cols-12">

@@ -47,6 +47,8 @@ interface SuperAdminDashboardProps {
   visitors: OfficerVisitor[];
   waterIntakes: WaterIntake[];
   onNavigate: (view: string) => void;
+  /** Open files across the registers and their recent activity. */
+  workSection?: React.ReactNode;
 }
 
 const REFRESH_MS = 15_000;
@@ -76,6 +78,7 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
   visitors,
   waterIntakes,
   onNavigate,
+  workSection,
 }) => {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [users, setUsers] = useState<AccountRecord[]>([]);
@@ -301,6 +304,8 @@ export const SuperAdminDashboard: React.FC<SuperAdminDashboardProps> = ({
           </button>
         ))}
       </section>
+
+      {workSection}
 
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Activity, last 7 days */}

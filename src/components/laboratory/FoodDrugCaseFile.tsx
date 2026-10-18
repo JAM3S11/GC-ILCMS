@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { ClipboardSignature } from 'lucide-react';
 import { FoodDrugIntake, User } from '../../types';
 import { WorkAllocationViewer } from './WorkAllocationForm';
 import { SampleReceiptFormSection } from './SampleReceiptFormSection';
@@ -6,8 +7,8 @@ import { LaboratoryWorksheetSection } from './LaboratoryWorksheetSection';
 import { DraftReportSection } from './DraftReportSection';
 import { WorkAllocationStep } from './WorkAllocationStep';
 import { openCaseStep } from './CaseStep';
-import { CaseFileContents, CaseFileContentsSection } from './CaseFileContents';
-import { FoodDrugCaseHeader } from './FoodDrugCaseHeader';
+import { CaseFileLayout, CaseFileSectionLink } from './CaseFileLayout';
+import { FOOD_DRUG_STATUS_TONE, displayName, foodDrugNextStep, foodDrugStages, formatDate } from './foodDrugCaseFlow';
 
 interface FoodDrugCaseFileProps {
   intake: FoodDrugIntake;
@@ -31,88 +32,64 @@ export const FoodDrugCaseFile: React.FC<FoodDrugCaseFileProps> = ({ intake, curr
 
   const isHead = currentUser.role === 'HEAD_OF_DEPARTMENT';
   const isAssigned = !!intake.analystId && intake.analystId === currentUser.id;
+  const canViewAllocation = !!intake.analystId && (isHead || isAssigned);
 
-  // The file's contents page, from what the register already knows about the sample.
+  // The steps on this page, from what the register already knows about the sample.
   const worksheet = intake.worksheetStatus;
   const reported = intake.status === 'Reported';
-  const contents: CaseFileContentsSection[] = [
-    {
-      id: 'work-allocation',
-      number: 1,
-      title: 'Work allocation',
-      state: intake.analystId ? 'done' : 'current',
-      note: intake.analystAssigned ? `Allocated to ${intake.analystAssigned}` : 'Awaiting allocation',
-    },
-    {
-      id: 'receipt-form',
-      number: 2,
-      title: 'Sample receipt form',
-      state: intake.receiptFormSaved ? 'done' : intake.analystId ? 'current' : 'pending',
-      note: intake.receiptFormSaved ? 'Saved' : undefined,
-    },
-    {
-      id: 'laboratory-worksheet',
-      number: 3,
-      title: 'Laboratory worksheet',
-      state: worksheet === 'Checked' ? 'done' : worksheet ? 'current' : 'pending',
-      note: worksheet === 'Checked' ? 'Checked by the Head' : worksheet ?? undefined,
-    },
-    {
-      id: 'draft-reports',
-      number: 4,
-      title: 'Certificate of analysis',
-      state: reported ? 'done' : worksheet === 'Checked' ? 'current' : 'pending',
-      note: reported ? 'Reported' : worksheet === 'Checked' ? 'Drafting' : undefined,
-    },
+  const sections: CaseFileSectionLink[] = [
+    { id: 'work-allocation', title: 'Work allocation', state: intake.analystId ? 'done' : 'current' },
+    { id: 'receipt-form', title: 'Sample receipt form', state: intake.receiptFormSaved ? 'done' : intake.analystId ? 'current' : 'pending' },
+    { id: 'laboratory-worksheet', title: 'Laboratory worksheet', state: worksheet === 'Checked' ? 'done' : intake.receiptFormSaved ? 'current' : 'pending' },
+    { id: 'draft-reports', title: 'Certificate of analysis', state: reported ? 'done' : worksheet === 'Checked' ? 'current' : 'pending' },
   ];
+  const analystName = displayName(intake.analystAssigned);
 
   return (
-    <div className="w-full space-y-4 px-4 py-4 sm:px-6 xl:px-8">
-      <FoodDrugCaseHeader
+    <CaseFileLayout
+      back={{ label: 'Exhibit Laboratory', onClick: onBack }}
+      reference={intake.id}
+      status={{ label: intake.status, tone: FOOD_DRUG_STATUS_TONE[intake.status] }}
+      subtitle={[`${intake.sampleType} sample`, displayName(intake.clientName), 'Foods, Drugs & Chemical Substances']}
+      next={foodDrugNextStep(intake, isHead, isAssigned)}
+      stages={foodDrugStages(intake)}
+      receivedDate={intake.intakeDate}
+      finishedDate={intake.reportedDate}
+      more={canViewAllocation ? [{ label: isHead ? 'Allocation form' : 'Allocation form (copy)', icon: ClipboardSignature, onClick: () => setViewingAllocation(true) }] : []}
+      details={[
+        { label: 'Exhibit', value: intake.exhibitId, mono: true, copy: intake.exhibitId },
+        { label: 'Client', value: displayName(intake.clientName) },
+        { label: 'Received', value: `${formatDate(intake.intakeDate)}${intake.receiver ? ` · ${displayName(intake.receiver)}` : ''}` },
+        { label: 'Analyst', value: intake.analystId ? `${analystName}${isAssigned ? ' (you)' : ''}` : 'Not yet allocated' },
+        { label: 'Seal', value: intake.sealNumber, mono: true, copy: intake.sealNumber },
+      ]}
+      sections={sections}
+    >
+      <WorkAllocationStep intake={intake} canView={canViewAllocation} onView={() => setViewingAllocation(true)} />
+
+      <SampleReceiptFormSection
         intake={intake}
         currentUser={currentUser}
-        onBack={onBack}
-        onSelectSection={openCaseStep}
-        onViewAllocation={intake.analystId && (isHead || isAssigned) ? () => setViewingAllocation(true) : undefined}
+        onSaved={(saved) => setReceiptVersion(saved.updatedAt ?? String(Date.now()))}
+        onCreateWorksheet={() => openCaseStep('laboratory-worksheet')}
       />
 
-      <div className="grid items-start gap-4 lg:grid-cols-[15rem_minmax(0,1fr)]">
-        <CaseFileContents
-          className="hidden lg:sticky lg:top-4 lg:block"
-          reference={intake.id}
-          register="Foods, Drugs & Chemical Substances"
-          sections={contents}
-          onSelect={openCaseStep}
-        />
+      <LaboratoryWorksheetSection
+        intake={intake}
+        currentUser={currentUser}
+        receiptVersion={receiptVersion}
+        onChanged={() => {
+          setWorksheetVersion(String(Date.now()));
+          onChanged?.();
+        }}
+        onCreateDraftReports={() => openCaseStep('draft-reports')}
+      />
 
-        <div className="min-w-0 space-y-4">
-          <WorkAllocationStep intake={intake} canView={isHead || isAssigned} onView={() => setViewingAllocation(true)} />
-
-          <SampleReceiptFormSection
-            intake={intake}
-            currentUser={currentUser}
-            onSaved={(saved) => setReceiptVersion(saved.updatedAt ?? String(Date.now()))}
-            onCreateWorksheet={() => openCaseStep('laboratory-worksheet')}
-          />
-
-          <LaboratoryWorksheetSection
-            intake={intake}
-            currentUser={currentUser}
-            receiptVersion={receiptVersion}
-            onChanged={() => {
-              setWorksheetVersion(String(Date.now()));
-              onChanged?.();
-            }}
-            onCreateDraftReports={() => openCaseStep('draft-reports')}
-          />
-
-          <DraftReportSection intake={intake} currentUser={currentUser} worksheetVersion={worksheetVersion} onChanged={onChanged} />
-        </div>
-      </div>
+      <DraftReportSection intake={intake} currentUser={currentUser} worksheetVersion={worksheetVersion} onChanged={onChanged} />
 
       {viewingAllocation && (
         <WorkAllocationViewer recordType="FOOD_DRUG_INTAKE" recordId={intake.id} onClose={() => setViewingAllocation(false)} />
       )}
-    </div>
+    </CaseFileLayout>
   );
 };

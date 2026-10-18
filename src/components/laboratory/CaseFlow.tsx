@@ -1,7 +1,6 @@
 import React from 'react';
 import { ArrowRight, Check, CheckCircle2, Hourglass, Info } from 'lucide-react';
 import { Button } from '../common/Dashboard';
-import { CaseFileSectionState } from './CaseFileContents';
 
 /* ---------------------------------------------------------------------------
  * CaseFlow — the part of every department's case file that says where the
@@ -16,7 +15,7 @@ import { CaseFileSectionState } from './CaseFileContents';
 export const CASE_STAGES = ['Received', 'Allocated', 'Analysis', 'Review', 'Approved & issued'] as const;
 
 export interface CaseStage {
-  state: CaseFileSectionState;
+  state: 'done' | 'current' | 'pending';
   /** One line under the stage name: a date, a name or what is outstanding. */
   note?: string;
   /** Section the stage's work lives in; selecting the stage opens it. */
@@ -54,7 +53,7 @@ export const daysInLab = (received?: string | null, finished?: string | null) =>
 };
 
 /** The five stages as a bar; each stage jumps to the section its work lives in. */
-const CaseProgress: React.FC<{ stages: CaseStage[]; onSelect: (id: string) => void }> = ({ stages, onSelect }) => {
+export const CaseProgress: React.FC<{ stages: CaseStage[]; onSelect: (id: string) => void }> = ({ stages, onSelect }) => {
   const currentIndex = stages.findIndex((s) => s.state === 'current');
   const current = currentIndex === -1 ? null : stages[currentIndex];
   return (
@@ -195,7 +194,7 @@ export const CaseStatusCard: React.FC<CaseStatusCardProps> = ({ next, stages, on
                 <span
                   title={overdue ? `In the laboratory longer than ${DAYS_IN_LAB_WARNING} days` : 'Counted from the day the exhibit was received'}
                   className={`inline-flex items-center gap-1 text-xs font-medium tabular-nums ${
-                    overdue ? 'rounded bg-amber-100 px-1.5 py-0.5 text-amber-900 dark:bg-amber-500/15 dark:text-amber-200' : 'text-slate-600 dark:text-slate-300'
+                    overdue ? 'rounded bg-warning-100 px-1.5 py-0.5 text-warning-700 dark:bg-warning-500/15 dark:text-warning-300' : 'text-slate-600 dark:text-slate-300'
                   }`}
                 >
                   <Hourglass className="h-3.5 w-3.5" />

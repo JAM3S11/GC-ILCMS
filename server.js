@@ -5202,6 +5202,253 @@ app.delete('/api/admin/notifications/:id', requireSession, requireSuperAdmin, as
   }
 }));
 
+// The dashboard's stats strip: counts only, never case details. Each register says when an
+// exhibit was received, when it was finished (certificate, report or memo issued) and what
+// "waiting for the Head's sign-off" means in that laboratory.
+const DAYS_IN_LAB_WARNING = 14;
+const DASHBOARD_REGISTERS = {
+  Water: {
+    from: 'water_exhibit_intakes',
+    received: 'date_received',
+    finished: 'certificate_issued_at',
+    signOff: `status = 'Analysis Complete' AND certificate_issued_at IS NULL`,
+  },
+  'Food & Drugs': {
+    from: 'food_drug_intakes f',
+    received: 'intake_date',
+    finished: 'reported_at',
+    signOff: `status = 'Under Analysis' AND (
+      EXISTS (SELECT 1 FROM food_drug_worksheets w WHERE w.intake_id = f.id AND w.analysed_at IS NOT NULL AND w.checked_at IS NULL)
+      OR EXISTS (SELECT 1 FROM food_drug_draft_reports d WHERE d.intake_id = f.id AND d.status = 'SUBMITTED'))`,
+  },
+  Narcotics: {
+    from: 'narcotics_exhibit_intakes',
+    received: 'date_received',
+    finished: 'memo_approved_at',
+    signOff: `status = 'Analysis Complete' AND memo_approved_at IS NULL`,
+  },
+};
+const SUMMARY_FIELDS = [
+  'total', 'thisYear', 'registeredToday', 'awaitingApproval', 'awaitingAllocation',
+  'inAnalysis', 'awaitingSignOff', 'issued', 'issuedThisWeek', 'overdue', 'turnaroundDays', 'turnaroundCount',
+];
+
+const summariseRegister = async ({ from, received, finished, signOff }) => {
+  const { rows: [row] } = await pool.query(
+    `WITH today AS (SELECT (NOW() AT TIME ZONE 'Africa/Nairobi')::date AS d),
+     x AS (
+       SELECT ${received}::date AS r, (${finished} AT TIME ZONE 'Africa/Nairobi')::date AS fin, status, (${signOff}) AS sign_off
+       FROM ${from} WHERE deleted_at IS NULL
+     )
+     SELECT
+       COUNT(*)::int AS "total",
+       COUNT(*) FILTER (WHERE r >= date_trunc('year', today.d))::int AS "thisYear",
+       COUNT(*) FILTER (WHERE r = today.d)::int AS "registeredToday",
+       COUNT(*) FILTER (WHERE status = 'Awaiting Approval')::int AS "awaitingApproval",
+       COUNT(*) FILTER (WHERE status = 'Awaiting Assignment')::int AS "awaitingAllocation",
+       COUNT(*) FILTER (WHERE status = 'Under Analysis' AND NOT sign_off)::int AS "inAnalysis",
+       COUNT(*) FILTER (WHERE sign_off)::int AS "awaitingSignOff",
+       COUNT(*) FILTER (WHERE fin IS NOT NULL)::int AS "issued",
+       COUNT(*) FILTER (WHERE fin > today.d - 7)::int AS "issuedThisWeek",
+       COUNT(*) FILTER (WHERE fin IS NULL AND r <= today.d - $1::int)::int AS "overdue",
+       COALESCE(SUM(fin - r + 1) FILTER (WHERE fin > today.d - 90), 0)::int AS "turnaroundDays",
+       COUNT(*) FILTER (WHERE fin > today.d - 90)::int AS "turnaroundCount"
+     FROM x, today
+     GROUP BY today.d`,
+    [DAYS_IN_LAB_WARNING],
+  );
+  return row ?? Object.fromEntries(SUMMARY_FIELDS.map((field) => [field, 0]));
+};
+
+app.get('/api/dashboard/summary', requireSession, asyncHandler(async (req, res, next) => {
+  try {
+    // Laboratory staff see their own laboratory; leadership, registry and corporate staff see all of them.
+    const institutionWide = req.user.role === 'SUPER_ADMIN' || !labScopedRoles.has(req.user.role);
+    const names = Object.keys(DASHBOARD_REGISTERS).filter((name) => institutionWide || name === req.user.department);
+    const registers = Object.fromEntries(
+      await Promise.all(names.map(async (name) => [name, await summariseRegister(DASHBOARD_REGISTERS[name])])),
+    );
+    const totals = Object.fromEntries(
+      SUMMARY_FIELDS.map((field) => [field, Object.values(registers).reduce((sum, register) => sum + register[field], 0)]),
+    );
+    const summary = {
+      scope: institutionWide ? 'institution' : 'department',
+      department: institutionWide ? null : req.user.department,
+      overdueAfterDays: DAYS_IN_LAB_WARNING,
+      totals,
+      registers,
+    };
+    if (institutionWide) {
+      const { rows: [extra] } = await pool.query(
+        `SELECT
+           (SELECT COUNT(*)::int FROM audit_log WHERE (created_at AT TIME ZONE 'Africa/Nairobi')::date = (NOW() AT TIME ZONE 'Africa/Nairobi')::date) AS "auditEventsToday",
+           (SELECT COUNT(*)::int FROM users WHERE status = 'ACTIVE') AS "activeStaff"`,
+      );
+      Object.assign(summary, extra);
+    }
+    res.json(summary);
+  } catch (error) {
+    next(error);
+  }
+}));
+
+// The dashboard's "My work" list: every open file in the viewer's scope, what has to happen
+// next and whose turn it is ('head', 'analyst' or the whole 'department').
+const OPEN_WORK_QUERIES = {
+  Water: `
+    SELECT w.id::text AS id, COALESCE(w.lab_reference, w.exhibit_number) AS reference,
+           CONCAT_WS(' · ', w.test_type, w.source_type) AS title, w.status, w.analysis_officer_id::text AS "officerId",
+           u.full_name AS officer, TO_CHAR(w.date_received, 'YYYY-MM-DD') AS received, w.documents_confirmed_at IS NOT NULL AS "documentsChecked"
+    FROM water_exhibit_intakes w LEFT JOIN users u ON u.id = w.analysis_officer_id
+    WHERE w.deleted_at IS NULL AND w.certificate_issued_at IS NULL`,
+  'Food & Drugs': `
+    SELECT f.id::text AS id, f.id AS reference, CONCAT(f.sample_type, ' sample') AS title, f.status,
+           f.analyst_id::text AS "officerId", u.full_name AS officer, TO_CHAR(f.intake_date::date, 'YYYY-MM-DD') AS received,
+           f.receipt_form_saved AS "receiptSaved", w.analysed_at IS NOT NULL AS "worksheetSubmitted", w.checked_at IS NOT NULL AS "worksheetChecked",
+           (SELECT d.status FROM food_drug_draft_reports d WHERE d.intake_id = f.id
+             ORDER BY CASE d.status WHEN 'SUBMITTED' THEN 0 WHEN 'DRAFT' THEN 1 ELSE 2 END LIMIT 1) AS "reportStatus"
+    FROM (SELECT f.*, EXISTS (SELECT 1 FROM food_drug_receipt_forms r WHERE r.intake_id = f.id) AS receipt_form_saved FROM food_drug_intakes f) f
+    LEFT JOIN users u ON u.id = f.analyst_id
+    LEFT JOIN food_drug_worksheets w ON w.intake_id = f.id
+    WHERE f.deleted_at IS NULL AND f.reported_at IS NULL`,
+  Narcotics: `
+    SELECT n.id::text AS id, n.lab_reference AS reference, n.exhibit_type AS title, n.status,
+           n.analysis_officer_id::text AS "officerId", u.full_name AS officer, TO_CHAR(n.date_received, 'YYYY-MM-DD') AS received,
+           n.documents_confirmed_at IS NOT NULL AS "documentsChecked", n.approved_at IS NOT NULL AS "documentsApproved",
+           d.status AS "reportStatus"
+    FROM narcotics_exhibit_intakes n
+    LEFT JOIN users u ON u.id = n.analysis_officer_id
+    LEFT JOIN narcotics_draft_reports d ON d.intake_id = n.id
+    WHERE n.deleted_at IS NULL AND n.memo_approved_at IS NULL`,
+};
+
+/** The next step on an open file and whose turn it is. */
+const nextWorkStep = (register, item) => {
+  if (item.status === 'Awaiting Approval') return { step: 'Approve the submitted documents', whose: 'head' };
+  if (item.status === 'Awaiting Assignment') return { step: 'Allocate an Analysis Officer', whose: 'head' };
+  if (register === 'Water') {
+    if (item.status === 'Under Analysis') return { step: 'Enter and save the test results', whose: 'analyst' };
+    if (!item.documentsChecked) return { step: 'Check the intake documents', whose: 'department' };
+    return { step: 'Approve the memo', whose: 'head' };
+  }
+  if (register === 'Food & Drugs') {
+    if (!item.receiptSaved) return { step: 'Fill in the sample receipt form', whose: 'analyst' };
+    if (!item.worksheetSubmitted) return { step: 'Complete and submit the worksheet', whose: 'analyst' };
+    if (!item.worksheetChecked) return { step: 'Check the laboratory worksheet', whose: 'head' };
+    if (item.reportStatus === 'SUBMITTED') return { step: 'Approve the certificate of analysis', whose: 'head' };
+    // The assigned officer (or the Head) marks the sample reported once the certificate is approved.
+    if (item.reportStatus === 'APPROVED') return { step: 'Mark the sample as reported', whose: 'analyst' };
+    return { step: 'Prepare the certificate of analysis', whose: 'analyst' };
+  }
+  // Narcotics
+  if (item.status === 'Under Analysis') return { step: 'Submit the Draft Report of Analysis', whose: 'analyst' };
+  if (item.reportStatus === 'SUBMITTED') return { step: 'Check and approve the draft report', whose: 'head' };
+  if (!item.documentsChecked) return { step: 'Check the intake documents', whose: 'department' };
+  return { step: item.documentsApproved ? 'Approve the memo' : 'Approve the documents and the memo', whose: 'head' };
+};
+
+// "<person> <verb> <reference>": register audit actions read as a sentence in the activity feed.
+const ACTIVITY_VERBS = {
+  WATER_EXHIBIT_REGISTERED: 'registered', FD_SAMPLE_REGISTERED: 'registered', NARCOTICS_EXHIBIT_REGISTERED: 'registered',
+  WATER_EXHIBIT_APPROVED: 'approved the documents for', FD_DOCUMENTS_APPROVED: 'approved the documents for', NARCOTICS_EXHIBIT_APPROVED: 'approved the documents for',
+  WATER_EXHIBIT_ASSIGNED: 'allocated', FD_SAMPLE_ASSIGNED: 'allocated', NARCOTICS_EXHIBIT_ASSIGNED: 'allocated',
+  WATER_EXHIBIT_TRANSFERRED: 'reallocated', NARCOTICS_EXHIBIT_TRANSFERRED: 'reallocated',
+  WATER_DOCUMENTS_CONFIRMED: 'checked the documents for', NARCOTICS_DOCUMENTS_CONFIRMED: 'checked the documents for',
+  WATER_DOCUMENTS_UNCONFIRMED: 'withdrew the documents check for', NARCOTICS_DOCUMENTS_UNCONFIRMED: 'withdrew the documents check for',
+  WATER_EXHIBIT_FINDINGS_RECORDED: 'saved the test results for', NARCOTICS_EXHIBIT_FINDINGS_RECORDED: 'recorded the findings for',
+  WATER_ANALYSIS_COMPLETED: 'completed the analysis of', NARCOTICS_ANALYSIS_COMPLETED: 'completed the analysis of',
+  FD_RECEIPT_FORM_SAVED: 'saved the receipt form for', FD_WORKSHEET_SAVED: 'saved the worksheet for',
+  FD_WORKSHEET_SUBMITTED: 'submitted the worksheet for', FD_WORKSHEET_CHECKED: 'checked the worksheet for',
+  FD_DRAFT_REPORT_CREATED: 'started the certificate for', NARCOTICS_DRAFT_REPORT_CREATED: 'started the draft report for',
+  FD_DRAFT_REPORT_SUBMITTED: 'submitted the certificate for', NARCOTICS_DRAFT_REPORT_SUBMITTED: 'submitted the draft report for',
+  FD_DRAFT_REPORT_APPROVED: 'approved the certificate for', NARCOTICS_DRAFT_REPORT_APPROVED: 'approved the draft report for',
+  FD_DRAFT_REPORT_UNLOCKED: 'reopened the certificate for', NARCOTICS_DRAFT_REPORT_UNLOCKED: 'reopened the draft report for',
+  WATER_CERTIFICATE_ISSUED: 'approved the memo for', NARCOTICS_MEMO_APPROVED: 'approved the memo for', FD_SAMPLE_REPORTED: 'reported',
+  WATER_CERTIFICATE_REISSUED: 'reissued the certificate for', WATER_CERTIFICATE_REVOKED: 'revoked the certificate for',
+  WATER_EXHIBIT_EDITED: 'edited', WATER_EXHIBIT_CLIENT_DETAILS_EDITED: 'edited', FD_SAMPLE_EDITED: 'edited', NARCOTICS_EXHIBIT_EDITED: 'edited',
+  WATER_EXHIBIT_DELETED: 'deleted', FD_SAMPLE_DELETED: 'deleted', NARCOTICS_EXHIBIT_DELETED: 'deleted',
+};
+const ACTIVITY_RECORD_TYPES = {
+  Water: 'water_exhibit_intake',
+  'Food & Drugs': 'food_drug_intake',
+  Narcotics: 'narcotics_exhibit_intake',
+};
+
+app.get('/api/dashboard/work', requireSession, asyncHandler(async (req, res, next) => {
+  try {
+    const { user } = req;
+    const institutionWide = user.role === 'SUPER_ADMIN' || !labScopedRoles.has(user.role);
+    const names = Object.keys(OPEN_WORK_QUERIES).filter((name) => institutionWide || name === user.department);
+    const isHead = user.role === 'HEAD_OF_DEPARTMENT';
+    // Analysts, interns and attachés follow their own files; Heads, Senior Chemists and leadership see the whole register.
+    const followsOwnFiles = labScopedRoles.has(user.role) && !isHead && user.role !== 'SENIOR_CHEMIST';
+    const { rows: [{ today }] } = await pool.query(`SELECT (NOW() AT TIME ZONE 'Africa/Nairobi')::date::text AS today`);
+    const todayDay = Date.parse(today) / 86_400_000;
+
+    const items = [];
+    for (const name of names) {
+      const { rows } = await pool.query(OPEN_WORK_QUERIES[name]);
+      for (const row of rows) {
+        const { step, whose } = nextWorkStep(name, row);
+        const mine = row.officerId === user.id;
+        const sameDepartment = user.department === name && labScopedRoles.has(user.role);
+        const needsMe = (whose === 'head' && isHead && sameDepartment)
+          || (whose === 'analyst' && mine)
+          || (whose === 'department' && sameDepartment);
+        if (followsOwnFiles && !mine && !needsMe) continue;
+        const received = row.received ?? null;
+        items.push({
+          register: name,
+          id: row.id,
+          reference: row.reference,
+          title: row.title,
+          step,
+          whose,
+          needsMe,
+          officer: row.officer,
+          mine,
+          received,
+          daysInLab: received ? Math.max(1, Math.floor(todayDay - Date.parse(received) / 86_400_000) + 1) : null,
+        });
+      }
+    }
+    // Longest in the laboratory first: that is what an officer should pick up next.
+    items.sort((a, b) => (b.daysInLab ?? 0) - (a.daysInLab ?? 0));
+
+    const recordTypes = names.map((name) => ACTIVITY_RECORD_TYPES[name]);
+    const { rows: activityRows } = recordTypes.length
+      ? await pool.query(
+        `SELECT a.id::text AS id, a.action, a.record_type, a.record_id, a.created_at AS "occurredAt",
+                COALESCE(u.full_name, a.actor_email, 'Someone') AS actor,
+                COALESCE(w.lab_reference, w.exhibit_number, n.lab_reference, f.id) AS reference
+         FROM audit_log a
+         LEFT JOIN users u ON u.id = a.actor_user_id
+         LEFT JOIN water_exhibit_intakes w ON a.record_type = 'water_exhibit_intake' AND w.id::text = a.record_id
+         LEFT JOIN narcotics_exhibit_intakes n ON a.record_type = 'narcotics_exhibit_intake' AND n.id::text = a.record_id
+         LEFT JOIN food_drug_intakes f ON a.record_type = 'food_drug_intake' AND f.id = a.record_id
+         WHERE a.record_type = ANY($1) AND a.action = ANY($2)
+         ORDER BY a.created_at DESC
+         LIMIT 8`,
+        [recordTypes, Object.keys(ACTIVITY_VERBS)],
+      )
+      : { rows: [] };
+    const registerOf = Object.fromEntries(Object.entries(ACTIVITY_RECORD_TYPES).map(([name, type]) => [type, name]));
+    const activity = activityRows.map((row) => ({
+      id: row.id,
+      actor: row.actor,
+      verb: ACTIVITY_VERBS[row.action],
+      reference: row.reference ?? 'a record',
+      register: registerOf[row.record_type],
+      recordId: row.record_id,
+      occurredAt: row.occurredAt,
+    }));
+
+    res.json({ items, activity, overdueAfterDays: DAYS_IN_LAB_WARNING });
+  } catch (error) {
+    next(error);
+  }
+}));
+
 app.get('/api/admin/overview', requireSession, requireSuperAdmin, asyncHandler(async (req, res, next) => {
   try {
     const { rows } = await pool.query(

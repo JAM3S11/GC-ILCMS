@@ -1,11 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  ArrowLeft,
   BadgeCheck,
   ClipboardCheck,
   ClipboardSignature,
   FileText,
-  History,
   NotebookPen,
   Pencil,
   Pill,
@@ -15,12 +13,12 @@ import {
 import { NarcoticsDraftReport, NarcoticsIntake, User } from '../../types';
 import { apiRequest } from '../../lib/api';
 import { NARCOTICS_STATUS_TONE, canEditNarcoticsIntake } from '../../narcoticsIntake';
-import { Button, DashboardHeader, DashboardPage, StatusPill } from '../common/Dashboard';
+import { Button } from '../common/Dashboard';
 import { printOfficialDocument } from '../common/print/OfficialPrintDocument';
 import { CannabisDraftReportSection } from './CannabisDraftReportSection';
-import { CaseStep, openCaseStep } from './CaseStep';
-import { CaseFileContents, CaseFileContentsSection } from './CaseFileContents';
-import { CaseStatusCard, NextStep, caseStages } from './CaseFlow';
+import { CaseStep } from './CaseStep';
+import { CaseFileLayout, CaseFileSectionLink } from './CaseFileLayout';
+import { NextStep, caseStages } from './CaseFlow';
 import { NarcoticsMemoPrint } from './NarcoticsMemoPrint';
 import { WorkAllocationViewer } from './WorkAllocationForm';
 
@@ -149,82 +147,74 @@ export const NarcoticsCaseFile: React.FC<NarcoticsCaseFileProps> = ({ intake, cu
     [undefined, 'narcotics-allocation', 'narcotics-findings', 'narcotics-findings', 'narcotics-memo'],
   );
 
-  const contents: CaseFileContentsSection[] = [
-    { id: 'narcotics-particulars', number: 1, title: 'Exhibit particulars', state: 'done', note: `Received ${intake.dateReceived}` },
-    { id: 'narcotics-allocation', number: 2, title: 'Work allocation', state: intake.analysisOfficerId ? 'done' : 'current', note: intake.analysisOfficer ?? 'Awaiting allocation' },
-    {
-      id: 'narcotics-findings',
-      number: 3,
-      title: 'Findings',
-      state: draftApproved ? 'done' : intake.analysisOfficerId ? 'current' : 'pending',
-      note: draftApproved ? 'Draft report approved' : draftReportStatus === 'SUBMITTED' ? 'Awaiting check' : undefined,
-    },
-    {
-      id: 'narcotics-memo',
-      number: 4,
-      title: 'Documents and memo',
-      state: memoApproved ? 'done' : complete ? 'current' : 'pending',
-      note: memoApproved ? `Approved ${intake.memoApprovedDate}` : complete ? 'Awaiting approval' : undefined,
-    },
+  const sections: CaseFileSectionLink[] = [
+    { id: 'narcotics-particulars', title: 'Exhibit particulars', state: 'done' },
+    { id: 'narcotics-allocation', title: 'Work allocation', state: intake.analysisOfficerId ? 'done' : 'current' },
+    { id: 'narcotics-findings', title: 'Findings', state: draftApproved ? 'done' : intake.analysisOfficerId ? 'current' : 'pending' },
+    { id: 'narcotics-memo', title: 'Documents and memo', state: memoApproved ? 'done' : complete ? 'current' : 'pending' },
   ];
 
+  // The process history opens in a drawer: it is the record of what happened, not a step.
+  const historyContent = (
+    <>
+      {eventsError ? (
+        <p role="alert" className="text-xs text-rose-500">{eventsError}</p>
+      ) : events.length === 0 ? (
+        <p className="text-xs text-slate-400">Loading…</p>
+      ) : (
+        <ol className="space-y-3">
+          {events.map((event, index) => (
+            <li key={`${event.occurredAt}-${index}`} className="flex gap-3 text-xs">
+              <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-400">
+                <BadgeCheck className="h-3 w-3" />
+              </span>
+              <div className="min-w-0">
+                <div className="font-medium text-slate-900 dark:text-white">{event.label}</div>
+                <div className="text-slate-500 dark:text-slate-400">
+                  {event.actor} · {event.occurredAt}
+                  {typeof event.details?.analysisOfficer === 'string' && ` · to ${event.details.analysisOfficer}`}
+                  {typeof event.details?.allocationForm === 'string' && ` · form ${event.details.allocationForm}`}
+                </div>
+              </div>
+            </li>
+          ))}
+        </ol>
+      )}
+    </>
+  );
+
   return (
-    <DashboardPage>
-      <DashboardHeader
-        breadcrumb={['Exhibit Laboratory', intake.labReference]}
-        title={`${intake.exhibitType} — ${intake.labReference}`}
-        meta={<StatusPill tone={NARCOTICS_STATUS_TONE[intake.status]}>{intake.status}</StatusPill>}
-        description={
-          <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="font-mono">{intake.labReference}</span>
-            <span className="text-slate-300 dark:text-slate-600">·</span>
-            <span className="font-mono">CR {intake.crNumber}</span>
-            <span className="text-slate-300 dark:text-slate-600">·</span>
-            <span>Narcotics</span>
-          </span>
-        }
-        actions={
-          <span className="flex flex-wrap items-center gap-2">
-            <Button icon={ArrowLeft} onClick={onBack}>Exhibit Laboratory</Button>
-            {canViewAllocation && (
-              <Button icon={ClipboardSignature} onClick={() => setViewingAllocation(true)}>
-                {isHead ? 'Allocation form' : 'Allocation form (copy)'}
-              </Button>
-            )}
-            {canEdit && (
-              <Button icon={Pencil} onClick={() => onEdit?.(intake)}>Edit intake</Button>
-            )}
-            {memoApproved && (
-              <Button variant="primaryTeal" icon={Printer} onClick={() => printOfficialDocument('portrait')}>Print memo</Button>
-            )}
-          </span>
-        }
-      />
-
-      <CaseStatusCard
-        next={next}
-        stages={stages}
-        onSelect={openCaseStep}
-        receivedDate={intake.dateReceived}
-        finishedDate={intake.memoApprovedDate}
-      />
-
-      {actionError && (
-        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
+    <CaseFileLayout
+      back={{ label: 'Exhibit Laboratory', onClick: onBack }}
+      reference={intake.labReference}
+      status={{ label: intake.status, tone: NARCOTICS_STATUS_TONE[intake.status] }}
+      subtitle={[intake.exhibitType, /^CR/i.test(intake.crNumber) ? intake.crNumber : `CR ${intake.crNumber}`, intake.policeStation]}
+      next={next}
+      stages={stages}
+      receivedDate={intake.dateReceived}
+      finishedDate={intake.memoApprovedDate}
+      more={[
+        ...(memoApproved ? [{ label: 'Print memo', icon: Printer, onClick: () => printOfficialDocument('portrait') }] : []),
+        ...(canViewAllocation ? [{ label: isHead ? 'Allocation form' : 'Allocation form (copy)', icon: ClipboardSignature, onClick: () => setViewingAllocation(true) }] : []),
+        ...(canEdit ? [{ label: 'Edit intake', icon: Pencil, onClick: () => onEdit?.(intake) }] : []),
+      ]}
+      details={[
+        { label: 'Lab reference', value: intake.labReference, mono: true, copy: intake.labReference },
+        { label: 'CR number', value: intake.crNumber, mono: true, copy: intake.crNumber },
+        { label: 'Officer', value: `${intake.officerName}${intake.badgeNumber ? ` · ${intake.badgeNumber}` : ''}` },
+        { label: 'Station', value: intake.policeStation },
+        { label: 'Received', value: `${intake.dateReceived} ${intake.timeReceived}${intake.receivingOfficer ? ` · ${intake.receivingOfficer}` : ''}` },
+        { label: 'Analyst', value: intake.analysisOfficer ? `${intake.analysisOfficer}${isMine ? ' (you)' : ''}` : 'Not yet allocated' },
+        { label: 'Seal', value: [intake.sealCondition, intake.sealNumber].filter(Boolean).join(' · ') },
+      ]}
+      sections={sections}
+      history={{ count: events.length, content: historyContent }}
+      notice={actionError && (
+        <div role="alert" className="rounded-[10px] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
           {actionError}
         </div>
       )}
-
-      <div className="grid items-start gap-4 lg:grid-cols-[15rem_minmax(0,1fr)]">
-      <CaseFileContents
-        className="hidden lg:sticky lg:top-4 lg:block"
-        reference={intake.labReference}
-        register="Narcotics"
-        sections={contents}
-        onSelect={openCaseStep}
-      />
-
-      <div className="min-w-0 space-y-4">
+    >
       {/* 1. Exhibit particulars */}
       <CaseStep
         id="narcotics-particulars"
@@ -265,6 +255,7 @@ export const NarcoticsCaseFile: React.FC<NarcoticsCaseFileProps> = ({ intake, cu
       {/* 2. Work allocation */}
       <CaseStep
         id="narcotics-allocation"
+        state={intake.analysisOfficerId ? 'done' : 'current'}
         step={2}
         icon={ClipboardSignature}
         title="Work allocation"
@@ -294,6 +285,7 @@ export const NarcoticsCaseFile: React.FC<NarcoticsCaseFileProps> = ({ intake, cu
       {/* 3. Findings */}
       <CaseStep
         id="narcotics-findings"
+        state={draftApproved ? 'done' : intake.analysisOfficerId ? 'current' : 'pending'}
         step={3}
         icon={NotebookPen}
         title="Findings"
@@ -334,6 +326,7 @@ export const NarcoticsCaseFile: React.FC<NarcoticsCaseFileProps> = ({ intake, cu
       {/* 4. Documents and memo */}
       <CaseStep
         id="narcotics-memo"
+        state={memoApproved ? 'done' : complete ? 'current' : 'pending'}
         step={4}
         icon={FileText}
         title="Documents and memo"
@@ -419,47 +412,11 @@ export const NarcoticsCaseFile: React.FC<NarcoticsCaseFileProps> = ({ intake, cu
         </div>
       </CaseStep>
 
-      {/* The record of what happened; not a step anyone works on. */}
-      <CaseStep
-        id="narcotics-history"
-        icon={History}
-        title="Process history"
-        description="Every recorded step, with who did it and when. Kept for the audit trail."
-        summary={[{ label: 'Steps recorded', value: String(events.length) }]}
-      >
-        <div className="px-5 py-4">
-          {eventsError ? (
-            <p role="alert" className="text-xs text-rose-500">{eventsError}</p>
-          ) : events.length === 0 ? (
-            <p className="text-xs text-slate-400">Loading…</p>
-          ) : (
-            <ol className="space-y-3">
-              {events.map((event, index) => (
-                <li key={`${event.occurredAt}-${index}`} className="flex gap-3 text-xs">
-                  <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-violet-500/10 text-violet-600 dark:text-violet-400">
-                    <BadgeCheck className="h-3 w-3" />
-                  </span>
-                  <div className="min-w-0">
-                    <div className="font-medium text-slate-900 dark:text-white">{event.label}</div>
-                    <div className="text-slate-500 dark:text-slate-400">
-                      {event.actor} · {event.occurredAt}
-                      {typeof event.details?.analysisOfficer === 'string' && ` · to ${event.details.analysisOfficer}`}
-                      {typeof event.details?.allocationForm === 'string' && ` · form ${event.details.allocationForm}`}
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          )}
-        </div>
-      </CaseStep>
-      </div>
-      </div>
 
       {viewingAllocation && (
         <WorkAllocationViewer recordType="NARCOTICS_INTAKE" recordId={intake.id} onClose={() => setViewingAllocation(false)} />
       )}
       {memoApproved && <NarcoticsMemoPrint intake={intake} />}
-    </DashboardPage>
+    </CaseFileLayout>
   );
 };

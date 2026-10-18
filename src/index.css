@@ -52,6 +52,12 @@
   --color-amber-700: var(--gc-amber-700);
   --color-amber-800: var(--gc-amber-800);
   --color-amber-900: var(--gc-amber-900);
+  /* "amber" above is the brand turquoise. `warning` is a true amber, kept for one meaning
+     only: something is getting close to a limit (a file nearing 14 days, work waiting). */
+  --color-warning-100: #fef3c7;
+  --color-warning-300: #fcd34d;
+  --color-warning-500: #f59e0b;
+  --color-warning-700: #b45309;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -96,7 +102,7 @@
   --accent: #f1f5f9;
   --muted-foreground: #64748b;
   --border: #e2e8f0;
-  --sidebar: #ffffff;
+  --sidebar: #f8fafc;
   --sidebar-foreground: #475569;
   --sidebar-primary: var(--gc-amber-500);
   --sidebar-primary-foreground: #020617;
@@ -237,18 +243,19 @@ html.gc-theme-transition *[class*="transition"] {
   width: 6px;
   height: 6px;
 }
+/* Thin, rounded thumbs on a transparent track. */
 ::-webkit-scrollbar-track {
-  background: #e2e8f0; /* slate-200 */
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #94a3b8; /* slate-400 */
+  background: #cbd5e1; /* slate-300 */
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #64748b; /* slate-500 */
+  background: #94a3b8; /* slate-400 */
 }
 html.dark ::-webkit-scrollbar-track {
-  background: #090d16;
+  background: transparent;
 }
 html.dark ::-webkit-scrollbar-thumb {
   background: #1e293b;
@@ -273,6 +280,19 @@ body {
 
 * {
   -webkit-tap-highlight-color: transparent;
+}
+
+/* Selected text takes a tint of the accent. */
+::selection {
+  background: rgb(var(--gc-accent-rgb) / 0.25);
+}
+
+/* The sidebar scrolls without a visible bar. */
+[data-sidebar='content'] {
+  scrollbar-width: none;
+}
+[data-sidebar='content']::-webkit-scrollbar {
+  display: none;
 }
 
 /* Refined focused rings for keyboard accessibility */
@@ -673,4 +693,11 @@ html.dark {
 /* Soft fade at the top and bottom edges of a scrolling region (drawers, long panels). */
 .scroll-fade {
   mask-image: linear-gradient(to bottom, transparent, #000 12px, #000 calc(100% - 12px), transparent);
+}
+
+/* A printed case file carries every step, including the ones folded on screen. */
+@media print {
+  [data-case-step-body][hidden] {
+    display: block !important;
+  }
 }

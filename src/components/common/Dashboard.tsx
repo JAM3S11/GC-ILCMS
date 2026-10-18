@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowRight, ChevronRight, Search } from 'lucide-react';
+import { ArrowRight, ChevronRight, Loader2, Search } from 'lucide-react';
 
 /* ---------------------------------------------------------------------------
  * Dashboard primitives — the shared SaaS-style building blocks used by the
@@ -142,7 +142,7 @@ export const DashboardHeader: React.FC<DashboardHeaderProps> = ({ breadcrumb, ti
         </nav>
       )}
       <div className="flex flex-wrap items-center gap-2.5">
-        <h1 className="text-xl font-semibold tracking-tight text-slate-900 dark:text-white">{title}</h1>
+        <h1 className="text-[23px] font-semibold leading-tight tracking-[-0.022em] text-balance text-slate-900 dark:text-white">{title}</h1>
         {meta}
       </div>
       {description && <p className="mt-1 max-w-2xl text-[13px] text-slate-500 dark:text-slate-400">{description}</p>}
@@ -173,17 +173,23 @@ interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   size?: 'xs' | 'sm' | 'md';
   /** Optional lucide-react icon shown before the label. */
   icon?: IconType;
+  /** Shows a spinner in place of the icon and disables the button while an action runs. */
+  loading?: boolean;
 }
 
 export const Button: React.FC<ButtonProps> = ({
   variant = 'secondary',
   size = 'md',
   icon: Icon,
+  loading = false,
   className = '',
   children,
   type = 'button',
+  disabled,
   ...rest
 }) => {
+  const ShownIcon = loading ? Loader2 : Icon;
+  // Every button shrinks slightly when pressed, so a click always gets feedback.
   const sizing =
     size === 'xs'
       ? 'h-7 gap-1 px-2 text-[11px]'
@@ -193,10 +199,12 @@ export const Button: React.FC<ButtonProps> = ({
   return (
     <button
       type={type}
-      className={`inline-flex shrink-0 cursor-pointer items-center justify-center whitespace-nowrap rounded-lg font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${sizing} ${BUTTON_VARIANT[variant]} ${className}`}
+      className={`inline-flex shrink-0 cursor-pointer items-center justify-center whitespace-nowrap rounded-lg font-medium transition-[color,background-color,box-shadow,transform] duration-150 active:scale-[.97] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100 motion-reduce:transition-none motion-reduce:active:scale-100 ${sizing} ${BUTTON_VARIANT[variant]} ${className}`}
+      disabled={disabled || loading}
+      aria-busy={loading || undefined}
       {...rest}
     >
-      {Icon && <Icon className={size === 'md' ? 'h-4 w-4' : 'h-3.5 w-3.5'} />}
+      {ShownIcon && <ShownIcon className={`${size === 'md' ? 'h-4 w-4' : 'h-3.5 w-3.5'} ${loading ? 'animate-spin' : ''}`} />}
       {children}
     </button>
   );
@@ -204,8 +212,24 @@ export const Button: React.FC<ButtonProps> = ({
 
 /* -------------------------------- KPIs ---------------------------------- */
 
+/** Cells passed through fragments and conditionals, so the strip knows how many columns it has. */
+const countCells = (children: React.ReactNode): number =>
+  React.Children.toArray(children).reduce<number>(
+    (sum, child) =>
+      sum + (React.isValidElement<{ children?: React.ReactNode }>(child) && child.type === React.Fragment ? countCells(child.props.children) : 1),
+    0,
+  );
+
+/**
+ * The stats strip: one bordered box divided into cells, not separate cards. Cells
+ * sit side by side from 900px and two to a row below; a lone last cell spans the row.
+ */
 export const KpiGrid: React.FC<{ children: React.ReactNode; label?: string }> = ({ children, label }) => (
-  <section aria-label={label} className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+  <section
+    aria-label={label}
+    style={{ '--kpi-cols': Math.max(countCells(children), 1) } as React.CSSProperties}
+    className="grid grid-cols-2 gap-px overflow-hidden rounded-[10px] border border-slate-200 bg-slate-200 min-[900px]:grid-cols-[repeat(var(--kpi-cols),minmax(0,1fr))] dark:border-slate-800 dark:bg-slate-800 [&>*:last-child:nth-child(odd)]:col-span-2 min-[900px]:[&>*:last-child:nth-child(odd)]:col-span-1"
+  >
     {children}
   </section>
 );
@@ -217,49 +241,70 @@ interface KpiCardProps {
   value: React.ReactNode;
   /** Small suffix after the value, e.g. "hrs". */
   unit?: string;
-  /** Muted helper line under the value. */
+  /** The context line under the value: what the number means. */
   hint?: React.ReactNode;
-  /** lucide-react icon shown in the tinted chip. */
+  /** Small grey icon beside the label. */
   icon: IconType;
-  /** Colour of the icon chip and progress bar. Defaults to amber. */
+  /** Colour of the progress bar only; numbers stay neutral. Defaults to amber. */
   tone?: Tone;
+  /**
+   * Colours the context line, only when it matters: 'good' is green, 'soon' amber and
+   * 'attention' red. Leave it out for neutral information.
+   */
+  status?: 'good' | 'soon' | 'attention';
   /** 0–100; renders a thin progress bar under the value. */
   progress?: number;
-  /** Optional "View …" link at the bottom of the card. */
+  /** Makes the whole cell open the related page; the label becomes its accessible name. */
   action?: { label: string; onClick: () => void };
 }
 
-export const KpiCard: React.FC<KpiCardProps> = ({ label, value, unit, hint, icon: Icon, tone = 'amber', progress, action }) => {
-  const t = TONE[tone];
-  return (
-    <div className="group flex flex-col rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md dark:border-slate-800 dark:bg-slate-900">
-      <div className="flex items-start justify-between gap-3">
-        <span className="text-[13px] font-medium text-slate-500 dark:text-slate-400">{label}</span>
-        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset ${t.chip}`}>
-          <Icon className="h-4 w-4" />
-        </span>
-      </div>
-      <div className="mt-2 flex items-baseline gap-1.5">
-        <span className="text-[28px] font-semibold leading-none tracking-tight text-slate-900 dark:text-white">{value}</span>
+const KPI_STATUS: Record<NonNullable<KpiCardProps['status']>, string> = {
+  good: 'text-emerald-700 dark:text-emerald-400',
+  soon: 'text-warning-700 dark:text-warning-300',
+  attention: 'text-rose-600 dark:text-rose-400',
+};
+
+/** One cell of the stats strip: label, value, context. */
+export const KpiCard: React.FC<KpiCardProps> = ({ label, value, unit, hint, icon: Icon, tone = 'amber', status, progress, action }) => {
+  const body = (
+    <>
+      <span className="flex items-center gap-1.5 text-[12.5px] text-slate-500 dark:text-slate-400">
+        <Icon className="h-3.5 w-3.5 shrink-0 text-slate-400 dark:text-slate-500" />
+        <span className="truncate">{label}</span>
+        {action && (
+          <ArrowRight className="ml-auto h-3.5 w-3.5 shrink-0 text-slate-300 opacity-0 transition group-hover:translate-x-0.5 group-hover:opacity-100 group-focus-visible:opacity-100 dark:text-slate-600" />
+        )}
+      </span>
+      <span className="mt-1.5 flex items-baseline gap-1">
+        <span className="text-[22px] font-semibold leading-tight tracking-[-0.02em] tabular-nums text-slate-900 dark:text-white">{value}</span>
         {unit && <span className="text-xs font-medium text-slate-400">{unit}</span>}
-      </div>
+      </span>
       {progress !== undefined && (
-        <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-          <div className={`h-full rounded-full ${t.bar} transition-all`} style={{ width: `${Math.max(0, Math.min(progress, 100))}%` }} />
-        </div>
+        <span className="mt-2 block h-1 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+          <span
+            className={`block h-full origin-left rounded-full ${TONE[tone].bar} transition-transform duration-500 motion-reduce:transition-none`}
+            style={{ transform: `scaleX(${Math.max(0, Math.min(progress, 100)) / 100})` }}
+          />
+        </span>
       )}
-      {hint && <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">{hint}</div>}
-      {action && (
-        <button
-          type="button"
-          onClick={action.onClick}
-          className="mt-auto inline-flex cursor-pointer items-center gap-1 self-start pt-3 text-xs font-medium text-slate-500 transition-colors hover:text-amber-600 dark:text-slate-400 dark:hover:text-amber-400"
-        >
-          {action.label}
-          <ArrowRight className="h-3 w-3 transition-transform group-hover:translate-x-0.5" />
-        </button>
+      {hint && (
+        <span className={`mt-1 block truncate text-xs ${status ? `font-medium ${KPI_STATUS[status]}` : 'text-slate-500 dark:text-slate-400'}`}>{hint}</span>
       )}
-    </div>
+    </>
+  );
+  const cell = 'group flex min-w-0 flex-col bg-white px-4 py-3 text-left dark:bg-slate-900';
+  return action ? (
+    <button
+      type="button"
+      onClick={action.onClick}
+      aria-label={`${label}: ${typeof value === 'string' || typeof value === 'number' ? value : ''}${unit ? ` ${unit}` : ''}. ${action.label}`}
+      title={action.label}
+      className={`${cell} cursor-pointer transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/60`}
+    >
+      {body}
+    </button>
+  ) : (
+    <div className={cell}>{body}</div>
   );
 };
 
@@ -295,26 +340,26 @@ export const Panel: React.FC<PanelProps> = ({
   className = '',
   children,
 }) => (
+  // One shell for every section: hairline border, title on the left, actions pushed right.
   <section
-    className={`flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 ${className}`}
+    className={`flex flex-col overflow-hidden rounded-[10px] border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 ${className}`}
   >
     {(title || actions) && (
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
-        <div className="flex min-w-0 items-center gap-2.5">
-          {Icon && (
-            <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset ${TONE[tone].chip}`}>
-              <Icon className="h-4 w-4" />
-            </span>
-          )}
+      <div
+        className={`flex flex-wrap items-center gap-2 px-3.5 pb-2.5 pt-3 ${flush ? 'border-b border-slate-200 dark:border-slate-800' : ''}`}
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          {/* The icon stays quiet; the tone only shows as a faint tint so titles lead. */}
+          {Icon && <Icon className={`h-4 w-4 shrink-0 ${tone === 'slate' ? 'text-slate-400' : TONE[tone].text} opacity-80`} />}
           <div className="min-w-0">
-            {title && <h2 className="truncate text-sm font-semibold text-slate-900 dark:text-white">{title}</h2>}
+            {title && <h2 className="truncate text-[13.5px] font-semibold text-slate-900 dark:text-white">{title}</h2>}
             {description && <p className="truncate text-xs text-slate-500 dark:text-slate-400">{description}</p>}
           </div>
         </div>
-        {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+        {actions && <div className="ml-auto flex flex-wrap items-center gap-2">{actions}</div>}
       </div>
     )}
-    <div className={`flex-1 ${flush ? '' : 'p-4'}`}>{children}</div>
+    <div className={`flex-1 ${flush ? '' : title || actions ? 'px-3.5 pb-3.5' : 'p-3.5'}`}>{children}</div>
     {footer && (
       <div className="border-t border-slate-200 bg-slate-50/60 px-4 py-2.5 text-xs text-slate-500 dark:border-slate-800 dark:bg-slate-950/40 dark:text-slate-400">
         {footer}
@@ -331,10 +376,13 @@ export const StatusPill: React.FC<{ tone?: Tone; children: React.ReactNode; dot?
   dot = true,
   pulse,
 }) => (
+  // With a dot the pill stays neutral and the dot carries the colour; without one the pill keeps its tint.
   <span
-    className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${TONE[tone].chip}`}
+    className={`inline-flex h-5 items-center gap-1.5 whitespace-nowrap rounded-full px-2 text-[11px] font-medium ring-1 ring-inset ${
+      dot ? 'bg-white text-slate-700 ring-slate-200 dark:bg-slate-900 dark:text-slate-200 dark:ring-slate-700' : TONE[tone].chip
+    }`}
   >
-    {dot && <span className={`h-1.5 w-1.5 rounded-full ${TONE[tone].dot} ${pulse ? 'animate-pulse' : ''}`} />}
+    {dot && <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${TONE[tone].dot} ${pulse ? 'animate-pulse' : ''}`} />}
     {children}
   </span>
 );
@@ -381,25 +429,22 @@ export function SegmentedControl<T extends string>({
       {options.map((opt) => {
         const active = opt.value === value;
         return (
+          // The selected option is a raised chip on the grey track; the count says what is inside before clicking.
           <button
             key={opt.value}
             type="button"
             role="tab"
             aria-selected={active}
             onClick={() => onChange(opt.value)}
-            className={`inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+            className={`inline-flex h-6 cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-md px-2.5 text-xs font-medium transition-colors ${
               active
-                ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-800 dark:text-white'
+                ? 'bg-white text-slate-900 shadow-[0_1px_2px_rgb(15_23_42/0.08)] ring-1 ring-slate-200 dark:bg-slate-800 dark:text-white dark:ring-slate-700'
                 : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
             }`}
           >
             {opt.label}
             {opt.count !== undefined && (
-              <span
-                className={`rounded-full px-1.5 text-[10px] tabular-nums ${
-                  active ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300' : 'bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400'
-                }`}
-              >
+              <span className={`text-[11px] tabular-nums ${active ? 'text-slate-500 dark:text-slate-300' : 'text-slate-400 dark:text-slate-500'}`}>
                 {opt.count}
               </span>
             )}
@@ -472,8 +517,11 @@ export const MeterRow: React.FC<{ label: string; value: number; total: number; t
           {suffix ?? ` · ${pct}%`}
         </span>
       </div>
-      <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-        <div className={`h-full rounded-full ${TONE[tone].bar} transition-all`} style={{ width: `${pct}%` }} />
+      <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+        <div
+          className={`h-full origin-left rounded-full ${TONE[tone].bar} transition-transform duration-500 motion-reduce:transition-none`}
+          style={{ transform: `scaleX(${pct / 100})` }}
+        />
       </div>
     </div>
   );

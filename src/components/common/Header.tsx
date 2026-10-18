@@ -26,7 +26,7 @@ interface HeaderProps {
 }
 
 const iconButton =
-  'relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white';
+  'relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white';
 
 export const Header: React.FC<HeaderProps> = ({
   currentUser,
@@ -40,7 +40,8 @@ export const Header: React.FC<HeaderProps> = ({
   const [section, page] = viewBreadcrumb(currentUser, activeView);
 
   return (
-    <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 border-b border-slate-200 bg-white/90 px-3 backdrop-blur-xl md:px-4 dark:border-slate-800 dark:bg-slate-950/90">
+    // 46px with a hairline border instead of a shadow.
+    <header className="sticky top-0 z-30 flex h-[46px] shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-3 md:px-4 dark:border-slate-800 dark:bg-slate-950">
       {/* Collapses the rail to icons on desktop, opens the drawer on mobile (also Ctrl/Cmd+B) */}
       <SidebarTrigger
         aria-label="Toggle navigation"
@@ -58,14 +59,15 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="ml-auto flex items-center gap-1 sm:gap-1.5">
         {onOpenSearch && (
           <>
+            {/* A recessed field: sunken background, the shortcut hint on the right. */}
             <button
               onClick={onOpenSearch}
               aria-label="Search"
               aria-keyshortcuts={isMacPlatform() ? 'Meta+K' : 'Control+K'}
-              className="hidden h-9 w-56 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 pl-3 pr-1.5 text-left text-[13px] text-slate-500 transition-colors hover:border-slate-300 hover:bg-white md:flex lg:w-72 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 dark:hover:border-slate-700"
+              className="hidden h-[30px] w-[220px] items-center gap-2 rounded-md bg-slate-100 pl-2.5 pr-1 text-left text-[13px] text-slate-500 shadow-[inset_0_1px_2px_rgb(15_23_42/0.06)] ring-1 ring-inset ring-slate-200/70 transition-colors hover:bg-slate-200/60 md:flex dark:bg-slate-900 dark:text-slate-400 dark:ring-slate-800 dark:hover:bg-slate-800/80"
             >
-              <Search className="h-4 w-4 shrink-0" />
-              <span className="flex-1 truncate">Search cases, exhibits, pages…</span>
+              <Search className="h-3.5 w-3.5 shrink-0" />
+              <span className="flex-1 truncate">Search…</span>
               <span className="flex shrink-0 items-center gap-0.5">
                 <Kbd>{isMacPlatform() ? '⌘' : 'Ctrl'}</Kbd>
                 <Kbd>K</Kbd>
