@@ -40,7 +40,7 @@ export const CATEGORY_LABEL: Record<NotificationCategory, string> = {
 
 /** Which part of the organisation a notification comes from. */
 export const notificationCategory = (n: AppNotification): NotificationCategory => {
-  if (n.linkAction?.startsWith('ADMIN_') || ['account_request', 'department_change_request', 'user'].includes(n.relatedRecordType ?? '')) return 'accounts';
+  if (n.linkAction?.startsWith('ADMIN_') || ['nominal_roll', 'access_request', 'department_change_request', 'user'].includes(n.relatedRecordType ?? '')) return 'accounts';
   if (n.linkAction?.startsWith('RECEPTION_') || n.relatedVisitorId) return 'reception';
   if (n.recipientDepartment) return 'laboratory';
   return 'system';

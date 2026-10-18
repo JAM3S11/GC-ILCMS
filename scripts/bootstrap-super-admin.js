@@ -29,11 +29,33 @@ try {
   const derived = await scrypt(process.env.SUPER_ADMIN_PASSWORD, salt, 64, { N: 32768, r: 8, p: 1, maxmem: 64 * 1024 * 1024 });
   const passwordHash = `scrypt$32768$8$1$${salt.toString('hex')}$${derived.toString('hex')}`;
 
-  await pool.query(
-    `INSERT INTO users (full_name, email, role, status, password_hash)
-     VALUES ($1, lower($2), 'SUPER_ADMIN', 'ACTIVE', $3)`,
-    [process.env.SUPER_ADMIN_NAME.trim(), process.env.SUPER_ADMIN_EMAIL.trim().toLowerCase(), passwordHash],
-  );
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `INSERT INTO users (full_name, email, role, status, password_hash)
+       VALUES ($1, lower($2), 'SUPER_ADMIN', 'ACTIVE', $3) RETURNING id, department`,
+      [process.env.SUPER_ADMIN_NAME.trim(), process.env.SUPER_ADMIN_EMAIL.trim().toLowerCase(), passwordHash],
+    );
+    // Every account belongs to a nominal roll entry, the first admin included.
+    await client.query(
+      `INSERT INTO nominal_roll (staff_number, full_name, email, role, department, user_id)
+       VALUES ($1, $2, lower($3), 'SUPER_ADMIN', $4, $5)`,
+      [
+        (process.env.SUPER_ADMIN_STAFF_NUMBER?.trim() || `PENDING-${rows[0].id.slice(0, 8)}`).toUpperCase(),
+        process.env.SUPER_ADMIN_NAME.trim(),
+        process.env.SUPER_ADMIN_EMAIL.trim(),
+        rows[0].department ?? 'General Administration',
+        rows[0].id,
+      ],
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
   console.log('Super-admin account created. Remove the bootstrap credentials from the environment now.');
 } catch (error) {
   console.error(error instanceof Error ? error.message : 'Failed to create the super-admin account.');

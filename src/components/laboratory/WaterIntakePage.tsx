@@ -509,7 +509,7 @@ export const WaterIntakePage: React.FC<WaterIntakePageProps> = ({
                   className="mt-0.5 h-4 w-4 rounded border-slate-300 text-teal-500 focus:ring-teal-500"
                 />
                 <span>
-                  Intake documents are approved
+                  Documents checked
                   <span className="block text-[11px] text-slate-500 dark:text-slate-400">
                     {editing && editIntake?.documentsConfirmedAt
                       ? `Confirmed ${editIntake.documentsConfirmedAt}${editIntake.documentsConfirmedBy ? ` by ${editIntake.documentsConfirmedBy}` : ''}. Untick to stop the memo being approved.`

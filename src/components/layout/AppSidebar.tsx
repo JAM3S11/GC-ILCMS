@@ -60,7 +60,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   onSignOut,
   unreadNotificationsCount,
   myExhibitsCount = 0,
-  superAdminTab = 'requests',
+  superAdminTab = 'users',
   superAdminCounts = {},
   caseRegister = 'water',
   caseRegisterCounts = {},
@@ -107,7 +107,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   // The Super Admin console, the case registry and the Exhibit Laboratory
   // register are each one view with tabs; highlight the open tab's item.
   const activeId = activeView === 'super-admin'
-    ? `${SUPER_ADMIN_NAV_PREFIX}${superAdminTab === 'requests' ? 'users' : superAdminTab}`
+    ? `${SUPER_ADMIN_NAV_PREFIX}${superAdminTab}`
     : activeView === 'case-file' && isSuperAdmin
       ? `${CASE_REGISTER_NAV_PREFIX}${caseRegister}`
       : activeView === 'laboratory' && labViews.length > 0 && labRegisterView

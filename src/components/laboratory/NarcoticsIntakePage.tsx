@@ -311,7 +311,7 @@ export const NarcoticsIntakePage: React.FC<NarcoticsIntakePageProps> = ({
                 className="mt-0.5 h-4 w-4 rounded border-slate-300 text-teal-500 focus:ring-teal-500"
               />
               <span>
-                Intake documents are approved
+                Documents checked
                 <span className="block text-[11px] text-slate-500 dark:text-slate-400">
                   Tick once the submitted documents have been checked. The Head cannot approve the memo until this is ticked.
                 </span>

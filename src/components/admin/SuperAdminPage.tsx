@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   Check,
@@ -24,6 +24,7 @@ import { AuditLogView } from './AuditLogView';
 import { Select } from '../common/Select';
 import { Avatar, Button, SegmentedControl, StatusPill, Tone } from '../common/Dashboard';
 import { CreateUserDrawer, NewAccount } from './CreateUserDrawer';
+import { AccessRequest, NominalRollView, RollEntry } from './NominalRollView';
 import { roleLabel } from './roles';
 import {
   GENERAL_ADMINISTRATION,
@@ -33,16 +34,6 @@ import {
   isLabScopedRole,
   LABORATORY_DEPARTMENTS,
 } from '../../lib/departments';
-
-type RequestRecord = {
-  id: string;
-  fullName: string;
-  email: string;
-  requestedRole: UserRole;
-  department?: LaboratoryDepartment;
-  status: string;
-  createdAt: string;
-};
 
 type AccountRecord = {
   id: string;
@@ -77,14 +68,15 @@ type AuditRecord = {
 };
 
 type Overview = {
-  pending_requests: number;
+  roll_without_account: number;
+  pending_access_requests: number;
   pending_department_requests: number;
   active_users: number;
   invited_users: number;
   audit_events: number;
 };
 
-type Tab = 'requests' | 'department-requests' | 'users' | 'audit';
+type Tab = 'nominal-roll' | 'department-requests' | 'users' | 'audit';
 
 const roles: UserRole[] = [
   'CEO', 'VICE_CEO', 'ADMINISTRATOR', 'CLERK', 'ACCOUNTANT', 'HR',
@@ -123,13 +115,13 @@ export const SuperAdminPage: React.FC<{
   initialTab?: Tab;
   /** The sidebar already switches sections, so the in-page tab strip is redundant. */
   hideTabs?: boolean;
-}> = ({ currentUserId, initialTab = 'requests', hideTabs = false }) => {
+}> = ({ currentUserId, initialTab = 'nominal-roll', hideTabs = false }) => {
   const [tab, setTab] = useState<Tab>(initialTab);
-  const [usersView, setUsersView] = useState<'accounts' | 'requests'>(initialTab === 'requests' ? 'requests' : 'accounts');
-  // With the sidebar driving sections, approval requests live inside User accounts.
-  const shownTab: Tab = hideTabs && tab === 'requests' ? 'users' : tab;
   const [overview, setOverview] = useState<Overview | null>(null);
-  const [requests, setRequests] = useState<RequestRecord[]>([]);
+  const [roll, setRoll] = useState<RollEntry[]>([]);
+  const [editingEntry, setEditingEntry] = useState<RollEntry | null>(null);
+  const [accessRequests, setAccessRequests] = useState<AccessRequest[]>([]);
+  const [fromRequest, setFromRequest] = useState<AccessRequest | null>(null);
   const [departmentRequests, setDepartmentRequests] = useState<DepartmentRequestRecord[]>([]);
   const [users, setUsers] = useState<AccountRecord[]>([]);
   const [events, setEvents] = useState<AuditRecord[]>([]);
@@ -155,15 +147,17 @@ export const SuperAdminPage: React.FC<{
       setError('');
     }
     try {
-      const [summary, requestData, departmentRequestData, userData, auditData] = await Promise.all([
+      const [summary, rollData, accessRequestData, departmentRequestData, userData, auditData] = await Promise.all([
         apiRequest<Overview>('/api/admin/overview'),
-        apiRequest<{ requests: RequestRecord[] }>('/api/admin/requests'),
+        apiRequest<{ entries: RollEntry[] }>('/api/admin/nominal-roll'),
+        apiRequest<{ requests: AccessRequest[] }>('/api/admin/access-requests'),
         apiRequest<{ requests: DepartmentRequestRecord[] }>('/api/admin/department-change-requests'),
         apiRequest<{ users: AccountRecord[] }>('/api/admin/users'),
         apiRequest<{ events: AuditRecord[] }>('/api/admin/audit'),
       ]);
       setOverview(summary);
-      setRequests(requestData.requests);
+      setRoll(rollData.entries);
+      setAccessRequests(accessRequestData.requests);
       setDepartmentRequests(departmentRequestData.requests);
       setUsers(userData.users);
       setEvents(auditData.events);
@@ -174,7 +168,7 @@ export const SuperAdminPage: React.FC<{
     }
   }, []);
 
-  useEffect(() => { setTab(initialTab); setUsersView(initialTab === 'requests' ? 'requests' : 'accounts'); }, [initialTab]);
+  useEffect(() => { setTab(initialTab); }, [initialTab]);
   useEffect(() => { void loadData(); }, [loadData]);
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -199,10 +193,6 @@ export const SuperAdminPage: React.FC<{
     }
   };
 
-  const approve = (id: string) => runAction(id, () =>
-    apiRequest(`/api/admin/requests/${id}/approve`, { method: 'POST', body: '{}' }));
-  const reject = (id: string) => runAction(id, () =>
-    apiRequest(`/api/admin/requests/${id}/reject`, { method: 'POST', body: '{}' }));
   const decideDepartmentRequest = (id: string, decision: 'approve' | 'reject') => runAction(id, () =>
     apiRequest(`/api/admin/department-change-requests/${id}/${decision}`, { method: 'POST', body: '{}' }));
   const resendInvite = (id: string) => runAction(id, () =>
@@ -251,33 +241,104 @@ export const SuperAdminPage: React.FC<{
 
   const openCreate = () => {
     setCreateError('');
+    setEditingEntry(null);
+    setFromRequest(null);
+    setCreateOpen(true);
+  };
+  const addFromRequest = (request: AccessRequest) => {
+    setCreateError('');
+    setEditingEntry(null);
+    setFromRequest(request);
+    setCreateOpen(true);
+  };
+  const dismissRequest = (request: AccessRequest) => {
+    if (!window.confirm(`Dismiss the access request from ${request.fullName}?`)) return;
+    return runAction(request.id, () =>
+      apiRequest(`/api/admin/access-requests/${request.id}/dismiss`, { method: 'POST', body: '{}' }));
+  };
+  const openEdit = (entry: RollEntry) => {
+    setCreateError('');
+    setFromRequest(null);
+    setEditingEntry(entry);
     setCreateOpen(true);
   };
 
-  const createUser = async (account: NewAccount) => {
+  type IssueResult = { message: string; emailSent: boolean; userId?: string; inviteExpiresAt?: string };
+
+  // Issues the account for a roll entry, then lands on the register with the new row pinned.
+  const issueAccount = async (entryId: string, account: NewAccount) => {
+    const result = await apiRequest<IssueResult>(`/api/admin/nominal-roll/${entryId}/account`, { method: 'POST', body: '{}' });
+    // Clear anything that could hide the new row, then land on the register.
+    setQuery('');
+    setStatusFilter('all');
+    setDepartmentFilter('all');
+    setTab('users');
+    setJustCreated({ ...account, id: result.userId, emailSent: result.emailSent, message: result.message, inviteExpiresAt: result.inviteExpiresAt });
+    await loadData(false);
+  };
+
+  const saveRollEntry = async (account: NewAccount) => {
     setWorkingId('create');
     setCreateError('');
     setError('');
     setNotice('');
+    const { issueAccount: issueNow, ...entry } = account;
     try {
-      const result = await apiRequest<{ message: string; emailSent: boolean; userId?: string; inviteExpiresAt?: string }>('/api/admin/users', {
+      if (editingEntry) {
+        const result = await apiRequest<{ message: string }>(`/api/admin/nominal-roll/${editingEntry.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify(entry),
+        });
+        setCreateOpen(false);
+        setNotice(result.message);
+        await loadData(false);
+        return;
+      }
+      const added = await apiRequest<{ id: string; message: string }>('/api/admin/nominal-roll', {
         method: 'POST',
-        body: JSON.stringify(account),
+        body: JSON.stringify({ ...entry, accessRequestId: fromRequest?.id }),
       });
+      setFromRequest(null);
       setCreateOpen(false);
-      // Clear anything that could hide the new row, then land on the register.
-      setQuery('');
-      setStatusFilter('all');
-      setDepartmentFilter('all');
-      setTab('users');
-      setUsersView('accounts');
-      setJustCreated({ ...account, id: result.userId, emailSent: result.emailSent, message: result.message, inviteExpiresAt: result.inviteExpiresAt });
-      await loadData(false);
+      if (!issueNow) {
+        setTab('nominal-roll');
+        setNotice(added.message);
+        await loadData(false);
+        return;
+      }
+      try {
+        await issueAccount(added.id, account);
+      } catch (cause) {
+        // The roll entry stands; the account can be issued from the roll once the problem is fixed.
+        setTab('nominal-roll');
+        setError(`${added.message} The account was not issued: ${cause instanceof Error ? cause.message : 'unknown error'}`);
+        await loadData(false);
+      }
     } catch (cause) {
-      setCreateError(cause instanceof Error ? cause.message : 'The account could not be created.');
+      setCreateError(cause instanceof Error ? cause.message : 'The roll entry could not be saved.');
     } finally {
       setWorkingId(null);
     }
+  };
+
+  const issueFromRoll = (entry: RollEntry) => {
+    setWorkingId(entry.id);
+    setError('');
+    setNotice('');
+    issueAccount(entry.id, { ...entry, issueAccount: true })
+      .catch((cause) => setError(cause instanceof Error ? cause.message : 'The account could not be issued.'))
+      .finally(() => setWorkingId(null));
+  };
+  const setRollStatus = (entry: RollEntry, employmentStatus: RollEntry['employmentStatus']) => {
+    if (employmentStatus === 'LEFT' && !window.confirm(
+      `Mark ${entry.fullName} as having left?${entry.userId ? ' Their account is disabled and signed out immediately.' : ''}`,
+    )) return;
+    return runAction(entry.id, () =>
+      apiRequest(`/api/admin/nominal-roll/${entry.id}/status`, { method: 'PATCH', body: JSON.stringify({ employmentStatus }) }));
+  };
+  const removeFromRoll = (entry: RollEntry) => {
+    if (!window.confirm(`Remove ${entry.fullName} (${entry.staffNumber}) from the nominal roll?`)) return;
+    return runAction(entry.id, () => apiRequest(`/api/admin/nominal-roll/${entry.id}`, { method: 'DELETE' }));
   };
 
   // Older servers do not return the id, so fall back to the email.
@@ -296,6 +357,21 @@ export const SuperAdminPage: React.FC<{
     (counts, user) => ({ ...counts, all: counts.all + 1, [user.status]: counts[user.status] + 1 }),
     { all: 0, ACTIVE: 0, PENDING_INVITE: 0, DISABLED: 0 },
   );
+  const editingRollDraft = useMemo(() => editingEntry && {
+    staffNumber: editingEntry.staffNumber,
+    fullName: editingEntry.fullName,
+    email: editingEntry.email,
+    role: editingEntry.role,
+    department: editingEntry.department,
+    hasAccount: !!editingEntry.userId,
+  }, [editingEntry]);
+  const requestPrefill = useMemo(() => fromRequest && {
+    staffNumber: fromRequest.staffNumber,
+    fullName: fromRequest.fullName,
+    email: fromRequest.email,
+    department: fromRequest.department,
+  }, [fromRequest]);
+  const awaitingRoll = overview ? overview.roll_without_account + overview.pending_access_requests : undefined;
   const departmentsWithHead = users
     .filter((user) => user.role === 'HEAD_OF_DEPARTMENT' && user.department)
     .map((user) => user.department as LaboratoryDepartment);
@@ -315,38 +391,18 @@ export const SuperAdminPage: React.FC<{
   };
 
   const metrics = [
-    { label: 'Account requests', value: overview?.pending_requests ?? '—', icon: Clock3, tone: 'amber' },
+    { label: 'Awaiting an account', value: awaitingRoll ?? '—', icon: Clock3, tone: 'amber' },
     { label: 'Department changes', value: overview?.pending_department_requests ?? '—', icon: Pencil, tone: 'violet' },
     { label: 'Active users', value: overview?.active_users ?? '—', icon: UserCheck, tone: 'emerald' },
     { label: 'Invitations pending', value: overview?.invited_users ?? '—', icon: Mail, tone: 'sky' },
     { label: 'Audit events', value: overview?.audit_events ?? '—', icon: Activity, tone: 'amber' },
   ];
   const tabs: { id: Tab; label: string; count?: number }[] = [
-    { id: 'requests', label: 'Approval requests', count: overview?.pending_requests },
+    { id: 'nominal-roll', label: 'Nominal roll', count: awaitingRoll },
     { id: 'department-requests', label: 'Department changes', count: overview?.pending_department_requests },
     { id: 'users', label: 'User accounts' },
     { id: 'audit', label: 'Audit log' },
   ];
-
-  const renderRequests = () => (
-    requests.length === 0 ? <EmptyState title="No pending account requests" detail="New staff registrations will appear here for approval." /> : (
-      <div className="divide-y divide-slate-100 dark:divide-slate-800">
-        {requests.filter((request) => request.status === 'PENDING').map((request) => (
-          <article key={request.id} className="flex flex-wrap items-center justify-between gap-4 px-4 py-4">
-            <div className="min-w-0">
-              <div className="font-semibold text-slate-900 dark:text-white">{request.fullName}</div>
-              <div className="mt-1 text-xs text-slate-500">{request.email}</div>
-              <div className="mt-1 text-xs text-slate-500">{request.requestedRole.replaceAll('_', ' ')}{request.department ? ` · ${departmentLabel(request.department)}` : ''} · {formatDate(request.createdAt)}</div>
-            </div>
-            <div className="flex gap-2">
-              <button type="button" disabled={workingId === request.id} onClick={() => void approve(request.id)} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-emerald-600 px-3 text-xs font-semibold text-white disabled:opacity-60"><Check className="h-4 w-4" /> Approve & invite</button>
-              <button type="button" disabled={workingId === request.id} onClick={() => void reject(request.id)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-rose-200 px-3 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950/30"><X className="h-4 w-4" /> Reject</button>
-            </div>
-          </article>
-        ))}
-      </div>
-    )
-  );
 
   return (
     <section className="mx-auto w-full max-w-7xl space-y-6 pb-8">
@@ -357,17 +413,17 @@ export const SuperAdminPage: React.FC<{
           </div>
           <h1 className="mt-2 text-2xl font-bold tracking-tight text-slate-950 dark:text-white">Super-admin console</h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            Approve staff access, manage account invitations, assign roles, and review administrative activity.
+            Keep the nominal roll, issue staff accounts from it, assign roles, and review administrative activity.
           </p>
           <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-            Data refreshes from PostgreSQL every 15 seconds. New sign-up requests appear under Approval requests; users created here appear under User accounts.
+            Data refreshes from PostgreSQL every 15 seconds. There is no self sign-up: accounts are only issued to officers on the nominal roll.
           </p>
         </div>
         <div className="flex gap-2">
           <button type="button" onClick={() => void loadData()} className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /> Refresh
           </button>
-          <Button variant="primary" icon={UserPlus} onClick={openCreate}>Create user</Button>
+          <Button variant="primary" icon={UserPlus} onClick={openCreate}>Add officer</Button>
         </div>
       </header>
 
@@ -377,11 +433,14 @@ export const SuperAdminPage: React.FC<{
       <CreateUserDrawer
         open={createOpen}
         onOpenChange={setCreateOpen}
-        onSubmit={createUser}
+        onSubmit={saveRollEntry}
         working={workingId === 'create'}
         error={createError}
-        existingEmails={users.map((user) => user.email.toLowerCase())}
+        existingEmails={[...new Set([...users, ...roll].map((item) => item.email.toLowerCase()))]}
+        existingStaffNumbers={roll.map((entry) => entry.staffNumber.toUpperCase())}
         departmentsWithHead={departmentsWithHead}
+        editing={editingRollDraft}
+        prefill={requestPrefill}
       />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
@@ -401,7 +460,7 @@ export const SuperAdminPage: React.FC<{
           <div className="flex flex-wrap gap-1">
             {hideTabs && (
               <h2 className="px-1 text-sm font-semibold text-slate-900 dark:text-white">
-                {tabs.find((item) => item.id === shownTab)?.label}
+                {tabs.find((item) => item.id === tab)?.label}
               </h2>
             )}
             {!hideTabs && tabs.map((item) => (
@@ -414,9 +473,20 @@ export const SuperAdminPage: React.FC<{
 
         {loading ? (
           <div className="p-8 text-center text-sm text-slate-500">Loading administration data…</div>
-        ) : shownTab === 'requests' ? (
-          renderRequests()
-        ) : shownTab === 'department-requests' ? (
+        ) : tab === 'nominal-roll' ? (
+          <NominalRollView
+            entries={roll}
+            workingId={workingId}
+            currentUserId={currentUserId}
+            onIssue={issueFromRoll}
+            onEdit={openEdit}
+            onSetStatus={(entry, status) => void setRollStatus(entry, status)}
+            onRemove={(entry) => void removeFromRoll(entry)}
+            requests={accessRequests}
+            onAddRequest={addFromRequest}
+            onDismissRequest={(request) => void dismissRequest(request)}
+          />
+        ) : tab === 'department-requests' ? (
           departmentRequests.length === 0 ? <EmptyState title="No pending department changes" detail="Staff requests to move to another department will appear here." /> : (
             <div className="divide-y divide-slate-100 dark:divide-slate-800">
               {departmentRequests.map((request) => (
@@ -435,72 +505,49 @@ export const SuperAdminPage: React.FC<{
               ))}
             </div>
           )
-        ) : shownTab === 'users' ? (
+        ) : tab === 'users' ? (
           <>
-          {hideTabs && (
-            <div role="tablist" aria-label="User accounts sections" className="flex gap-1 border-b border-slate-200 px-4 py-2 dark:border-slate-800">
-              {([
-                { id: 'accounts', label: 'Accounts', count: undefined },
-                { id: 'requests', label: 'Approval requests', count: overview?.pending_requests ?? requests.length },
-              ] as const).map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  role="tab"
-                  aria-selected={usersView === item.id}
-                  onClick={() => setUsersView(item.id)}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${usersView === item.id ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
-                >
-                  {item.label}{item.count ? <span className="ml-2 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] text-slate-950">{item.count}</span> : null}
-                </button>
-              ))}
-            </div>
+          {justCreated && (
+            <CreatedReceipt
+              account={justCreated}
+              record={createdRecord}
+              working={!!createdRecord && workingId === createdRecord.id}
+              onShow={showCreatedRow}
+              onResend={createdRecord ? () => void resendInvite(createdRecord.id) : undefined}
+              onCreateAnother={openCreate}
+              onDismiss={() => setJustCreated(null)}
+            />
           )}
-          {!(hideTabs && usersView === 'requests') && (
-            <>
-              {justCreated && (
-                <CreatedReceipt
-                  account={justCreated}
-                  record={createdRecord}
-                  working={!!createdRecord && workingId === createdRecord.id}
-                  onShow={showCreatedRow}
-                  onResend={createdRecord ? () => void resendInvite(createdRecord.id) : undefined}
-                  onCreateAnother={openCreate}
-                  onDismiss={() => setJustCreated(null)}
-                />
-              )}
-              <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-2.5 dark:border-slate-800">
-                <SegmentedControl<StatusFilter>
-                  ariaLabel="Filter by account status"
-                  value={statusFilter}
-                  onChange={setStatusFilter}
-                  options={[
-                    { value: 'all', label: 'All', count: statusCounts.all },
-                    { value: 'ACTIVE', label: 'Active', count: statusCounts.ACTIVE },
-                    { value: 'PENDING_INVITE', label: 'Invitation pending', count: statusCounts.PENDING_INVITE },
-                    { value: 'DISABLED', label: 'Disabled', count: statusCounts.DISABLED },
-                  ]}
-                />
-                <Select<'all' | LaboratoryDepartment>
-                  size="xs"
-                  className="w-52"
-                  aria-label="Filter by department"
-                  value={departmentFilter}
-                  onChange={setDepartmentFilter}
-                  options={[
-                    { value: 'all', label: 'All departments' },
-                    ...[...LABORATORY_DEPARTMENTS, GENERAL_ADMINISTRATION].map((item) => ({ value: item, label: departmentLabel(item) })),
-                  ]}
-                />
-                <label className="ml-auto flex h-8 items-center gap-2 rounded-lg border border-slate-200 px-2.5 dark:border-slate-700">
-                  <Search className="h-3.5 w-3.5 text-slate-400" />
-                  <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, email or role" aria-label="Search staff" className="w-48 bg-transparent text-xs outline-none dark:text-white" />
-                </label>
-                {filtersActive && <Button variant="ghost" size="sm" onClick={clearFilters}>Clear</Button>}
-              </div>
-            </>
-          )}
-          {hideTabs && usersView === 'requests' ? renderRequests() : filteredUsers.length === 0 ? <EmptyState title="No staff accounts found" detail={filtersActive ? 'No account matches these filters. Clear them to see the full register.' : 'Create the first staff account to get started.'} /> : (
+          <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-2.5 dark:border-slate-800">
+            <SegmentedControl<StatusFilter>
+              ariaLabel="Filter by account status"
+              value={statusFilter}
+              onChange={setStatusFilter}
+              options={[
+                { value: 'all', label: 'All', count: statusCounts.all },
+                { value: 'ACTIVE', label: 'Active', count: statusCounts.ACTIVE },
+                { value: 'PENDING_INVITE', label: 'Invitation pending', count: statusCounts.PENDING_INVITE },
+                { value: 'DISABLED', label: 'Disabled', count: statusCounts.DISABLED },
+              ]}
+            />
+            <Select<'all' | LaboratoryDepartment>
+              size="xs"
+              className="w-52"
+              aria-label="Filter by department"
+              value={departmentFilter}
+              onChange={setDepartmentFilter}
+              options={[
+                { value: 'all', label: 'All departments' },
+                ...[...LABORATORY_DEPARTMENTS, GENERAL_ADMINISTRATION].map((item) => ({ value: item, label: departmentLabel(item) })),
+              ]}
+            />
+            <label className="ml-auto flex h-8 items-center gap-2 rounded-lg border border-slate-200 px-2.5 dark:border-slate-700">
+              <Search className="h-3.5 w-3.5 text-slate-400" />
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search name, email or role" aria-label="Search staff" className="w-48 bg-transparent text-xs outline-none dark:text-white" />
+            </label>
+            {filtersActive && <Button variant="ghost" size="sm" onClick={clearFilters}>Clear</Button>}
+          </div>
+          {filteredUsers.length === 0 ? <EmptyState title="No staff accounts found" detail={filtersActive ? 'No account matches these filters. Clear them to see the full register.' : 'Add an officer to the nominal roll and issue their account to get started.'} /> : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[760px] text-left text-xs">
                 <thead className="bg-slate-50 text-slate-500 dark:bg-slate-950/50"><tr><th className="px-4 py-3 font-semibold">Staff member</th><th className="px-4 py-3 font-semibold">Role / unit</th><th className="px-4 py-3 font-semibold">Status</th><th className="px-4 py-3 font-semibold">Added</th><th className="px-4 py-3 text-right font-semibold">Actions</th></tr></thead>

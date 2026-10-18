@@ -110,7 +110,7 @@ export const APP_NAV_GROUPS: { title: string; items: NavItem[] }[] = [
 
 export const SETTINGS_NAV_ITEM: NavItem = { id: 'settings', label: 'Settings', icon: Settings };
 
-export type SuperAdminTab = 'requests' | 'department-requests' | 'users' | 'audit';
+export type SuperAdminTab = 'nominal-roll' | 'department-requests' | 'users' | 'audit';
 
 /** Prefix of the sidebar ids that open a Super Admin console tab. */
 export const SUPER_ADMIN_NAV_PREFIX = 'super-admin:';
@@ -195,6 +195,7 @@ export const SUPER_ADMIN_NAV_GROUPS: { title: string; items: NavItem[] }[] = [
   {
     title: 'Administration',
     items: [
+      { id: `${SUPER_ADMIN_NAV_PREFIX}nominal-roll`, label: 'Nominal roll', icon: ClipboardList },
       { id: `${SUPER_ADMIN_NAV_PREFIX}users`, label: 'User accounts', icon: Users },
       { id: `${SUPER_ADMIN_NAV_PREFIX}audit`, label: 'Audit log', icon: ScrollText },
     ],

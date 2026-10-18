@@ -71,7 +71,6 @@ export const FoodDrugCaseFile: React.FC<FoodDrugCaseFileProps> = ({ intake, curr
       <FoodDrugCaseHeader
         intake={intake}
         currentUser={currentUser}
-        sections={contents}
         onBack={onBack}
         onSelectSection={openCaseStep}
         onViewAllocation={intake.analystId && (isHead || isAssigned) ? () => setViewingAllocation(true) : undefined}

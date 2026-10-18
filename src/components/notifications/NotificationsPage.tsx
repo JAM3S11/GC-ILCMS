@@ -212,8 +212,7 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
       n.persisted &&
       n.relatedRecordId &&
       onAdminAction &&
-      (n.relatedRecordType === 'account_request' ||
-        n.relatedRecordType === 'department_change_request' ||
+      (n.relatedRecordType === 'department_change_request' ||
         (n.relatedRecordType === 'user' && n.title === 'Password reset requested'));
     return (
       <NotificationRow
@@ -235,7 +234,7 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
             ) : (
               <>
                 <Button size="sm" variant="success" icon={CheckCircle2} disabled={workingId === n.id} onClick={() => void runAdminAction(n, 'approve')}>
-                  {n.relatedRecordType === 'account_request' ? 'Approve & invite' : 'Approve change'}
+                  Approve change
                 </Button>
                 <Button size="sm" variant="danger" icon={X} disabled={workingId === n.id} onClick={() => void runAdminAction(n, 'reject')}>
                   Reject

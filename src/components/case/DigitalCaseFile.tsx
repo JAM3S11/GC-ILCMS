@@ -18,6 +18,7 @@ import { formatKes } from '../../waterIntake';
 import { GCMSViewer } from './GCMSViewer';
 import { UVVisViewer } from './UVVisViewer';
 import { DraftReportViewer } from '../report/DraftReportViewer';
+import { CaseStatusCard, NextStep, caseStages } from '../laboratory/CaseFlow';
 import {
   Avatar,
   Button,
@@ -44,9 +45,8 @@ type Tab = 'overview' | 'exhibits' | 'custody' | 'examinations' | 'instruments' 
 /*  Case process                                                       */
 /* ------------------------------------------------------------------ */
 
-const STAGES = ['Received', 'Registered', 'Allocated', 'Analysis', 'Findings', 'Report', 'Approved'] as const;
 
-/** Which of the seven process stages a case status sits in. */
+/** Which of the original seven process stages a case status sits in; mapped onto the shared five. */
 const STAGE_OF_STATUS: Record<CaseStatus, number> = {
   RECEIVED: 0,
   REGISTERED: 1,
@@ -111,15 +111,34 @@ export const DigitalCaseFile: React.FC<DigitalCaseFileProps> = ({ caseData, onUp
   const examsDone = caseData.examinations.filter((e) => e.status === 'COMPLETED').length;
   const intakeCount = (caseData.foodDrugIntakes?.length ?? 0) + (caseData.waterIntakes?.length ?? 0);
 
-  const stageDetail = [
-    caseData.dateReceived,
-    caseData.dateRegistered,
-    caseData.assignedAnalyst.split(',')[0],
-    `${examsDone}/${caseData.examinations.length} examinations`,
-    caseData.findings ? 'Findings recorded' : 'Pending',
-    caseData.draftReport?.reportNumber ?? (stage >= 5 ? 'Draft in progress' : 'Pending'),
-    stage >= 6 ? 'Certificate issued' : 'Awaiting review',
-  ];
+  // The five stages every department's case file shares, read from the case status.
+  const analyst = caseData.assignedAnalyst.split(',')[0] || 'The analyst';
+  const issued = ['COMPLETED', 'ARCHIVED'].includes(caseData.status);
+  const stages = caseStages(
+    [true, stage >= 2, stage >= 5, stage >= 6, issued],
+    [
+      caseData.dateReceived,
+      stage >= 2 ? analyst : 'Awaiting allocation',
+      stage >= 5 ? 'Findings recorded' : stage >= 3 ? `${examsDone}/${caseData.examinations.length} examinations` : undefined,
+      stage >= 6 ? 'Report approved' : caseData.status === 'CORRECTION_REQUIRED' ? 'Corrections requested' : stage === 5 ? 'Report under review' : undefined,
+      issued ? 'Certificate issued' : caseData.status === 'APPROVED' ? 'Awaiting issue' : undefined,
+    ],
+    [undefined, undefined, 'examinations', 'report', 'report'],
+  );
+  const next: NextStep = issued
+    ? { text: 'The certificate of analysis has been issued.', done: true, action: { label: 'View report', target: 'report' } }
+    : caseData.status === 'APPROVED'
+      ? { text: 'Report approved. The registry to issue the certificate of analysis.', action: { label: 'View report', target: 'report' } }
+      : stage < 2
+        ? { text: 'The Head of Department to allocate an analyst.' }
+        : stage < 5
+          ? { text: `${analyst} to complete the examinations and record the findings.`, action: { label: 'Go to examinations', target: 'examinations' } }
+          : caseData.status === 'CORRECTION_REQUIRED'
+            ? { text: `${analyst} to make the corrections the reviewer asked for.`, action: { label: 'Open draft report', target: 'report' } }
+            : caseData.status === 'UNDER_REVIEW'
+              ? { text: 'The Head of Department to review and approve the report.', action: { label: 'Open draft report', target: 'report' } }
+              : { text: `${analyst} to finish the draft report and send it for review.`, action: { label: 'Open draft report', target: 'report' } };
+  const hasInstrumentData = !!(caseData.gcmsResults?.length || caseData.uvVisResults?.length);
 
   // Everything that has happened on the case, newest first.
   const activity = [
@@ -166,7 +185,12 @@ export const DigitalCaseFile: React.FC<DigitalCaseFileProps> = ({ caseData, onUp
         }
       />
 
-      <ProcessTracker stage={stage} details={stageDetail} />
+      <CaseStatusCard
+        next={next}
+        stages={stages}
+        onSelect={(target) => setTab(target as Tab)}
+        receivedDate={caseData.dateReceived}
+      />
 
       <SegmentedControl
         ariaLabel="Case file sections"
@@ -177,7 +201,8 @@ export const DigitalCaseFile: React.FC<DigitalCaseFileProps> = ({ caseData, onUp
           { value: 'exhibits', label: 'Exhibits', count: caseData.exhibits.length + intakeCount },
           { value: 'custody', label: 'Custody', count: caseData.custodyHistory.length },
           { value: 'examinations', label: 'Examinations', count: caseData.examinations.length },
-          { value: 'instruments', label: 'Instruments' },
+          // Only labs with instrument runs on the case see this tab.
+          ...(hasInstrumentData ? [{ value: 'instruments' as Tab, label: 'Instruments' }] : []),
           { value: 'findings', label: 'Findings' },
           { value: 'report', label: 'Report' },
         ]}
@@ -366,10 +391,9 @@ export const DigitalCaseFile: React.FC<DigitalCaseFileProps> = ({ caseData, onUp
             </Panel>
           )}
 
+          {caseData.samples.length > 0 && (
           <Panel icon={FlaskConical} title="Subsamples" description="Aliquots prepared for instrumentation" flush>
-            {caseData.samples.length === 0 ? (
-              <EmptyState icon={FlaskConical} title="No subsamples prepared yet" />
-            ) : (
+            {(
               <ul className="divide-y divide-slate-100 dark:divide-slate-800">
                 {caseData.samples.map((s) => (
                   <li key={s.id} className="space-y-3 px-4 py-4">
@@ -393,6 +417,7 @@ export const DigitalCaseFile: React.FC<DigitalCaseFileProps> = ({ caseData, onUp
               </ul>
             )}
           </Panel>
+          )}
         </div>
       )}
 
@@ -621,67 +646,6 @@ const INTEGRATION = [
     confidence: 'High',
   },
 ];
-
-/** Seven-stage tracker; a compact progress bar on phones. */
-export const ProcessTracker: React.FC<{ stage: number; details: string[]; stages?: readonly string[] }> = ({
-  stage,
-  details,
-  stages = STAGES,
-}) => (
-  <section aria-label="Case progress" className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-    {/* Phones */}
-    <div className="md:hidden">
-      <div className="flex items-baseline justify-between text-xs">
-        <span className="font-semibold text-slate-900 dark:text-white">{stages[stage]}</span>
-        <span className="text-slate-500 dark:text-slate-400">
-          Stage {stage + 1} of {stages.length}
-        </span>
-      </div>
-      <div className="mt-2 flex gap-1">
-        {stages.map((s, i) => (
-          <span
-            key={s}
-            className={`h-1.5 flex-1 rounded-full ${i < stage ? 'bg-emerald-500' : i === stage ? 'bg-amber-500' : 'bg-slate-200 dark:bg-slate-800'}`}
-          />
-        ))}
-      </div>
-      <p className="mt-2 text-[11px] text-slate-500 dark:text-slate-400">
-        {details[stage]}
-        {stage < stages.length - 1 && <> · Next: {stages[stage + 1]}</>}
-      </p>
-    </div>
-
-    {/* Tablets and up */}
-    <ol className="hidden md:grid" style={{ gridTemplateColumns: `repeat(${stages.length}, minmax(0, 1fr))` }}>
-      {stages.map((s, i) => {
-        const done = i < stage;
-        const current = i === stage;
-        return (
-          <li key={s} className="relative flex flex-col items-center px-1 text-center">
-            {i > 0 && (
-              <span
-                className={`absolute right-1/2 top-3 h-px w-full -translate-y-1/2 ${i <= stage ? 'bg-emerald-500/60' : 'bg-slate-200 dark:bg-slate-800'}`}
-              />
-            )}
-            <span
-              className={`relative z-10 flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-semibold ring-4 ring-white dark:ring-slate-900 ${
-                done
-                  ? 'bg-emerald-500 text-white'
-                  : current
-                    ? 'bg-amber-500 text-slate-950'
-                    : 'bg-slate-100 text-slate-400 dark:bg-slate-800'
-              }`}
-            >
-              {done ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : i + 1}
-            </span>
-            <span className={`mt-2 text-xs font-medium ${done || current ? 'text-slate-900 dark:text-white' : 'text-slate-400'}`}>{s}</span>
-            <span className="mt-0.5 line-clamp-1 text-[11px] text-slate-500 dark:text-slate-400">{done || current ? details[i] : '—'}</span>
-          </li>
-        );
-      })}
-    </ol>
-  </section>
-);
 
 /** Label/value grid that wraps long values instead of truncating them. */
 const Facts: React.FC<{ items: [string, string][]; className?: string }> = ({ items, className = '' }) => (

@@ -7,13 +7,11 @@ import {
   RotateCcw,
   ShieldCheck,
   CheckCircle2,
-  CircleDashed,
   ClipboardCheck,
   Building2,
   Droplets,
   FileText,
   FlaskConical,
-  ListChecks,
   Loader2,
   Lock,
   NotebookPen,
@@ -29,7 +27,8 @@ import { User, WaterIntake, WaterIntakeEvent } from '../../types';
 import { apiRequest, ApiError } from '../../lib/api';
 import { formatKes } from '../../waterIntake';
 import { Avatar, Button, DashboardHeader, DashboardPage, StatusPill, Tone } from '../common/Dashboard';
-import { ProcessTracker } from '../case/DigitalCaseFile';
+import { CaseStatusCard, NextStep, caseStages } from './CaseFlow';
+import { openCaseStep } from './CaseStep';
 import { Portal } from '../common/Portal';
 import { ExhibitProcessTimeline, PROCESS_STEPS } from './ExhibitProcessTimeline';
 import { WaterTestResultsForm } from './WaterTestResultsForm';
@@ -53,8 +52,6 @@ const STEP_GUIDANCE: Record<string, string> = {
   ASSIGNED: 'The Head of Department assigns the exhibit to an Analysis Officer.',
   ANALYSIS_COMPLETED: 'You run the analysis, enter the test results, then mark the analysis complete.',
 };
-
-const TRACKER_STAGES = ['Registered', 'Assigned', 'Analysis', 'Findings', 'Complete', 'Documents', 'Memo'] as const;
 
 interface ExhibitCaseFileProps {
   intake: WaterIntake;
@@ -192,41 +189,7 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
     ? intake.specificParameters.join(', ')
     : intake.specificParameters;
 
-  // The checklist the officer works down before the analysis can be closed.
-  const checklist = [
-    { label: 'Exhibit registered', done: reached.has('REGISTERED') },
-    { label: 'Assigned to an Analysis Officer', done: reached.has('ASSIGNED') },
-    { label: 'Intake documents confirmed fine', done: !!intake.documentsConfirmedAt },
-    { label: 'Findings recorded', done: findingsRecorded },
-    { label: 'Analysis marked complete', done: isComplete },
-    { label: 'Intake documents approved by the Head', done: !!intake.approvedDate },
-    { label: 'Memo approved by the Head', done: !!intake.certificateIssuedAt },
-  ];
-  const doneCount = checklist.filter((item) => item.done).length;
-
-  // Where the file stands, in the same strip the case file uses.
   const analysisStarted = intake.status === 'Under Analysis' || isComplete;
-  const trackerDone = [
-    reached.has('REGISTERED'),
-    reached.has('ASSIGNED'),
-    analysisStarted,
-    // Findings are optional, so a completed analysis never stalls on this stage.
-    findingsRecorded || isComplete,
-    isComplete,
-    !!intake.approvedDate,
-    !!intake.certificateIssuedAt,
-  ];
-  const firstOutstanding = trackerDone.findIndex((done) => !done);
-  const stage = firstOutstanding === -1 ? TRACKER_STAGES.length - 1 : firstOutstanding;
-  const trackerDetails = [
-    intake.dateReceived ?? 'Pending',
-    intake.analysisOfficer ?? 'Awaiting assignment',
-    isComplete ? 'Done' : analysisStarted ? 'In progress' : 'Pending',
-    intake.findingsRecordedAt ?? 'Not recorded',
-    intake.completedDate ?? 'Pending',
-    intake.approvedDate ?? 'Awaiting Head',
-    intake.certificateIssuedAt ?? 'Awaiting Head',
-  ];
 
   const people = [
     { role: 'Received by', name: intake.receivingOfficer, sub: intake.dateReceived },
@@ -262,7 +225,7 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
         : unsavedChanges
           ? 'Save your changes to the results before approving the memo.'
           : !intake.documentsConfirmedAt
-            ? 'Tick "Intake documents are approved" first.'
+            ? 'Tick "Documents checked" first.'
             : '';
   const currentCertificate = certState?.current ?? null;
   const latestCertificate = certState?.history[0] ?? null;
@@ -330,11 +293,11 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
         className="mt-0.5 h-4 w-4 rounded border-slate-300 text-teal-500 focus:ring-teal-500"
       />
       <span>
-        Intake documents are approved
+        Documents checked
         <span className="block text-[11px] text-slate-500 dark:text-slate-400">
           {intake.documentsConfirmedAt
-            ? `Confirmed ${intake.documentsConfirmedAt}${intake.documentsConfirmedBy ? ` by ${intake.documentsConfirmedBy}` : ''}. Untick to stop the memo being approved.`
-            : 'Tick once the submitted documents have been checked. The Head cannot approve the memo until this is ticked.'}
+            ? `Checked ${intake.documentsConfirmedAt}${intake.documentsConfirmedBy ? ` by ${intake.documentsConfirmedBy}` : ''}. Untick to stop the memo being approved.`
+            : 'Tick once the submitted documents have been checked against the exhibit. The Head cannot approve the memo until this is ticked.'}
         </span>
       </span>
     </label>
@@ -413,6 +376,42 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
   };
 
 
+  // Where the file stands and whose turn it is, in the five stages every department shares.
+  const isHead = currentUser.role === 'HEAD_OF_DEPARTMENT';
+  const analyst = isOwner ? 'You' : intake.analysisOfficer || 'The Analysis Officer';
+  const head = isHead ? 'You' : 'The Head of Water & Environment';
+  const memoBlockers = [
+    !isComplete && 'The test results are saved by the Analysis Officer (saving completes the analysis).',
+    isComplete && unsavedChanges && 'The changes to the test results are saved.',
+    !intake.documentsConfirmedAt && 'The department ticks "Documents checked" (under Memo).',
+  ].filter((item): item is string => !!item);
+  const next: NextStep = issued
+    ? {
+        text: `Memo approved ${intake.certificateIssuedAt}${intake.certificateIssuedBy ? ` by ${intake.certificateIssuedBy}` : ''}; print it from the Memo section.`,
+        done: true,
+        action: { label: 'View memo', target: 'section-3' },
+      }
+    : intake.status === 'Awaiting Approval'
+      ? { text: `${head} to approve the submitted documents from the register.` }
+      : intake.status === 'Awaiting Assignment'
+        ? { text: `${head} to assign an Analysis Officer from the register.` }
+        : !isComplete
+          ? { text: `${analyst} to enter and save the test results. Saving completes the analysis.`, action: { label: 'Go to findings', target: 'section-2' } }
+          : !intake.documentsConfirmedAt
+            ? { text: 'The Water department to check the intake documents and tick "Documents checked".', action: { label: 'Go to memo', target: 'section-3' } }
+            : { text: `${head} to review the results and approve the memo.`, action: { label: 'Go to memo', target: 'section-3' }, blockers: memoBlockers };
+  const stages = caseStages(
+    [true, !!intake.analysisOfficerId, isComplete, isComplete && !!intake.documentsConfirmedAt, issued],
+    [
+      intake.dateReceived ?? undefined,
+      intake.analysisOfficer ?? 'Awaiting assignment',
+      isComplete ? 'Results saved' : analysisStarted ? 'Under analysis' : undefined,
+      isComplete ? (intake.documentsConfirmedAt ? 'Documents checked' : 'Documents to be checked') : undefined,
+      issued ? 'Memo approved' : undefined,
+    ],
+    [undefined, undefined, 'section-2', 'section-3', 'section-3'],
+  );
+
   // The file's contents page: each numbered section and where it stands.
   const contentsSections: CaseFileContentsSection[] = [
     { id: 'section-1', number: 1, title: 'Exhibit particulars', state: 'done', note: `Received ${intake.dateReceived ?? '—'}` },
@@ -423,10 +422,9 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
       state: findingsRecorded ? 'done' : analysisStarted ? 'current' : 'pending',
       note: findingsRecorded ? 'Results recorded' : analysisStarted ? 'Under analysis' : 'Awaiting analysis',
     },
-    { id: 'section-3', number: 3, title: 'Process history', note: `${doneCount} of ${checklist.length} steps done` },
     {
-      id: 'section-4',
-      number: 4,
+      id: 'section-3',
+      number: 3,
       title: 'Memo',
       state: issued ? 'done' : isComplete ? 'current' : 'pending',
       note: issued ? 'Approved by the Head' : isComplete ? 'Awaiting approval' : 'Not yet issued',
@@ -474,7 +472,13 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
         }
       />
 
-      <ProcessTracker stage={stage} details={trackerDetails} stages={TRACKER_STAGES} />
+      <CaseStatusCard
+        next={next}
+        stages={stages}
+        onSelect={openCaseStep}
+        receivedDate={intake.dateReceived}
+        finishedDate={intake.certificateIssuedAt}
+      />
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_18rem] 2xl:grid-cols-[14rem_minmax(0,1fr)_18rem]">
         {/* Contents: the file's sections in order, with where each one stands */}
@@ -547,19 +551,7 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
             />
           </FileSection>
 
-          <div className="grid items-start gap-4 @5xl:grid-cols-2">
-          <FileSection number={3} icon={ClipboardCheck} title="Process history" description="Every recorded step, with who did it and when.">
-            {loading ? (
-              <p className="flex items-center gap-2 py-6 text-xs text-slate-500 dark:text-slate-400">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading process…
-              </p>
-            ) : (
-              <ExhibitProcessTimeline intake={intake} events={events} loading={loading} error={loadError} />
-            )}
-          </FileSection>
-          </div>
-
-          <FileSection number={4} icon={FileText} title="Memo" description="The Certificate of Analysis of Water, as it will be printed.">
+          <FileSection number={3} icon={FileText} title="Memo" description="The Certificate of Analysis of Water, as it will be printed.">
             {canConfirmDocuments && !issued && (
               <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 print:hidden dark:border-slate-800 dark:bg-slate-950/40">{documentsCheckbox}</div>
             )}
@@ -632,53 +624,23 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
               </div>
             )}
           </FileSection>
+
+          {/* The record of what happened; not a step anyone works on. */}
+          <FileSection id="section-history" icon={ClipboardCheck} title="Process history" description="Every recorded step, with who did it and when. Kept for the audit trail.">
+            {loading ? (
+              <p className="flex items-center gap-2 py-6 text-xs text-slate-500 dark:text-slate-400">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading process…
+              </p>
+            ) : (
+              <ExhibitProcessTimeline intake={intake} events={events} loading={loading} error={loadError} />
+            )}
+          </FileSection>
         </div>
 
         {/* Sidebar: where the file stands and what is left to do */}
         <aside className="space-y-4 lg:sticky lg:top-4">
           {/* Below 2xl there is no room for a third column, so the contents lead the side panel. */}
           <CaseFileContents {...contentsProps} className="2xl:hidden" />
-          <section aria-label="Completion checklist" className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
-            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-950/50">
-              <h2 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
-                <ListChecks className="h-3.5 w-3.5" /> File progress
-              </h2>
-              <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                {doneCount} of {checklist.length}
-              </span>
-            </div>
-            <div className="h-1 bg-slate-100 dark:bg-slate-800">
-              <div className="h-full bg-sky-500 transition-all" style={{ width: `${(doneCount / checklist.length) * 100}%` }} />
-            </div>
-            <ol className="space-y-2.5 px-4 py-4">
-              {checklist.map((item) => (
-                <li key={item.label} className="flex items-start gap-2.5 text-xs">
-                  {item.done ? (
-                    <CheckCircle2 className="mt-px h-4 w-4 shrink-0 text-emerald-500" aria-label="Done" />
-                  ) : (
-                    <CircleDashed className="mt-px h-4 w-4 shrink-0 text-slate-300 dark:text-slate-600" aria-label="Outstanding" />
-                  )}
-                  <span className={item.done ? 'text-slate-500 dark:text-slate-400' : 'font-medium text-slate-900 dark:text-white'}>
-                    {item.label}
-                  </span>
-                </li>
-              ))}
-            </ol>
-            {canConfirmDocuments && !issued && (
-              <div className="border-t border-slate-200 bg-slate-50 px-4 py-3 print:hidden dark:border-slate-800 dark:bg-slate-950/50">{documentsCheckbox}</div>
-            )}
-            {canPrint && isComplete && !issued && (
-              <div className="space-y-2 border-t border-slate-200 bg-slate-50 px-4 py-3 print:hidden dark:border-slate-800 dark:bg-slate-950/50">
-                <Button variant="primaryTeal" className="w-full" icon={CheckCircle2} disabled={!!approveBlocker || issuing} onClick={() => void approveMemo()}>
-                  {issuing ? 'Approving…' : 'Approve memo'}
-                </Button>
-                <p className="text-[11px] leading-relaxed text-slate-500 dark:text-slate-400">
-                  {approveBlocker || 'Approves the intake documents and everything the analysis officer wrote. Print it afterwards from the Memo section.'}
-                </p>
-              </div>
-            )}
-          </section>
-
           <section aria-label="People" className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
             <div className="flex items-center gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-950/50">
               <h2 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
@@ -931,23 +893,28 @@ const Fact: React.FC<{ label: string; mono?: boolean; children: React.ReactNode 
 
 /** A numbered section of the official file, so the record reads in a fixed order. */
 const FileSection: React.FC<{
-  number: number;
+  /** Omitted for records that are not a step of the process, such as the history. */
+  number?: number;
+  /** Defaults to section-{number}. */
+  id?: string;
   icon: React.ComponentType<{ className?: string }>;
   title: string;
   description: string;
   children: React.ReactNode;
-}> = ({ number, icon: Icon, title, description, children }) => (
+}> = ({ number, id = `section-${number}`, icon: Icon, title, description, children }) => (
   <section
-    id={`section-${number}`}
-    aria-labelledby={`file-section-${number}`}
+    id={id}
+    aria-labelledby={`file-${id}`}
     className="scroll-mt-4 overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm print:break-inside-avoid dark:border-slate-700 dark:bg-slate-900"
   >
     <div className="flex items-start gap-3 border-b border-slate-200 bg-slate-50 px-4 py-2.5 dark:border-slate-800 dark:bg-slate-950/50">
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-slate-800 text-[11px] font-semibold text-white dark:bg-slate-700 dark:text-slate-100">
-        {number}
-      </span>
+      {number !== undefined && (
+        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded bg-slate-800 text-[11px] font-semibold text-white dark:bg-slate-700 dark:text-slate-100">
+          {number}
+        </span>
+      )}
       <div className="min-w-0">
-        <h2 id={`file-section-${number}`} className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
+        <h2 id={`file-${id}`} className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
           <Icon className="h-4 w-4 text-slate-400" /> {title}
         </h2>
         <p className="mt-0.5 text-[11px] text-slate-500 dark:text-slate-400">{description}</p>

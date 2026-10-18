@@ -1,10 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence, useReducedMotion, type Transition } from 'motion/react';
 import {
-  Shield,
-  KeyRound,
   FlaskConical,
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
@@ -20,57 +17,27 @@ import {
 } from 'lucide-react';
 import { LogoPlaceholder } from '../common/LogoPlaceholder';
 import { Select } from '../common/Select';
-import { LaboratoryDepartment, User, UserRole } from '../../types';
+import { LaboratoryDepartment, User } from '../../types';
+import { ALL_DEPARTMENTS, DEPARTMENT_LABELS } from '../../lib/departments';
 import { apiRequest } from '../../lib/api';
-import {
-  DEPARTMENT_LABELS,
-  departmentForRole,
-  departmentsForRole,
-} from '../../lib/departments';
 
 const EASE_OUT: Transition['ease'] = [0.22, 0.61, 0.36, 1];
 const TAB_SPRING: Transition = { type: 'spring', stiffness: 520, damping: 34 };
 
-const CREDENTIAL_GROUPS: { label: string; roles: UserRole[]; tier: 'privileged' | 'standard' | 'intern' }[] = [
-  { label: 'Executive Leadership', roles: ['CEO', 'VICE_CEO'], tier: 'privileged' },
-  { label: 'Administration & Support', roles: ['ADMINISTRATOR', 'HR', 'ACCOUNTANT', 'QUALITY_MANAGER'], tier: 'standard' },
-  { label: 'Reception & Registry', roles: ['RECEPTIONIST', 'CLERK'], tier: 'standard' },
-  { label: 'Department Heads', roles: ['HEAD_OF_DEPARTMENT'], tier: 'privileged' },
-  { label: 'Scientific Analysts', roles: ['ANALYST'], tier: 'standard' },
-  { label: 'Scientific Interns', roles: ['INTERN', 'ATTACHEE'], tier: 'intern' },
-];
+type AuthMode = 'signin' | 'request' | 'activate' | 'forgot' | 'reset';
 
-const roleTierLabel: Record<string, string> = {
-  privileged: 'Privileged Access',
-  standard: 'Standard Access',
-  intern: 'Intern Access',
-};
-
-const roleTierIcon: Record<string, React.ReactNode> = {
-  privileged: <Shield className="w-3.5 h-3.5" />,
-  standard: <CheckCircle2 className="w-3.5 h-3.5" />,
-  intern: <KeyRound className="w-3.5 h-3.5" />,
-};
-
-const ADMIN_PROVISIONED_ROLES: UserRole[] = ['CEO', 'VICE_CEO', 'ADMINISTRATOR', 'HEAD_OF_DEPARTMENT'];
-
-const SELF_REGISTER_ROLES: UserRole[] = CREDENTIAL_GROUPS
-  .flatMap(g => g.roles)
-  .filter(role => !ADMIN_PROVISIONED_ROLES.includes(role));
-
-type AuthMode = 'signin' | 'register' | 'activate' | 'forgot' | 'reset';
-
-const AUTH_COPY: Record<AuthMode, { title: string; subtitle: string; switchPrompt: string; switchCta: string; switchTo: AuthMode }> = {
+const AUTH_COPY: Record<AuthMode, { title: string; subtitle: string; switchPrompt: string; switchCta?: string; switchTo?: AuthMode }> = {
   signin: {
     title: 'Sign in to GC-ILCMS',
     subtitle: 'Welcome back. Sign in with your work email.',
-    switchPrompt: 'No account yet?',
-    switchCta: 'Create account',
-    switchTo: 'register',
+    // Accounts are issued by the super-admin from the nominal roll; there is no sign-up.
+    switchPrompt: 'No account?',
+    switchCta: 'Request access',
+    switchTo: 'request',
   },
-  register: {
-    title: 'Request an account',
-    subtitle: 'A super-admin must approve your request before you receive a 15-minute activation link.',
+  request: {
+    title: 'Request access',
+    subtitle: 'The system administrator reviews requests and issues accounts from the nominal roll.',
     switchPrompt: 'Already have an account?',
     switchCta: 'Sign in',
     switchTo: 'signin',
@@ -104,13 +71,6 @@ const FormError: React.FC<{ message: string }> = ({ message }) => (
     {message}
   </p>
 );
-
-const getRoleTier = (role: UserRole): string => {
-  const group = CREDENTIAL_GROUPS.find(g => g.roles.includes(role));
-  return group?.tier || 'standard';
-};
-
-const departmentLabels = DEPARTMENT_LABELS;
 
 const SLIDE_MS = 5000;
 const INTRO_SECONDS = 5;
@@ -388,17 +348,16 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
   const [showSigninPass, setShowSigninPass] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
-  const [regFullName, setRegFullName] = useState('');
-  const [regEmail, setRegEmail] = useState('');
-
-  const [regError, setRegError] = useState<string | null>(null);
-  const [registrationMessage, setRegistrationMessage] = useState('');
-  const [regRole, setRegRole] = useState<UserRole>('ANALYST');
-  const [regDepartment, setRegDepartment] = useState<LaboratoryDepartment>(departmentForRole('ANALYST'));
-  const [regSubmitted, setRegSubmitted] = useState(false);
   const [activationPassword, setActivationPassword] = useState('');
   const [activationError, setActivationError] = useState<string | null>(null);
   const [activationComplete, setActivationComplete] = useState(false);
+  const [requestStaffNumber, setRequestStaffNumber] = useState('');
+  const [requestName, setRequestName] = useState('');
+  const [requestEmail, setRequestEmail] = useState('');
+  const [requestDepartment, setRequestDepartment] = useState<LaboratoryDepartment>(ALL_DEPARTMENTS[0]);
+  const [requestNote, setRequestNote] = useState('');
+  const [requestError, setRequestError] = useState<string | null>(null);
+  const [requestMessage, setRequestMessage] = useState('');
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotError, setForgotError] = useState<string | null>(null);
   const [forgotMessage, setForgotMessage] = useState('');
@@ -466,12 +425,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
   const switchMode = (mode: AuthMode) => {
     setAuthMode(mode);
     setLoginError(null);
-    setRegError(null);
+    setRequestError(null);
     setActivationError(null);
-    if (mode === 'register') {
-      setRegSubmitted(false);
-      setRegistrationMessage('');
-    }
   };
 
   const handleSignIn = async (e: React.FormEvent) => {
@@ -492,30 +447,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
     }
   };
 
-  const handleRegister = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setRegError(null);
-    setSubmitting(true);
-    try {
-      const result = await apiRequest<{ message: string }>('/api/auth/register', {
-        method: 'POST',
-        body: JSON.stringify({
-          fullName: regFullName,
-          email: regEmail,
-          role: regRole,
-          department: regDepartment,
-        }),
-      });
-      setRegSubmitted(true);
-      setRegError(null);
-      setRegistrationMessage(result.message);
-    } catch (cause) {
-      setRegError(cause instanceof Error ? cause.message : 'Could not submit the account request.');
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   const handleActivate = async (e: React.FormEvent) => {
     e.preventDefault();
     setActivationError(null);
@@ -529,6 +460,29 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
       window.history.replaceState({}, '', window.location.pathname);
     } catch (cause) {
       setActivationError(cause instanceof Error ? cause.message : 'Account activation failed.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleAccessRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRequestError(null);
+    setSubmitting(true);
+    try {
+      const result = await apiRequest<{ message: string }>('/api/auth/access-request', {
+        method: 'POST',
+        body: JSON.stringify({
+          staffNumber: requestStaffNumber,
+          fullName: requestName,
+          email: requestEmail,
+          department: requestDepartment,
+          note: requestNote.trim() || undefined,
+        }),
+      });
+      setRequestMessage(result.message);
+    } catch (cause) {
+      setRequestError(cause instanceof Error ? cause.message : 'The request could not be sent.');
     } finally {
       setSubmitting(false);
     }
@@ -775,7 +729,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
           layoutId="lp-form-card"
           transition={{ layout: { duration: shouldReduceMotion ? 0 : 0.8, ease: EASE_OUT } }}
           data-demo-accounts-panel
-          className={`relative flex w-full max-w-[560px] max-h-[calc(100dvh-2rem)] flex-col ${authMode === 'register' ? 'overflow-y-auto' : 'overflow-y-hidden'} rounded-3xl bg-slate-50 shadow-[0_20px_50px_-20px_rgba(2,6,23,0.5)] sm:max-h-[calc(100dvh-3rem)] ${centred ? '' : 'lg:max-h-none lg:max-w-none lg:h-full lg:shadow-none'}`}
+          className={`relative flex w-full max-w-[560px] max-h-[calc(100dvh-2rem)] flex-col ${authMode === 'request' ? 'overflow-y-auto' : 'overflow-y-hidden'} rounded-3xl bg-slate-50 shadow-[0_20px_50px_-20px_rgba(2,6,23,0.5)] sm:max-h-[calc(100dvh-3rem)] ${centred ? '' : 'lg:max-h-none lg:max-w-none lg:h-full lg:shadow-none'}`}
         >
           <div className="flex flex-wrap items-center justify-between gap-3 px-4 pt-5 sm:px-8 sm:pt-6">
             <button
@@ -787,14 +741,16 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
               Overview
             </button>
             <p className="ml-auto text-[length:calc(12px*var(--lp-scale))] text-[#6b6b78]">
-              {copy.switchPrompt}{' '}
-              <button
-                type="button"
-                onClick={() => switchMode(copy.switchTo)}
-                className="ml-1 inline-flex h-8 cursor-pointer items-center rounded-[8px] border border-[#dcdce3] px-3 font-semibold text-[#111] transition-colors hover:border-[#0d4a52] hover:text-[#0d4a52]"
-              >
-                {copy.switchCta}
-              </button>
+              {copy.switchPrompt}
+              {copy.switchTo && (
+                <button
+                  type="button"
+                  onClick={() => switchMode(copy.switchTo!)}
+                  className="ml-2 inline-flex h-8 cursor-pointer items-center rounded-[8px] border border-[#dcdce3] px-3 font-semibold text-[#111] transition-colors hover:border-[#0d4a52] hover:text-[#0d4a52]"
+                >
+                  {copy.switchCta}
+                </button>
+              )}
             </p>
           </div>
 
@@ -886,6 +842,92 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                         </form>
 
                       </div>
+                    )}
+
+                    {authMode === 'request' && (
+                      requestMessage ? (
+                        <div className="space-y-5">
+                          <div className="rounded-2xl bg-emerald-50 p-4 text-center">
+                            <Check className="mx-auto mb-2 h-8 w-8 text-emerald-500" />
+                            <p className="text-sm font-semibold text-slate-700">Request sent</p>
+                            <p className="mt-1 text-xs text-slate-600">{requestMessage}</p>
+                          </div>
+                          <button type="button" onClick={() => switchMode('signin')} className={primaryBtnClass}>Back to sign in</button>
+                        </div>
+                      ) : (
+                        <form onSubmit={handleAccessRequest} className="space-y-[18px]">
+                          <div className="space-y-2">
+                            <label htmlFor="requestStaffNumber" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Staff number</label>
+                            <input
+                              id="requestStaffNumber"
+                              type="text"
+                              value={requestStaffNumber}
+                              onChange={(e) => setRequestStaffNumber(e.target.value)}
+                              placeholder="Personal / PF number"
+                              maxLength={40}
+                              required
+                              className={inputClass}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label htmlFor="requestName" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Full name</label>
+                            <input
+                              id="requestName"
+                              type="text"
+                              autoComplete="name"
+                              value={requestName}
+                              onChange={(e) => setRequestName(e.target.value)}
+                              placeholder="As on the staff establishment list"
+                              minLength={2}
+                              maxLength={150}
+                              required
+                              className={inputClass}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label htmlFor="requestEmail" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Work email</label>
+                            <input
+                              id="requestEmail"
+                              type="email"
+                              autoComplete="email"
+                              value={requestEmail}
+                              onChange={(e) => setRequestEmail(e.target.value)}
+                              placeholder="name@chemist.go.ke"
+                              required
+                              className={inputClass}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label htmlFor="requestDepartment" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Department</label>
+                            <Select<LaboratoryDepartment>
+                              id="requestDepartment"
+                              value={requestDepartment}
+                              onChange={setRequestDepartment}
+                              buttonClassName={`${inputClass} !py-0 !pl-[14px]`}
+                              options={ALL_DEPARTMENTS.map((dept) => ({ value: dept, label: DEPARTMENT_LABELS[dept] }))}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label htmlFor="requestNote" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Note <span className="font-normal text-slate-400">(optional)</span></label>
+                            <textarea
+                              id="requestNote"
+                              value={requestNote}
+                              onChange={(e) => setRequestNote(e.target.value)}
+                              placeholder="e.g. your designation or reporting date"
+                              maxLength={500}
+                              rows={2}
+                              className={`${inputClass} !h-auto py-2.5`}
+                            />
+                          </div>
+
+                          {requestError && <FormError message={requestError} />}
+
+                          <button type="submit" disabled={submitting} className={`${primaryBtnClass} inline-flex items-center justify-center gap-2 disabled:cursor-wait disabled:opacity-80`}>
+                            {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                            {submitting ? 'Sending…' : 'Send to administrator'}
+                          </button>
+                        </form>
+                      )
                     )}
 
                     {authMode === 'forgot' && (
@@ -1001,97 +1043,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
                           </form>
                         )}
                       </div>
-                    )}
-
-                    {authMode === 'register' && (
-                      <form onSubmit={handleRegister} className="space-y-[18px]">
-                        {regSubmitted ? (
-                          <div className="rounded-2xl bg-emerald-50 p-4 text-center">
-                            <Check className="mx-auto mb-2 h-8 w-8 text-emerald-500" />
-                            <p className="text-sm font-semibold text-slate-700">Request submitted</p>
-                            <p className="mt-1 text-xs text-slate-600">{registrationMessage}</p>
-                          </div>
-                        ) : (
-                          <>
-                            <p className="text-[length:calc(10px*var(--lp-scale))] font-mono font-bold uppercase tracking-[0.2em] text-slate-400">Your details</p>
-
-                            <div className="space-y-2">
-                              <label htmlFor="regFullName" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Full name</label>
-                              <input
-                                id="regFullName"
-                                type="text"
-                                autoComplete="name"
-                                value={regFullName}
-                                onChange={(e) => setRegFullName(e.target.value)}
-                                placeholder="Jane Wanjiku"
-                                required
-                                className={inputClass}
-                              />
-                            </div>
-
-                            <div className="grid grid-cols-1 gap-[18px] md:grid-cols-[1fr_140px]">
-                              <div className="space-y-2">
-                                <label htmlFor="regEmail" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Work email</label>
-                                <input
-                                  id="regEmail"
-                                  type="email"
-                                  autoComplete="email"
-                                  value={regEmail}
-                                  onChange={(e) => setRegEmail(e.target.value)}
-                                  placeholder="you@chemist.go.ke"
-                                  required
-                                  className={inputClass}
-                                />
-                              </div>
-                              </div>
-
-                            <p className="pt-2 text-[length:calc(10px*var(--lp-scale))] font-mono font-bold uppercase tracking-[0.2em] text-slate-400">Your role</p>
-
-                            <div className="space-y-2">
-                              <label htmlFor="regRole" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Role</label>
-                              <Select<UserRole>
-                                id="regRole"
-                                value={regRole}
-                                onChange={(role) => {
-                                  setRegRole(role);
-                                  setRegDepartment(departmentForRole(role, regDepartment));
-                                }}
-                                buttonClassName={`${inputClass} !py-0 !pl-[14px]`}
-                                options={SELF_REGISTER_ROLES.map((role) => ({ value: role, label: role.replace(/_/g, ' ') }))}
-                              />
-                              <p className="flex items-center gap-1.5 text-[length:calc(11px*var(--lp-scale))] text-slate-500">
-                                {roleTierIcon[getRoleTier(regRole)]}
-                                {roleTierLabel[getRoleTier(regRole)]}
-                              </p>
-                            </div>
-
-                            <div className="space-y-2">
-                              <label htmlFor="regDept" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Department</label>
-                              <Select<LaboratoryDepartment>
-                                id="regDept"
-                                value={regDepartment}
-                                onChange={setRegDepartment}
-                                buttonClassName={`${inputClass} !py-0 !pl-[14px]`}
-                                options={departmentsForRole(regRole).map((dept) => ({ value: dept, label: departmentLabels[dept] }))}
-                              />
-                              <p className="text-[length:calc(11px*var(--lp-scale))] text-slate-500">
-                                {departmentsForRole(regRole).length === 1
-                                  ? 'This role is institution-wide and is not attached to a laboratory.'
-                                  : 'Select the laboratory division you work in.'}
-                              </p>
-                            </div>
-
-                            {regError && <FormError message={regError} />}
-
-                            <button type="submit" disabled={submitting} className={`${primaryBtnClass} disabled:opacity-60`}>{submitting ? 'Submitting…' : 'Request account approval'}</button>
-
-                            <p className="text-center text-[length:calc(11px*var(--lp-scale))] leading-relaxed text-slate-500">
-                              By submitting a request you agree to the{' '}
-                              <button type="button" onClick={() => setShowTerms(true)} className="cursor-pointer text-[#111] underline">Terms &amp; Privacy</button>.
-                            </p>
-                          </>
-                        )}
-                      </form>
                     )}
 
                     {authMode === 'activate' && (

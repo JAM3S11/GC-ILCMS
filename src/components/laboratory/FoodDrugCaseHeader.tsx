@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, CheckCircle2, ClipboardSignature, Copy, Hourglass } from 'lucide-react';
+import { ArrowLeft, Check, ClipboardSignature, Copy } from 'lucide-react';
 import { FoodDrugIntake, FoodDrugIntakeStatus, User } from '../../types';
 import { Avatar, Button, StatusPill, Tone } from '../common/Dashboard';
-import { CaseFileContentsSection } from './CaseFileContents';
+import { CaseStatusCard, NextStep, caseStages } from './CaseFlow';
 
 const STATUS_TONE: Record<FoodDrugIntakeStatus, Tone> = {
   'Awaiting Approval': 'rose',
@@ -10,9 +10,6 @@ const STATUS_TONE: Record<FoodDrugIntakeStatus, Tone> = {
   'Under Analysis': 'sky',
   Reported: 'emerald',
 };
-
-/** A sample still in the laboratory after this many days is flagged as overdue. */
-const DAYS_IN_LAB_WARNING = 14;
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -30,44 +27,25 @@ const displayName = (name?: string) => {
   return name.toLowerCase().replace(/(^|[\s'-])(\p{L})/gu, (_, sep: string, letter: string) => sep + letter.toUpperCase());
 };
 
-const dayNumber = (value?: string) => {
-  const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  return match ? Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])) / 86_400_000 : null;
-};
-
-/** Day 1 is the day the sample was received; counting stops once it is reported. */
-const daysInLab = (intake: FoodDrugIntake) => {
-  const start = dayNumber(intake.intakeDate);
-  if (start === null) return null;
-  const now = new Date();
-  const end = dayNumber(intake.reportedDate) ?? Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) / 86_400_000;
-  return Math.max(1, Math.floor(end - start) + 1);
-};
-
-interface NextStep {
-  text: string;
-  /** Section the action lives in; omitted when there is nothing to open. */
-  target?: string;
-  action?: string;
-  done?: boolean;
-}
-
 /** What has to happen next on the file, and who does it, phrased for the person viewing. */
 const nextStep = (intake: FoodDrugIntake, isHead: boolean, isAssigned: boolean): NextStep => {
   const analyst = isAssigned ? 'You' : displayName(intake.analystAssigned) || 'The analyst';
   const head = isHead ? 'You' : 'The Head of Department';
   if (intake.status === 'Reported') {
-    return { text: `Reported${intake.reportedDate ? ` on ${formatDate(intake.reportedDate)}` : ''}; the certificate of analysis is issued.`, target: 'draft-reports', action: 'View certificate', done: true };
+    return {
+      text: `Reported${intake.reportedDate ? ` on ${formatDate(intake.reportedDate)}` : ''}; the certificate of analysis is issued.`,
+      action: { label: 'View certificate', target: 'draft-reports' },
+      done: true,
+    };
   }
-  if (intake.status === 'Awaiting Approval') return { text: `${head} to approve the submitted documents.` };
-  if (!intake.analystId) return { text: `${head} to allocate an analyst.`, target: 'work-allocation', action: 'Go to allocation' };
-  if (!intake.receiptFormSaved) return { text: `${analyst} to fill in the sample receipt form.`, target: 'receipt-form', action: 'Go to receipt form' };
-  if (intake.worksheetStatus === 'Awaiting check') return { text: `${head} to check the laboratory worksheet.`, target: 'laboratory-worksheet', action: 'Go to worksheet' };
-  if (intake.worksheetStatus === 'Checked') return { text: 'Worksheet checked. Prepare the certificate of analysis.', target: 'draft-reports', action: 'Go to certificate' };
+  if (intake.status === 'Awaiting Approval') return { text: `${head} to approve the submitted documents from the register.` };
+  if (!intake.analystId) return { text: `${head} to allocate an analyst from the register.`, action: { label: 'Go to allocation', target: 'work-allocation' } };
+  if (!intake.receiptFormSaved) return { text: `${analyst} to fill in the sample receipt form.`, action: { label: 'Go to receipt form', target: 'receipt-form' } };
+  if (intake.worksheetStatus === 'Awaiting check') return { text: `${head} to check the laboratory worksheet.`, action: { label: 'Go to worksheet', target: 'laboratory-worksheet' } };
+  if (intake.worksheetStatus === 'Checked') return { text: 'Worksheet checked. Prepare and approve the certificate of analysis.', action: { label: 'Go to certificate', target: 'draft-reports' } };
   return {
     text: `${analyst} to ${intake.worksheetStatus === 'Draft' ? 'finish and submit' : 'start'} the laboratory worksheet.`,
-    target: 'laboratory-worksheet',
-    action: 'Go to worksheet',
+    action: { label: 'Go to worksheet', target: 'laboratory-worksheet' },
   };
 };
 
@@ -95,94 +73,37 @@ const CopyButton: React.FC<{ value: string; label: string }> = ({ value, label }
   );
 };
 
-/** The four steps of the file as a bar across the header; each step jumps to its section. */
-const ProgressTrack: React.FC<{ sections: CaseFileContentsSection[]; onSelect: (id: string) => void }> = ({ sections, onSelect }) => {
-  const current = sections.find((s) => s.state === 'current') ?? sections.find((s) => s.state !== 'done');
-  return (
-    <div>
-      {/* Phones: dots and the current step's name */}
-      <div className="flex items-center gap-3 sm:hidden">
-        <div className="flex items-center gap-1.5" aria-hidden="true">
-          {sections.map((s) => (
-            <span
-              key={s.id}
-              className={`h-2 w-2 rounded-full ${s.state === 'done' ? 'bg-emerald-600' : s.state === 'current' ? 'bg-teal-300' : 'bg-slate-300 dark:bg-slate-600'}`}
-            />
-          ))}
-        </div>
-        <button type="button" onClick={() => current && onSelect(current.id)} className="cursor-pointer text-xs text-slate-600 dark:text-slate-300">
-          {current ? (
-            <>
-              Step {current.number} of {sections.length}: <span className="font-medium text-slate-900 dark:text-white">{current.title}</span>
-            </>
-          ) : (
-            'All steps complete'
-          )}
-        </button>
-      </div>
-
-      {/* Wider screens: the full track */}
-      <ol className="hidden grid-cols-4 gap-2 sm:grid" aria-label="Case progress">
-        {sections.map((s) => {
-          const done = s.state === 'done';
-          const active = s.state === 'current';
-          return (
-            <li key={s.id}>
-              <button
-                type="button"
-                onClick={() => onSelect(s.id)}
-                aria-current={active ? 'step' : undefined}
-                className="group w-full cursor-pointer text-left"
-              >
-                <span
-                  className={`block h-1.5 rounded-full transition-colors ${
-                    done ? 'bg-emerald-600' : active ? 'bg-teal-300' : 'bg-slate-200 group-hover:bg-slate-300 dark:bg-slate-700 dark:group-hover:bg-slate-600'
-                  }`}
-                />
-                <span className="mt-2 flex items-center gap-1.5 text-xs font-medium text-slate-800 group-hover:text-slate-950 dark:text-slate-100 dark:group-hover:text-white">
-                  <span
-                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded text-[9px] font-semibold text-white ${
-                      done ? 'bg-emerald-600' : active ? 'bg-teal-300' : 'bg-slate-400 dark:bg-slate-600'
-                    }`}
-                  >
-                    {done ? <Check className="h-2.5 w-2.5" /> : s.number}
-                  </span>
-                  <span className="truncate">{s.title}</span>
-                </span>
-                <span
-                  className={`mt-0.5 block truncate pl-[1.375rem] text-[11px] ${
-                    done ? 'text-emerald-700 dark:text-emerald-400' : active ? 'text-teal-700 dark:text-teal-300' : 'text-slate-500 dark:text-slate-400'
-                  }`}
-                >
-                  {s.note ?? (done ? 'Complete' : active ? 'In progress' : 'Pending')}
-                </span>
-              </button>
-            </li>
-          );
-        })}
-      </ol>
-    </div>
-  );
-};
-
 interface FoodDrugCaseHeaderProps {
   intake: FoodDrugIntake;
   currentUser: Pick<User, 'id' | 'name' | 'role'>;
-  sections: CaseFileContentsSection[];
   onBack: () => void;
   onSelectSection: (id: string) => void;
   /** Shown only to the Head and the assigned analyst once an analyst is allocated. */
   onViewAllocation?: () => void;
 }
 
-export const FoodDrugCaseHeader: React.FC<FoodDrugCaseHeaderProps> = ({ intake, currentUser, sections, onBack, onSelectSection, onViewAllocation }) => {
+export const FoodDrugCaseHeader: React.FC<FoodDrugCaseHeaderProps> = ({ intake, currentUser, onBack, onSelectSection, onViewAllocation }) => {
   const isHead = currentUser.role === 'HEAD_OF_DEPARTMENT';
   const isAssigned = !!intake.analystId && intake.analystId === currentUser.id;
   const next = nextStep(intake, isHead, isAssigned);
-  const days = daysInLab(intake);
-  const overdue = days !== null && days > DAYS_IN_LAB_WARNING && intake.status !== 'Reported';
   const analystName = displayName(intake.analystAssigned);
   const receiverName = displayName(intake.receiver);
+
+  // The five stages every department's case file shares.
+  const worksheet = intake.worksheetStatus;
+  const analysed = worksheet === 'Awaiting check' || worksheet === 'Checked';
+  const reported = intake.status === 'Reported';
+  const stages = caseStages(
+    [true, !!intake.analystId, analysed, worksheet === 'Checked', reported],
+    [
+      formatDate(intake.intakeDate),
+      intake.analystId ? analystName : 'Awaiting allocation',
+      analysed ? 'Worksheet submitted' : !intake.receiptFormSaved ? 'Receipt form' : worksheet === 'Draft' ? 'Worksheet in draft' : 'Worksheet',
+      worksheet === 'Checked' ? 'Worksheet checked' : worksheet === 'Awaiting check' ? 'Head to check worksheet' : undefined,
+      reported ? `Reported ${formatDate(intake.reportedDate)}` : worksheet === 'Checked' ? 'Certificate in draft' : undefined,
+    ],
+    [undefined, 'work-allocation', 'laboratory-worksheet', 'laboratory-worksheet', 'draft-reports'],
+  );
 
   return (
     <header className="space-y-2">
@@ -199,9 +120,14 @@ export const FoodDrugCaseHeader: React.FC<FoodDrugCaseHeaderProps> = ({ intake, 
         <span className="text-slate-500 dark:text-slate-400" aria-current="page">Sample case file</span>
       </nav>
 
-      <div className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
-        <div className="space-y-5 px-5 py-5 sm:px-6">
-          {/* Reference, status and the allocation form */}
+      <CaseStatusCard
+        next={next}
+        stages={stages}
+        onSelect={onSelectSection}
+        receivedDate={intake.intakeDate}
+        finishedDate={intake.reportedDate}
+        header={
+          /* Reference, status and the allocation form */
           <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
             <div className="min-w-0 space-y-1.5">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -227,91 +153,53 @@ export const FoodDrugCaseHeader: React.FC<FoodDrugCaseHeaderProps> = ({ intake, 
               </Button>
             )}
           </div>
-
-          {/* What happens next */}
-          <div
-            className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3 ${
-              next.done
-                ? 'border-emerald-200 bg-emerald-50 dark:border-emerald-500/30 dark:bg-emerald-500/10'
-                : 'border-teal-200 bg-teal-50 dark:border-teal-500/30 dark:bg-teal-500/10'
-            }`}
-          >
-            <div className="flex min-w-0 items-start gap-2.5">
-              {next.done ? (
-                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-400" />
-              ) : (
-                <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 text-teal-700 dark:text-teal-300" />
-              )}
-              <p className="text-sm text-slate-800 dark:text-slate-100">
-                <span className="font-semibold">{next.done ? 'Complete: ' : 'Next: '}</span>
-                {next.text}
-              </p>
-            </div>
-            <div className="flex items-center gap-3">
-              {days !== null && (
-                <span
-                  title={overdue ? `In the laboratory longer than ${DAYS_IN_LAB_WARNING} days` : 'Counted from the day the sample was received'}
-                  className={`inline-flex items-center gap-1 text-xs font-medium tabular-nums ${
-                    overdue ? 'text-teal-800 dark:text-teal-200' : 'text-slate-600 dark:text-slate-300'
-                  }`}
-                >
-                  <Hourglass className="h-3.5 w-3.5" />
-                  {intake.status === 'Reported' ? `${days} ${days === 1 ? 'day' : 'days'} in lab` : `Day ${days} in lab`}
-                </span>
-              )}
-              {next.target && next.action && (
-                <Button size="sm" variant={next.done ? 'secondary' : 'primary'} onClick={() => onSelectSection(next.target!)}>
-                  {next.action}
-                </Button>
-              )}
-            </div>
-          </div>
-
-          <ProgressTrack sections={sections} onSelect={onSelectSection} />
-        </div>
-
-        {/* Key facts */}
-        <dl className="grid grid-cols-2 gap-px border-t border-slate-200 bg-slate-200 text-sm lg:grid-cols-4 dark:border-slate-800 dark:bg-slate-800">
-          <div className="bg-white px-5 py-3 dark:bg-slate-900">
-            <dt className="text-[10px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Client</dt>
-            <dd className="mt-0.5 break-words font-medium text-slate-900 dark:text-white">{displayName(intake.clientName)}</dd>
-          </div>
-          <div className="bg-white px-5 py-3 dark:bg-slate-900">
-            <dt className="text-[10px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Received</dt>
-            <dd className="mt-0.5 font-medium text-slate-900 dark:text-white">{formatDate(intake.intakeDate)}</dd>
-            {receiverName && <dd className="break-words text-xs text-slate-500 dark:text-slate-400">by {receiverName}</dd>}
-          </div>
-          <div className="bg-white px-5 py-3 dark:bg-slate-900">
-            <dt className="text-[10px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Analyst</dt>
-            <dd className="mt-1 flex items-center gap-2">
-              {analystName ? (
-                <>
-                  <Avatar name={analystName} size="sm" tone="sky" />
-                  <span className="min-w-0 break-words font-medium text-slate-900 dark:text-white">{analystName}</span>
-                  {isAssigned && (
-                    <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-800 dark:bg-sky-500/15 dark:text-sky-300">You</span>
+        }
+        footer={
+          <>
+            {/* Key facts */}
+            <dl className="grid grid-cols-2 gap-px border-t border-slate-200 bg-slate-200 text-sm lg:grid-cols-4 dark:border-slate-800 dark:bg-slate-800">
+              <div className="bg-white px-5 py-3 dark:bg-slate-900">
+                <dt className="text-[10px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Client</dt>
+                <dd className="mt-0.5 break-words font-medium text-slate-900 dark:text-white">{displayName(intake.clientName)}</dd>
+              </div>
+              <div className="bg-white px-5 py-3 dark:bg-slate-900">
+                <dt className="text-[10px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Received</dt>
+                <dd className="mt-0.5 font-medium text-slate-900 dark:text-white">{formatDate(intake.intakeDate)}</dd>
+                {receiverName && <dd className="break-words text-xs text-slate-500 dark:text-slate-400">by {receiverName}</dd>}
+              </div>
+              <div className="bg-white px-5 py-3 dark:bg-slate-900">
+                <dt className="text-[10px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Analyst</dt>
+                <dd className="mt-1 flex items-center gap-2">
+                  {analystName ? (
+                    <>
+                      <Avatar name={analystName} size="sm" tone="sky" />
+                      <span className="min-w-0 break-words font-medium text-slate-900 dark:text-white">{analystName}</span>
+                      {isAssigned && (
+                        <span className="rounded bg-sky-100 px-1.5 py-0.5 text-[10px] font-semibold text-sky-800 dark:bg-sky-500/15 dark:text-sky-300">You</span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-slate-500 dark:text-slate-400">Not yet allocated</span>
                   )}
-                </>
-              ) : (
-                <span className="text-slate-500 dark:text-slate-400">Not yet allocated</span>
-              )}
-            </dd>
-          </div>
-          <div className="bg-white px-5 py-3 dark:bg-slate-900">
-            <dt className="text-[10px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Seal number</dt>
-            <dd className="mt-0.5 flex items-center gap-1 font-mono text-[13px] font-medium text-slate-900 dark:text-white">
-              {intake.sealNumber ? (
-                <>
-                  <span className="min-w-0 break-all">{intake.sealNumber}</span>
-                  <CopyButton value={intake.sealNumber} label="seal number" />
-                </>
-              ) : (
-                '—'
-              )}
-            </dd>
-          </div>
-        </dl>
-      </div>
+                </dd>
+              </div>
+              <div className="bg-white px-5 py-3 dark:bg-slate-900">
+                <dt className="text-[10px] font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">Seal number</dt>
+                <dd className="mt-0.5 flex items-center gap-1 font-mono text-[13px] font-medium text-slate-900 dark:text-white">
+                  {intake.sealNumber ? (
+                    <>
+                      <span className="min-w-0 break-all">{intake.sealNumber}</span>
+                      <CopyButton value={intake.sealNumber} label="seal number" />
+                    </>
+                  ) : (
+                    '—'
+                  )}
+                </dd>
+              </div>
+            </dl>
+          </>
+        }
+      />
     </header>
   );
 };

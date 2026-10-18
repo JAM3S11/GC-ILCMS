@@ -17,9 +17,30 @@ import { departmentForRole, departmentLabel, departmentsForRole, isLabScopedRole
 import { ROLE_GROUPS, ROLE_INFO, roleLabel } from './roles';
 
 export interface NewAccount {
+  staffNumber: string;
   fullName: string;
   email: string;
   role: UserRole;
+  department: LaboratoryDepartment;
+  /** Issue the account and email the invitation straight after adding to the roll. */
+  issueAccount: boolean;
+}
+
+/** A nominal roll entry being edited; its account, once issued, owns email, role and department. */
+export interface RollEntryDraft {
+  staffNumber: string;
+  fullName: string;
+  email: string;
+  role: UserRole;
+  department: LaboratoryDepartment;
+  hasAccount: boolean;
+}
+
+/** Details an officer sent from the sign-in page's Request access form. */
+export interface AccessRequestPrefill {
+  staffNumber: string;
+  fullName: string;
+  email: string;
   department: LaboratoryDepartment;
 }
 
@@ -30,8 +51,14 @@ interface CreateUserDrawerProps {
   working: boolean;
   /** Server error from the last attempt; shown inside the drawer so the form stays filled. */
   error: string;
-  /** Emails already on the register, to warn before submitting a duplicate. */
+  /** Emails already on the roll or register, to warn before submitting a duplicate. */
   existingEmails: string[];
+  /** Staff numbers already on the roll (upper-case). */
+  existingStaffNumbers: string[];
+  /** When set, the drawer edits this roll entry instead of adding one. */
+  editing?: RollEntryDraft | null;
+  /** When adding, start from an access request; the role is still the administrator's choice. */
+  prefill?: AccessRequestPrefill | null;
   /** Departments that already have a Head of Department. */
   departmentsWithHead: LaboratoryDepartment[];
 }
@@ -53,22 +80,34 @@ export const CreateUserDrawer: React.FC<CreateUserDrawerProps> = ({
   working,
   error,
   existingEmails,
+  existingStaffNumbers,
   departmentsWithHead,
+  editing = null,
+  prefill = null,
 }) => {
   const isMobile = useIsMobile();
+  const [staffNumber, setStaffNumber] = useState('');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<UserRole>(DEFAULT_ROLE);
   const [department, setDepartment] = useState<LaboratoryDepartment>(departmentForRole(DEFAULT_ROLE));
+  const [issueAccount, setIssueAccount] = useState(true);
+  const locked = !!editing?.hasAccount;
 
   // Start every opening with a clean form.
   useEffect(() => {
     if (!open) return;
-    setFullName('');
-    setEmail('');
-    setRole(DEFAULT_ROLE);
-    setDepartment(departmentForRole(DEFAULT_ROLE));
-  }, [open]);
+    const source = editing ?? prefill;
+    // A request names a department, not a role: laboratories default to analyst, the rest to clerk.
+    const startRole = editing?.role
+      ?? (prefill ? (departmentsForRole(DEFAULT_ROLE).includes(prefill.department) ? DEFAULT_ROLE : 'CLERK') : DEFAULT_ROLE);
+    setStaffNumber(source?.staffNumber ?? '');
+    setFullName(source?.fullName ?? '');
+    setEmail(source?.email ?? '');
+    setRole(startRole);
+    setDepartment(departmentForRole(startRole, source?.department));
+    setIssueAccount(true);
+  }, [open, editing, prefill]);
 
   const chooseRole = (next: UserRole) => {
     setRole(next);
@@ -76,15 +115,20 @@ export const CreateUserDrawer: React.FC<CreateUserDrawerProps> = ({
   };
 
   const trimmedEmail = email.trim().toLowerCase();
-  const duplicate = !!trimmedEmail && existingEmails.includes(trimmedEmail);
-  const headTaken = role === 'HEAD_OF_DEPARTMENT' && departmentsWithHead.includes(department);
+  const trimmedStaffNumber = staffNumber.trim().toUpperCase();
+  const duplicate = !!trimmedEmail && trimmedEmail !== editing?.email.toLowerCase() && existingEmails.includes(trimmedEmail);
+  const staffNumberTaken = !!trimmedStaffNumber && trimmedStaffNumber !== editing?.staffNumber.toUpperCase() && existingStaffNumbers.includes(trimmedStaffNumber);
+  const staffNumberValid = /^[A-Za-z0-9][A-Za-z0-9/.\- ]{0,39}$/.test(staffNumber.trim());
+  const sendsInvite = !editing && issueAccount;
+  // Only matters when an account is about to be issued for a head.
+  const headTaken = sendsInvite && role === 'HEAD_OF_DEPARTMENT' && departmentsWithHead.includes(department);
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail);
-  const ready = fullName.trim().length >= 2 && emailValid && !duplicate && !headTaken;
+  const ready = staffNumberValid && !staffNumberTaken && fullName.trim().length >= 2 && emailValid && !duplicate && !headTaken;
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     if (!ready || working) return;
-    void onSubmit({ fullName: fullName.trim(), email: trimmedEmail, role, department });
+    void onSubmit({ staffNumber: trimmedStaffNumber, fullName: fullName.trim(), email: trimmedEmail, role, department, issueAccount: sendsInvite });
   };
 
   // Listed in establishment order; the chosen role's duty shows as the field hint.
@@ -108,10 +152,12 @@ export const CreateUserDrawer: React.FC<CreateUserDrawerProps> = ({
                 <UserPlus className="h-5 w-5" />
               </span>
               <div className="min-w-0 flex-1">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">Staff account register</p>
-                <DrawerTitle className="text-base text-slate-900 dark:text-white">Create staff account</DrawerTitle>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">Nominal roll</p>
+                <DrawerTitle className="text-base text-slate-900 dark:text-white">{editing ? 'Edit roll entry' : 'Add officer to the roll'}</DrawerTitle>
                 <DrawerDescription className="text-xs text-slate-500 dark:text-slate-400">
-                  The officer is emailed a one-time activation link that expires after 15 minutes.
+                  {editing
+                    ? 'Staff accounts are only issued to officers on the nominal roll.'
+                    : 'Only officers on the roll can hold an account. Issue it now, or later from the roll.'}
                 </DrawerDescription>
               </div>
               <DrawerClose asChild>
@@ -128,21 +174,28 @@ export const CreateUserDrawer: React.FC<CreateUserDrawerProps> = ({
 
           <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-5 py-5">
             <FormSection number={1} title="Officer details">
+              <Field
+                label="Staff number"
+                hint={staffNumberTaken ? undefined : 'Personal / PF number from the establishment list.'}
+                warning={staffNumberTaken ? 'This staff number is already on the roll.' : undefined}
+              >
+                <input required autoFocus value={staffNumber} onChange={(e) => setStaffNumber(e.target.value)} placeholder="e.g. 2019012345" maxLength={40} className={inputClass} aria-invalid={staffNumberTaken || undefined} />
+              </Field>
               <Field label="Full name" hint="As it appears on the staff establishment list.">
-                <input required minLength={2} autoFocus value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="e.g. Jane Wanjiku Mwangi" className={inputClass} />
+                <input required minLength={2} value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="e.g. Jane Wanjiku Mwangi" className={inputClass} />
               </Field>
               <Field
                 label="Work email"
-                hint={duplicate ? undefined : 'The activation link is sent here. Use the official work address.'}
-                warning={duplicate ? 'An account with this email is already on the register.' : undefined}
+                hint={duplicate ? undefined : locked ? 'Fixed once the account is issued.' : 'The activation link is sent here. Use the official work address.'}
+                warning={duplicate ? 'This email is already on the roll or the account register.' : undefined}
               >
-                <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@gc.go.ke" className={inputClass} aria-invalid={duplicate || undefined} />
+                <input required type="email" disabled={locked} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@gc.go.ke" className={inputClass} aria-invalid={duplicate || undefined} />
               </Field>
             </FormSection>
 
             <FormSection number={2} title="Role & posting">
-              <Field label="Role" hint={ROLE_INFO[role].duty}>
-                <Select value={role} onChange={chooseRole} options={roleOptions} />
+              <Field label="Role" hint={locked ? 'Change the role from User accounts; the roll follows it.' : ROLE_INFO[role].duty}>
+                <Select value={role} onChange={chooseRole} disabled={locked} options={roleOptions} />
               </Field>
               <Field
                 label={isLabScopedRole(role) ? 'Laboratory' : 'Department'}
@@ -154,13 +207,26 @@ export const CreateUserDrawer: React.FC<CreateUserDrawerProps> = ({
                 <Select
                   value={department}
                   onChange={(value) => setDepartment(value as LaboratoryDepartment)}
-                  disabled={!isLabScopedRole(role)}
+                  disabled={locked || !isLabScopedRole(role)}
                   options={departmentsForRole(role).map((item) => ({ value: item, label: departmentLabel(item) }))}
                 />
               </Field>
             </FormSection>
 
-            <FormSection number={3} title="How it will appear in User accounts">
+            {!editing && (
+              <FormSection number={3} title="Account">
+                <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-slate-200 p-3 text-xs dark:border-slate-700">
+                  <input type="checkbox" checked={issueAccount} onChange={(e) => setIssueAccount(e.target.checked)} className="mt-0.5 h-4 w-4 accent-amber-500" />
+                  <span>
+                    <span className="block font-semibold text-slate-900 dark:text-white">Issue the account now</span>
+                    <span className="text-slate-500 dark:text-slate-400">Creates the account and emails a one-time activation link that expires after 15 minutes.</span>
+                  </span>
+                </label>
+              </FormSection>
+            )}
+
+            {sendsInvite && (
+            <FormSection number={4} title="How it will appear in User accounts">
               <div className="flex items-center gap-3 rounded-xl border border-amber-300 bg-amber-50/70 p-3 dark:border-amber-500/40 dark:bg-amber-500/10">
                 <Avatar name={fullName.trim() || 'New officer'} tone="amber" />
                 <div className="min-w-0 flex-1">
@@ -180,6 +246,7 @@ export const CreateUserDrawer: React.FC<CreateUserDrawerProps> = ({
                 <WhatHappens icon={ScrollText}>The creation is recorded in the audit log under your name.</WhatHappens>
               </ul>
             </FormSection>
+            )}
 
             {error && (
               <div role="alert" className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
@@ -192,8 +259,8 @@ export const CreateUserDrawer: React.FC<CreateUserDrawerProps> = ({
             <DrawerClose asChild>
               <Button variant="ghost">Cancel</Button>
             </DrawerClose>
-            <Button type="submit" variant="primary" icon={Mail} disabled={!ready || working}>
-              {working ? 'Creating…' : 'Create & send invite'}
+            <Button type="submit" variant="primary" icon={sendsInvite ? Mail : UserPlus} disabled={!ready || working}>
+              {working ? 'Saving…' : editing ? 'Save changes' : sendsInvite ? 'Add & send invite' : 'Add to roll'}
             </Button>
           </DrawerFooter>
         </form>

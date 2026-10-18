@@ -10,7 +10,8 @@ export interface CaseStepFact {
 interface CaseStepProps {
   /** Anchor id; other steps open and scroll to it with openCaseStep(id). */
   id: string;
-  step: number;
+  /** Omitted for records that are not a step of the process, such as the history. */
+  step?: number;
   icon: LucideIcon;
   title: string;
   description?: React.ReactNode;
@@ -61,13 +62,15 @@ export const CaseStep: React.FC<CaseStepProps> = ({ id, step, icon: Icon, title,
         }`}
       >
         <div className="flex min-w-0 items-start gap-3">
-          <span
-            className={`flex h-6 w-6 shrink-0 items-center justify-center rounded text-[11px] font-semibold ${
-              status?.tone === 'emerald' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-white dark:bg-slate-700 dark:text-slate-100'
-            }`}
-          >
-            {step}
-          </span>
+          {step !== undefined && (
+            <span
+              className={`flex h-6 w-6 shrink-0 items-center justify-center rounded text-[11px] font-semibold ${
+                status?.tone === 'emerald' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-white dark:bg-slate-700 dark:text-slate-100'
+              }`}
+            >
+              {step}
+            </span>
+          )}
           <div className="min-w-0">
             <h2 className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white">
               <Icon className="h-4 w-4 shrink-0 text-slate-400" /> {title}

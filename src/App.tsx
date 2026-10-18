@@ -144,7 +144,7 @@ export default function App() {
   const [receptionActivityNotificationError, setReceptionActivityNotificationError] = useState('');
   const [adminNotifications, setAdminNotifications] = useState<AppNotification[]>([]);
   const [adminNotificationError, setAdminNotificationError] = useState('');
-  const [superAdminTab, setSuperAdminTab] = useState<'requests' | 'department-requests' | 'users' | 'audit'>('users');
+  const [superAdminTab, setSuperAdminTab] = useState<'nominal-roll' | 'department-requests' | 'users' | 'audit'>('users');
   const [auditLogs, setAuditLogs] = useState<AuditEvent[]>(INITIAL_AUDIT_LOGS);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -869,24 +869,6 @@ export default function App() {
       }
       return;
     }
-    if (action !== 'reset-password' && notification.relatedRecordType === 'account_request' && notification.relatedRecordId) {
-      try {
-        const result = await apiRequest<{ message: string; emailSent?: boolean }>(
-          `/api/admin/requests/${notification.relatedRecordId}/${action}`,
-          { method: 'POST', body: '{}' },
-        );
-        showToast(result.message);
-        try {
-          await apiRequest(`/api/admin/notifications/${notification.id}`, { method: 'DELETE' });
-        } catch {
-          showToast('The request was processed, but its notification could not be dismissed.');
-        }
-        await loadAdminNotifications();
-      } catch (cause) {
-        showToast(cause instanceof Error ? cause.message : 'Could not process the account request.');
-      }
-      return;
-    }
     if (action !== 'reset-password' && notification.relatedRecordType === 'department_change_request' && notification.relatedRecordId) {
       try {
         const result = await apiRequest<{ message: string }>(
@@ -981,9 +963,9 @@ export default function App() {
       if (currentUser?.role === 'SUPER_ADMIN') {
         const nextTab = notification.linkAction === 'ADMIN_DEPARTMENT_REQUESTS'
           ? 'department-requests'
-          : notification.linkAction === 'ADMIN_USERS'
-            ? 'users'
-            : 'requests';
+          : notification.linkAction === 'ADMIN_ROLL'
+            ? 'nominal-roll'
+            : 'users';
         setSuperAdminTab(nextTab);
         setActiveView('super-admin');
       } else if (notification.linkAction === 'RECEPTION_LAB_BAY') {

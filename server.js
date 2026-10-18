@@ -4691,42 +4691,54 @@ const authLimiter = rateLimit({
   message: { error: 'Too many sign-in attempts. Wait 15 minutes before trying again.' },
 });
 
-app.post('/api/auth/register', authLimiter, asyncHandler(async (req, res, next) => {
-  const { fullName, email, role, department } = req.body ?? {};
-  if (!isValidProfile({ fullName, email, role, department })) {
-    return res.status(400).json({ error: 'Provide valid name, work email, role, and the department that matches that role.' });
-  }
+// Self-registration is retired: accounts are issued by the super-admin from
+// the nominal roll. The route answers so old clients get a clear message.
+app.post('/api/auth/register', (_req, res) =>
+  res.status(410).json({ error: 'Accounts are issued by the system administrator. Contact them to be added to the nominal roll.' }));
 
+// An officer without an account asks to be added to the nominal roll. It only
+// alerts the super-admin; nothing is created. The answer is always the same so
+// the form cannot be used to find out who is already on the roll.
+app.post('/api/auth/access-request', authLimiter, asyncHandler(async (req, res, next) => {
+  const { staffNumber, fullName, email, department, note } = req.body ?? {};
+  if (!isValidStaffNumber(staffNumber) ||
+      typeof fullName !== 'string' || fullName.trim().length < 2 || fullName.trim().length > 150 ||
+      typeof email !== 'string' || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) ||
+      !validDepartments.has(department) ||
+      (note != null && (typeof note !== 'string' || note.length > 500))) {
+    return res.status(400).json({ error: 'Provide your staff number, full name, work email and department.' });
+  }
+  const sent = { message: 'Your request was sent to the system administrator. You will receive an activation email once your account is issued.' };
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const { rows: existing } = await client.query(
-      `SELECT id FROM users WHERE lower(email) = $1 LIMIT 1`,
-      [normalizeEmail(email)],
-    );
-    if (existing.length) {
+    const { rows: onRoll } = await client.query('SELECT 1 FROM nominal_roll WHERE LOWER(email) = $1 LIMIT 1', [normalizeEmail(email)]);
+    if (onRoll.length) {
       await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'An account already exists for that email.' });
+      return res.status(202).json(sent);
     }
     const { rows } = await client.query(
-      `INSERT INTO account_requests (full_name, email, requested_role, department)
-       VALUES ($1, $2, $3, $4) RETURNING id`,
-      [fullName.trim(), normalizeEmail(email), role, department ?? null],
+      `INSERT INTO access_requests (staff_number, full_name, email, department, note)
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [staffNumber.trim().toUpperCase(), fullName.trim(), normalizeEmail(email), department, note?.trim() || null],
     );
-    await audit(client, null, normalizeEmail(email), 'ACCOUNT_REQUESTED', 'account_request', rows[0].id);
+    await audit(client, null, normalizeEmail(email), 'ACCESS_REQUESTED', 'access_request', rows[0].id, {
+      staffNumber: staffNumber.trim().toUpperCase(), department,
+    });
     await createAdminNotification(client, {
-      title: 'New staff approval request',
-      message: `${fullName.trim()} (${normalizeEmail(email)}) requested ${role.replaceAll('_', ' ')} access.`,
+      title: 'Access request',
+      message: `${fullName.trim()} (${normalizeEmail(email)}, ${staffNumber.trim().toUpperCase()}) asked to be added to the nominal roll for ${department}.`,
       type: 'warning',
-      linkAction: 'ADMIN_REQUESTS',
-      recordType: 'account_request',
+      linkAction: 'ADMIN_ROLL',
+      recordType: 'access_request',
       recordId: rows[0].id,
     });
     await client.query('COMMIT');
-    res.status(201).json({ message: 'Your request was submitted. Sign-in is available after super-admin approval and account activation.' });
+    res.status(202).json(sent);
   } catch (error) {
     await client.query('ROLLBACK');
-    if (error.code === '23505') return res.status(409).json({ error: 'An account request already exists for this email.' });
+    // A request from this email is already open.
+    if (error.code === '23505') return res.status(202).json(sent);
     next(error);
   } finally {
     client.release();
@@ -5194,28 +5206,14 @@ app.get('/api/admin/overview', requireSession, requireSuperAdmin, asyncHandler(a
   try {
     const { rows } = await pool.query(
       `SELECT
-         (SELECT COUNT(*)::int FROM account_requests WHERE status = 'PENDING') AS pending_requests,
+         (SELECT COUNT(*)::int FROM nominal_roll WHERE employment_status = 'SERVING' AND user_id IS NULL) AS roll_without_account,
+         (SELECT COUNT(*)::int FROM access_requests WHERE status = 'PENDING') AS pending_access_requests,
          (SELECT COUNT(*)::int FROM department_change_requests WHERE status = 'PENDING') AS pending_department_requests,
          (SELECT COUNT(*)::int FROM users WHERE status = 'ACTIVE') AS active_users,
          (SELECT COUNT(*)::int FROM users WHERE status = 'PENDING_INVITE') AS invited_users,
          (SELECT COUNT(*)::int FROM audit_log) AS audit_events`,
     );
     res.json(rows[0]);
-  } catch (error) {
-    next(error);
-  }
-}));
-
-app.get('/api/admin/requests', requireSession, requireSuperAdmin, asyncHandler(async (_req, res, next) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT id, full_name AS "fullName", email,
-              requested_role AS "requestedRole", department, status,
-              created_at AS "createdAt"
-       FROM account_requests WHERE status = 'PENDING'
-       ORDER BY created_at DESC LIMIT 200`,
-    );
-    res.json({ requests: rows });
   } catch (error) {
     next(error);
   }
@@ -5247,85 +5245,57 @@ app.get('/api/admin/audit', requireSession, requireSuperAdmin, asyncHandler(asyn
   }
 }));
 
-app.post('/api/admin/requests/:id/approve', requireSession, requireSuperAdmin, asyncHandler(async (req, res, next) => {
-  const client = await pool.connect();
-  let user;
-  let invitation;
+// Nominal roll: the establishment list. Self-registration is retired, so an
+// account can only be issued by the super-admin from a serving roll entry.
+const isValidStaffNumber = (value) =>
+  typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9/.\- ]{0,39}$/.test(value.trim());
+
+const ROLL_SELECT = `
+  SELECT r.id, r.staff_number AS "staffNumber", r.full_name AS "fullName", r.email,
+         r.role, r.department, r.employment_status AS "employmentStatus",
+         r.user_id AS "userId", u.status AS "accountStatus",
+         r.created_at AS "createdAt", r.updated_at AS "updatedAt"
+  FROM nominal_roll r LEFT JOIN users u ON u.id = r.user_id`;
+
+const rollConflictError = (error) => {
+  if (error.constraint === 'nominal_roll_staff_number_idx') return 'That staff number is already on the nominal roll.';
+  if (error.constraint === 'nominal_roll_email_idx') return 'That email is already on the nominal roll.';
+  return null;
+};
+
+app.get('/api/admin/access-requests', requireSession, requireSuperAdmin, asyncHandler(async (_req, res, next) => {
   try {
-    await client.query('BEGIN');
-    const { rows } = await client.query(
-      `SELECT * FROM account_requests WHERE id = $1 AND status = 'PENDING' FOR UPDATE`,
-      [req.params.id],
+    const { rows } = await pool.query(
+      `SELECT id, staff_number AS "staffNumber", full_name AS "fullName", email, department, note,
+              created_at AS "createdAt"
+       FROM access_requests WHERE status = 'PENDING'
+       ORDER BY created_at DESC LIMIT 200`,
     );
-    if (!rows.length) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Pending request not found.' });
-    }
-    const request = rows[0];
-    const userResult = await client.query(
-      `INSERT INTO users (full_name, email, role, department, status)
-       VALUES ($1, $2, $3, $4, 'PENDING_INVITE')
-       RETURNING id, full_name, email`,
-      [request.full_name, normalizeEmail(request.email), request.requested_role, request.department],
-    );
-    user = userResult.rows[0];
-    invitation = await createInvite(client, user, req.user);
-    await client.query(
-      `UPDATE account_requests SET status = 'APPROVED', decision_by = $2, decision_at = NOW(), user_id = $3
-       WHERE id = $1`,
-      [request.id, req.user.id, user.id],
-    );
-    await audit(client, req.user.id, req.user.email, 'ACCOUNT_REQUEST_APPROVED', 'account_request', request.id, { userId: user.id });
-    await createAdminNotification(client, {
-      title: 'Staff account request approved',
-      message: `${user.full_name} (${user.email}) was approved and an invitation was issued.`,
-      type: 'success',
-      linkAction: 'ADMIN_USERS',
-      recordType: 'user',
-      recordId: user.id,
-    });
-    await client.query('COMMIT');
+    res.json({ requests: rows });
   } catch (error) {
-    await client.query('ROLLBACK');
-    if (error.code === '23505') return res.status(409).json({ error: 'An account already exists with that email.' });
-    return next(error);
-  } finally {
-    client.release();
+    next(error);
   }
-  const emailSent = await deliverInvite(req, user, invitation);
-  res.status(emailSent ? 200 : 202).json({
-    emailSent,
-    message: emailSent
-      ? `Invitation sent to ${user.email}. It expires in 15 minutes.`
-      : `Account approved, but the invitation email could not be delivered. Check SMTP settings, then resend the invitation from Staff accounts.`,
-  });
 }));
 
-app.post('/api/admin/requests/:id/reject', requireSession, requireSuperAdmin, asyncHandler(async (req, res, next) => {
-  const note = typeof req.body?.note === 'string' ? req.body.note.trim().slice(0, 500) : '';
+app.post('/api/admin/access-requests/:id/dismiss', requireSession, requireSuperAdmin, asyncHandler(async (req, res, next) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const result = await client.query(
-      `UPDATE account_requests SET status = 'REJECTED', decision_by = $2, decision_at = NOW(), decision_note = $3
-       WHERE id = $1 AND status = 'PENDING' RETURNING id`,
-      [req.params.id, req.user.id, note || null],
+      `UPDATE access_requests SET status = 'DISMISSED', decided_by = $2, decided_at = NOW()
+       WHERE id = $1 AND status = 'PENDING' RETURNING full_name, email`,
+      [req.params.id, req.user.id],
     );
     if (!result.rowCount) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Pending request not found.' });
+      return res.status(404).json({ error: 'Pending access request not found.' });
     }
-    await audit(client, req.user.id, req.user.email, 'ACCOUNT_REQUEST_REJECTED', 'account_request', req.params.id);
-    await createAdminNotification(client, {
-      title: 'Staff account request rejected',
-      message: `The account request ${req.params.id} was rejected by ${req.user.email}.`,
-      type: 'info',
-      linkAction: 'ADMIN_REQUESTS',
-      recordType: 'account_request',
-      recordId: req.params.id,
+    await audit(client, req.user.id, req.user.email, 'ACCESS_REQUEST_DISMISSED', 'access_request', req.params.id, {
+      email: result.rows[0].email,
     });
+    await client.query('DELETE FROM admin_notifications WHERE record_type = $1 AND record_id = $2', ['access_request', req.params.id]);
     await client.query('COMMIT');
-    res.json({ message: 'Account request rejected.' });
+    res.json({ message: `The request from ${result.rows[0].full_name} was dismissed.` });
   } catch (error) {
     await client.query('ROLLBACK');
     next(error);
@@ -5334,36 +5304,245 @@ app.post('/api/admin/requests/:id/reject', requireSession, requireSuperAdmin, as
   }
 }));
 
-app.post('/api/admin/users', requireSession, requireSuperAdmin, asyncHandler(async (req, res, next) => {
-  const { fullName, email, role, department } = req.body ?? {};
-  if (!isValidProfile({ fullName, email, role, department }, adminCreatableRoles)) {
-    return res.status(400).json({ error: 'Provide valid name, work email, role, and the department that matches that role.' });
+app.get('/api/admin/nominal-roll', requireSession, requireSuperAdmin, asyncHandler(async (_req, res, next) => {
+  try {
+    const { rows } = await pool.query(`${ROLL_SELECT} ORDER BY r.employment_status DESC, r.full_name LIMIT 2000`);
+    res.json({ entries: rows });
+  } catch (error) {
+    next(error);
   }
+}));
 
+app.post('/api/admin/nominal-roll', requireSession, requireSuperAdmin, asyncHandler(async (req, res, next) => {
+  const { staffNumber, fullName, email, role, department, accessRequestId } = req.body ?? {};
+  if (!isValidStaffNumber(staffNumber) || !isValidProfile({ fullName, email, role, department }, adminCreatableRoles) ||
+      (accessRequestId != null && (typeof accessRequestId !== 'string' || !/^[0-9a-f-]{36}$/i.test(accessRequestId)))) {
+    return res.status(400).json({ error: 'Provide a staff number, name, work email, role, and the department that matches that role.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `INSERT INTO nominal_roll (staff_number, full_name, email, role, department, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [staffNumber.trim().toUpperCase(), fullName.trim(), normalizeEmail(email), role, department, req.user.id],
+    );
+    if (accessRequestId) {
+      await client.query(
+        `UPDATE access_requests SET status = 'ADDED', nominal_roll_id = $2, decided_by = $3, decided_at = NOW()
+         WHERE id = $1 AND status = 'PENDING'`,
+        [accessRequestId, rows[0].id, req.user.id],
+      );
+      await client.query('DELETE FROM admin_notifications WHERE record_type = $1 AND record_id = $2', ['access_request', accessRequestId]);
+    }
+    await audit(client, req.user.id, req.user.email, 'NOMINAL_ROLL_ADDED', 'nominal_roll', rows[0].id, {
+      staffNumber: staffNumber.trim().toUpperCase(), email: normalizeEmail(email), role, department,
+    });
+    await client.query('COMMIT');
+    res.status(201).json({ id: rows[0].id, message: `${fullName.trim()} was added to the nominal roll.` });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    const conflict = rollConflictError(error);
+    if (conflict) return res.status(409).json({ error: conflict });
+    next(error);
+  } finally {
+    client.release();
+  }
+}));
+
+// Edits an entry. Once an account is issued, its email, role and department
+// belong to the account (changed from User accounts), so only the staff number
+// and name can change here; the name is copied onto the account.
+app.patch('/api/admin/nominal-roll/:id', requireSession, requireSuperAdmin, asyncHandler(async (req, res, next) => {
+  const { staffNumber, fullName, email, role, department } = req.body ?? {};
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query('SELECT * FROM nominal_roll WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (!rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Nominal roll entry not found.' });
+    }
+    const entry = rows[0];
+    const updated = entry.user_id
+      ? { staffNumber, fullName, email: entry.email, role: entry.role, department: entry.department }
+      : { staffNumber, fullName, email, role, department };
+    if (!isValidStaffNumber(updated.staffNumber) || !isValidProfile(updated, adminCreatableRoles)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Provide a staff number, name, work email, role, and the department that matches that role.' });
+    }
+    await client.query(
+      `UPDATE nominal_roll SET staff_number = $2, full_name = $3, email = $4, role = $5, department = $6, updated_at = NOW()
+       WHERE id = $1`,
+      [entry.id, updated.staffNumber.trim().toUpperCase(), updated.fullName.trim(), normalizeEmail(updated.email), updated.role, updated.department],
+    );
+    if (entry.user_id) {
+      await client.query('UPDATE users SET full_name = $2, updated_at = NOW() WHERE id = $1', [entry.user_id, updated.fullName.trim()]);
+    }
+    await audit(client, req.user.id, req.user.email, 'NOMINAL_ROLL_UPDATED', 'nominal_roll', entry.id, {
+      from: { staffNumber: entry.staff_number, fullName: entry.full_name, email: entry.email, role: entry.role, department: entry.department },
+      to: { staffNumber: updated.staffNumber.trim().toUpperCase(), fullName: updated.fullName.trim(), email: normalizeEmail(updated.email), role: updated.role, department: updated.department },
+    });
+    await client.query('COMMIT');
+    res.json({ message: 'Nominal roll entry updated.' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    const conflict = rollConflictError(error);
+    if (conflict) return res.status(409).json({ error: conflict });
+    next(error);
+  } finally {
+    client.release();
+  }
+}));
+
+// Marks an officer as having left (or serving again). Leaving disables the
+// linked account and ends its sessions; returning does not re-enable it.
+app.patch('/api/admin/nominal-roll/:id/status', requireSession, requireSuperAdmin, asyncHandler(async (req, res, next) => {
+  const { employmentStatus } = req.body ?? {};
+  if (!['SERVING', 'LEFT'].includes(employmentStatus)) return res.status(400).json({ error: 'Status must be SERVING or LEFT.' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(7901234)');
+    const { rows } = await client.query(
+      `SELECT r.*, u.role AS account_role, u.status AS account_status
+       FROM nominal_roll r LEFT JOIN users u ON u.id = r.user_id
+       WHERE r.id = $1 FOR UPDATE OF r`,
+      [req.params.id],
+    );
+    if (!rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Nominal roll entry not found.' });
+    }
+    const entry = rows[0];
+    if (employmentStatus === 'LEFT' && entry.user_id) {
+      if (entry.user_id === req.user.id) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'You cannot mark yourself as having left.' });
+      }
+      if (entry.account_role === 'SUPER_ADMIN' && entry.account_status === 'ACTIVE') {
+        const { rows: remaining } = await client.query(
+          `SELECT COUNT(*)::int AS count FROM users
+           WHERE role = 'SUPER_ADMIN' AND status = 'ACTIVE' AND id <> $1`,
+          [entry.user_id],
+        );
+        if (remaining[0].count < 1) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ error: 'The last active super-admin cannot be marked as having left.' });
+        }
+      }
+      await client.query(`UPDATE users SET status = 'DISABLED', updated_at = NOW() WHERE id = $1`, [entry.user_id]);
+      await client.query('DELETE FROM auth_sessions WHERE user_id = $1', [entry.user_id]);
+      await client.query(
+        `UPDATE account_invites SET revoked_at = NOW() WHERE user_id = $1 AND used_at IS NULL AND revoked_at IS NULL`,
+        [entry.user_id],
+      );
+    }
+    await client.query(
+      'UPDATE nominal_roll SET employment_status = $2, updated_at = NOW() WHERE id = $1',
+      [entry.id, employmentStatus],
+    );
+    await audit(client, req.user.id, req.user.email, employmentStatus === 'LEFT' ? 'NOMINAL_ROLL_LEFT' : 'NOMINAL_ROLL_SERVING', 'nominal_roll', entry.id, {
+      staffNumber: entry.staff_number, email: entry.email, userId: entry.user_id,
+    });
+    if (employmentStatus === 'LEFT' && entry.user_id) {
+      await createAdminNotification(client, {
+        title: 'Officer left; account disabled',
+        message: `${entry.full_name} (${entry.email}) was marked as having left by ${req.user.email}. Their account was disabled.`,
+        type: 'warning',
+        linkAction: 'ADMIN_ROLL',
+        recordType: 'nominal_roll',
+        recordId: entry.id,
+      });
+    }
+    await client.query('COMMIT');
+    res.json({
+      message: employmentStatus === 'LEFT'
+        ? `${entry.full_name} is marked as having left${entry.user_id ? ' and their account is disabled' : ''}.`
+        : `${entry.full_name} is serving again. Enable their account from User accounts if needed.`,
+    });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    next(error);
+  } finally {
+    client.release();
+  }
+}));
+
+// Removes an entry added by mistake. Entries with an account stay; mark them as left instead.
+app.delete('/api/admin/nominal-roll/:id', requireSession, requireSuperAdmin, asyncHandler(async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query('SELECT * FROM nominal_roll WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (!rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Nominal roll entry not found.' });
+    }
+    if (rows[0].user_id) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'This officer has an account. Mark them as having left instead.' });
+    }
+    await audit(client, req.user.id, req.user.email, 'NOMINAL_ROLL_REMOVED', 'nominal_roll', rows[0].id, {
+      staffNumber: rows[0].staff_number, email: rows[0].email,
+    });
+    await client.query('DELETE FROM nominal_roll WHERE id = $1', [rows[0].id]);
+    await client.query('COMMIT');
+    res.json({ message: `${rows[0].full_name} was removed from the nominal roll.` });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    next(error);
+  } finally {
+    client.release();
+  }
+}));
+
+// Issues the staff account for a serving roll entry: the account takes the
+// entry's name, email, role and department, and the officer is emailed an
+// activation link. This is the only way an account is created.
+app.post('/api/admin/nominal-roll/:id/account', requireSession, requireSuperAdmin, asyncHandler(async (req, res, next) => {
   const client = await pool.connect();
   let user;
   let invitation;
+  let entry;
   try {
     await client.query('BEGIN');
-    if (role === 'HEAD_OF_DEPARTMENT') {
-      const { rows: existingHead } = await findDepartmentHead(client, department);
+    const { rows: found } = await client.query('SELECT * FROM nominal_roll WHERE id = $1 FOR UPDATE', [req.params.id]);
+    if (!found.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Nominal roll entry not found.' });
+    }
+    entry = found[0];
+    if (entry.employment_status !== 'SERVING') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: `${entry.full_name} is marked as having left. Mark them as serving first.` });
+    }
+    if (entry.user_id) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: `${entry.full_name} already has an account.` });
+    }
+    if (entry.role === 'HEAD_OF_DEPARTMENT') {
+      const { rows: existingHead } = await findDepartmentHead(client, entry.department);
       if (existingHead.length) {
         await client.query('ROLLBACK');
-        return res.status(409).json({ error: departmentHeadError(department, existingHead[0]) });
+        return res.status(409).json({ error: departmentHeadError(entry.department, existingHead[0]) });
       }
     }
     const { rows } = await client.query(
       `INSERT INTO users (full_name, email, role, department, status)
        VALUES ($1, $2, $3, $4, 'PENDING_INVITE')
        RETURNING id, full_name, email`,
-      [fullName.trim(), normalizeEmail(email), role, department ?? null],
+      [entry.full_name, normalizeEmail(entry.email), entry.role, entry.department],
     );
     user = rows[0];
+    await client.query('UPDATE nominal_roll SET user_id = $2, updated_at = NOW() WHERE id = $1', [entry.id, user.id]);
     invitation = await createInvite(client, user, req.user);
-    await audit(client, req.user.id, req.user.email, 'USER_INVITED', 'user', user.id, { email: user.email, role });
+    await audit(client, req.user.id, req.user.email, 'ACCOUNT_ISSUED_FROM_ROLL', 'user', user.id, {
+      email: user.email, role: entry.role, staffNumber: entry.staff_number, nominalRollId: entry.id,
+    });
     await createAdminNotification(client, {
       title: 'Staff account invitation created',
-      message: `${user.full_name} (${user.email}) was invited as ${role.replaceAll('_', ' ')} in ${department}.`,
+      message: `${user.full_name} (${user.email}, ${entry.staff_number}) was invited as ${entry.role.replaceAll('_', ' ')} in ${entry.department}.`,
       type: 'success',
       linkAction: 'ADMIN_USERS',
       recordType: 'user',
@@ -5373,7 +5552,7 @@ app.post('/api/admin/users', requireSession, requireSuperAdmin, asyncHandler(asy
   } catch (error) {
     await client.query('ROLLBACK');
     if (error.constraint === 'users_one_head_per_department_idx') {
-      return res.status(409).json({ error: `${department} already has a Head of Department. Change that account's role first.` });
+      return res.status(409).json({ error: `${entry.department} already has a Head of Department. Change that account's role first.` });
     }
     if (error.code === '23505') return res.status(409).json({ error: 'An account already exists with that email.' });
     return next(error);
@@ -5500,6 +5679,16 @@ app.patch('/api/admin/users/:id/status', requireSession, requireSuperAdmin, asyn
         return res.status(409).json({ error: 'The last active super-admin account cannot be disabled.' });
       }
     }
+    if (status === 'ACTIVE') {
+      const { rows: left } = await client.query(
+        `SELECT 1 FROM nominal_roll WHERE user_id = $1 AND employment_status = 'LEFT'`,
+        [req.params.id],
+      );
+      if (left.length) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'This officer is marked as having left on the nominal roll. Mark them as serving first.' });
+      }
+    }
     await client.query('UPDATE users SET status = $2, updated_at = NOW() WHERE id = $1', [req.params.id, status]);
     if (status === 'DISABLED') await client.query('DELETE FROM auth_sessions WHERE user_id = $1', [req.params.id]);
     await audit(client, req.user.id, req.user.email, `USER_${status}`, 'user', req.params.id);
@@ -5569,6 +5758,8 @@ app.patch('/api/admin/users/:id/role', requireSession, requireSuperAdmin, asyncH
       }
     }
     await client.query('UPDATE users SET role = $2, department = $3, updated_at = NOW() WHERE id = $1', [req.params.id, role, department]);
+    // The nominal roll records the officer's current posting.
+    await client.query('UPDATE nominal_roll SET role = $2, department = $3, updated_at = NOW() WHERE user_id = $1', [req.params.id, role, department]);
     await audit(client, req.user.id, req.user.email, 'USER_ROLE_CHANGED', 'user', req.params.id, {
       from: previous, to: role, fromDepartment: previousDepartment, toDepartment: department,
     });
