@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import nodemailer from 'nodemailer';
-import pg from 'pg';
+import { createPool } from './db/pool.js';
 import {
   createHash,
   randomBytes,
@@ -23,7 +23,7 @@ import {
 
 const scrypt = promisify(scryptCallback);
 const app = express();
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const pool = createPool(process.env.DATABASE_URL);
 const SESSION_COOKIE = 'gcilcms_session';
 const SESSION_HOURS = 8;
 const INVITE_MINUTES = 15;
@@ -6091,9 +6091,14 @@ app.use((error, _req, res, _next) => {
   res.status(500).json({ error: 'The request could not be completed. Check the server logs and configuration.' });
 });
 
+if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required.');
+
+// On Vercel this module is imported by api/index.js and the app runs as a function; the
+// static build in dist/ is served by Vercel itself, so only local runs listen and mount the UI.
+export default app;
+
 const port = Number(process.env.PORT ?? 8000);
 const start = async () => {
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required.');
   await pool.query('SELECT 1');
   if (process.env.NODE_ENV === 'production') {
     app.use(express.static('dist'));
@@ -6106,8 +6111,10 @@ const start = async () => {
   app.listen(port, process.env.HOST ?? '0.0.0.0', () => console.log(`GC-ILCMS listening on port ${port}`));
 };
 
-start().catch(async (error) => {
-  console.error(`Server startup failed: ${error.message}`);
-  await pool.end();
-  process.exit(1);
-});
+if (!process.env.VERCEL) {
+  start().catch(async (error) => {
+    console.error(`Server startup failed: ${error.message}`);
+    await pool.end();
+    process.exit(1);
+  });
+}

@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { readdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { join } from 'node:path';
-import pg from 'pg';
+import { createPool } from '../db/pool.js';
 
 const connectionString = process.env.MIGRATION_DATABASE_URL || process.env.DATABASE_URL;
 if (!connectionString) {
@@ -17,7 +17,7 @@ if (!files.length) {
   process.exit(1);
 }
 
-const pool = new pg.Pool({ connectionString });
+const pool = createPool(connectionString);
 
 try {
   // Every file is written to be idempotent, so re-running is safe.

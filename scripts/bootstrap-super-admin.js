@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import pg from 'pg';
+import { createPool } from '../db/pool.js';
 import { randomBytes, scrypt as scryptCallback } from 'node:crypto';
 import { promisify } from 'node:util';
 
@@ -19,7 +19,7 @@ if (process.env.SUPER_ADMIN_PASSWORD.length < 12) {
   process.exit(1);
 }
 
-const pool = new pg.Pool({ connectionString, ssl: process.env.PGSSLMODE === 'require' ? { rejectUnauthorized: true } : undefined });
+const pool = createPool(connectionString);
 
 try {
   const { rows: existing } = await pool.query("SELECT id FROM users WHERE role = 'SUPER_ADMIN' LIMIT 1");
@@ -33,8 +33,8 @@ try {
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
-      `INSERT INTO users (full_name, email, role, status, password_hash)
-       VALUES ($1, lower($2), 'SUPER_ADMIN', 'ACTIVE', $3) RETURNING id, department`,
+      `INSERT INTO users (full_name, email, role, department, status, password_hash)
+       VALUES ($1, lower($2), 'SUPER_ADMIN', 'General Administration', 'ACTIVE', $3) RETURNING id, department`,
       [process.env.SUPER_ADMIN_NAME.trim(), process.env.SUPER_ADMIN_EMAIL.trim().toLowerCase(), passwordHash],
     );
     // Every account belongs to a nominal roll entry, the first admin included.
