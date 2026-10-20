@@ -300,13 +300,14 @@ export const CannabisDraftReportSection: React.FC<CannabisDraftReportSectionProp
             <Field label="Analysing officer"><div className={readCls}>{preview.analysedBy || '—'}</div></Field>
             <Field label="Checked by"><div className={readCls}>{preview.checkedBy || '—'}</div></Field>
             <div className="sm:col-span-2">
-              <SignatureInput label="Analysing officer's signature" value={values.analystSignature} onChange={(v) => update('analystSignature', v)} disabled={!canEdit} />
+              <SignatureInput label="Analysing officer's signature" value={values.analystSignature} onChange={(v) => update('analystSignature', v)} disabled={!canEdit} mine={intake.analysisOfficerId === currentUser.id} />
             </div>
             <div className="sm:col-span-2">
               <SignatureInput
                 label="Checked by — Head of Narcotics' signature"
                 value={report?.checkerSignature ?? checkerSignature}
                 onChange={setCheckerSignature}
+                mine
                 disabled={!(data.canApprove && report?.status === 'SUBMITTED')}
               />
             </div>
@@ -321,14 +322,14 @@ export const CannabisDraftReportSection: React.FC<CannabisDraftReportSectionProp
             </div>
           )}
 
-          <div className="flex flex-col-reverse gap-2 border-t border-slate-200 pt-3 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
+          <div className="sticky bottom-0 z-10 -mx-1 flex flex-col-reverse gap-2 border-t border-slate-200 bg-white/95 px-1 py-3 backdrop-blur sm:flex-row sm:items-center sm:justify-between dark:border-slate-800 dark:bg-slate-950/95">
             <span
               className={`text-[11px] ${message?.tone === 'error' ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`}
               role={message?.tone === 'error' ? 'alert' : undefined}
             >
               {message?.text ||
                 (canEdit
-                  ? missing.length ? `Still to fill in: ${missing.join(', ')}.` : dirty ? 'Ready to save.' : `Saved ${report?.updatedAt} by ${report?.updatedBy}.`
+                  ? missing.length ? `${missing.length} to fill in: ${missing.join(', ')}.` : dirty ? 'Ready to save.' : `Saved ${report?.updatedAt} by ${report?.updatedBy}.`
                   : data.canApprove && report?.status === 'SUBMITTED' ? 'Check the report, sign, then approve it.'
                   : report ? `Last saved ${report.updatedAt} by ${report.updatedBy}.`
                   : 'Only the assigned Analysis Officer or the Head can prepare this report while the exhibit is in analysis.')}

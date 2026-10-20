@@ -1,6 +1,6 @@
 import { FoodDrugIntake, FoodDrugIntakeStatus } from '../../types';
 import { Tone } from '../common/Dashboard';
-import { CaseStage, NextStep, caseStages } from './CaseFlow';
+import { NextStep } from './CaseFlow';
 
 /* Where a Food & Drugs sample's case file stands, for the shared case-file layout. */
 
@@ -44,7 +44,7 @@ export const foodDrugNextStep = (intake: FoodDrugIntake, isHead: boolean, isAssi
   if (intake.worksheetStatus === 'Awaiting check') return { text: `${head} to check the laboratory worksheet.`, action: { label: 'Check worksheet', target: 'laboratory-worksheet' } };
   if (intake.worksheetStatus === 'Checked') {
     return {
-      text: 'Worksheet checked. Prepare and approve the certificate of analysis, then mark the sample as reported.',
+      text: 'Worksheet checked. Prepare and approve the certificate of analysis; the sample is marked reported when the last one is approved.',
       action: { label: 'Go to certificate', target: 'draft-reports' },
     };
   }
@@ -52,22 +52,4 @@ export const foodDrugNextStep = (intake: FoodDrugIntake, isHead: boolean, isAssi
     text: `${analyst} to ${intake.worksheetStatus === 'Draft' ? 'finish and submit' : 'start'} the laboratory worksheet.`,
     action: { label: intake.worksheetStatus === 'Draft' ? 'Finish worksheet' : 'Start worksheet', target: 'laboratory-worksheet' },
   };
-};
-
-/** The five stages every department's case file shares. */
-export const foodDrugStages = (intake: FoodDrugIntake): CaseStage[] => {
-  const worksheet = intake.worksheetStatus;
-  const analysed = worksheet === 'Awaiting check' || worksheet === 'Checked';
-  const reported = intake.status === 'Reported';
-  return caseStages(
-    [true, !!intake.analystId, analysed, worksheet === 'Checked', reported],
-    [
-      formatDate(intake.intakeDate),
-      intake.analystId ? displayName(intake.analystAssigned) : 'Awaiting allocation',
-      analysed ? 'Worksheet submitted' : !intake.receiptFormSaved ? 'Receipt form' : worksheet === 'Draft' ? 'Worksheet in draft' : 'Worksheet',
-      worksheet === 'Checked' ? 'Worksheet checked' : worksheet === 'Awaiting check' ? 'Head to check worksheet' : undefined,
-      reported ? `Reported ${formatDate(intake.reportedDate)}` : worksheet === 'Checked' ? 'Certificate in draft' : undefined,
-    ],
-    [undefined, 'work-allocation', 'laboratory-worksheet', 'laboratory-worksheet', 'draft-reports'],
-  );
 };

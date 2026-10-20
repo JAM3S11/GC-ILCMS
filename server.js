@@ -4524,6 +4524,36 @@ app.post('/api/food-drug/draft-reports/:reportId/approve', requireSession, requi
     });
   }
   await audit(db, req.user.id, req.user.email, 'FD_DRAFT_REPORT_APPROVED', 'food_drug_intake', ctx.id, { labSampleNo: report.lab_sample_no });
+
+  // Approving the last sub sample's report finishes the work, so the sample is reported here
+  // instead of someone pressing "Reported" separately. Same columns and audit as the /report route.
+  if (ctx.status === 'Under Analysis') {
+    const { rows: reports } = await db.query('SELECT lab_sample_no, status FROM food_drug_draft_reports WHERE intake_id = $1', [ctx.id]);
+    const expected = new Set([...draftReportPrefills(ctx).map((p) => p.labSampleNo), ...reports.map((r) => r.lab_sample_no)]);
+    const approved = new Set(reports.filter((r) => r.status === 'APPROVED').map((r) => r.lab_sample_no));
+    if (expected.size && [...expected].every((labSampleNo) => approved.has(labSampleNo))) {
+      const { rows: analyst } = await db.query('SELECT full_name FROM users WHERE id = $1', [ctx.analyst_id]);
+      const reportedBy = analyst[0]?.full_name ?? req.user.fullName ?? req.user.full_name ?? req.user.name;
+      await db.query(
+        `UPDATE food_drug_intakes
+         SET status = 'Reported', reported_by = $2, reported_at = NOW(), updated_at = NOW()
+         WHERE id = $1`,
+        [ctx.id, reportedBy],
+      );
+      await audit(db, req.user.id, req.user.email, 'FD_SAMPLE_REPORTED', 'food_drug_intake', ctx.id, { reportedBy, automatic: true });
+      if (ctx.analyst_id) {
+        await createReceptionActivityNotification(db, {
+          recipientUserId: ctx.analyst_id,
+          title: `Sample reported — ${ctx.id}`,
+          message: `Every draft report for ${ctx.id} is approved, so the sample is now marked as reported.`,
+          type: 'success',
+          linkAction: 'WORK_ALLOCATION',
+          relatedRecordType: 'FOOD_DRUG_INTAKE',
+          relatedRecordId: ctx.id,
+        });
+      }
+    }
+  }
 }));
 
 // Super Admin only: back to Draft, both signatures cleared.
@@ -5182,6 +5212,30 @@ app.get('/api/account/profile-change-requests', requireSession, asyncHandler(asy
       [req.user.id],
     );
     res.json({ requests: rows, requestableRoles: requestableRoles(req.user.department) });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+// The officer's saved signature, offered on every form they sign so they do not redraw it.
+app.get('/api/account/signature', requireSession, asyncHandler(async (req, res, next) => {
+  try {
+    const { rows } = await pool.query('SELECT signature_image FROM users WHERE id = $1', [req.user.id]);
+    res.json({ signature: rows[0]?.signature_image ?? null });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+app.put('/api/account/signature', requireSession, asyncHandler(async (req, res, next) => {
+  const signature = req.body?.signature ?? null;
+  if (signature !== null && !draftReportImage(signature)) {
+    return res.status(400).json({ error: 'The signature must be a PNG or JPEG image under 300 KB.' });
+  }
+  try {
+    await pool.query('UPDATE users SET signature_image = $2, updated_at = NOW() WHERE id = $1', [req.user.id, signature]);
+    await audit(pool, req.user.id, req.user.email, signature ? 'SIGNATURE_UPDATED' : 'SIGNATURE_CLEARED', 'user', req.user.id);
+    res.json({ signature });
   } catch (error) {
     next(error);
   }

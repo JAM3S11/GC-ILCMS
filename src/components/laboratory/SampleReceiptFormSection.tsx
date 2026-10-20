@@ -8,7 +8,8 @@ import { Select } from '../common/Select';
 import { SampleReceiptFormData, SampleReceiptFormPage } from './SampleReceiptFormPage';
 import { SignatureInput, readImageFile } from './SignatureInput';
 import { A4PreviewDialog, downloadA4Pdf, usePrintTarget } from './a4Preview';
-import { CaseStep, CaseStepFact } from './CaseStep';
+import { CaseStep } from './CaseStep';
+import { DetailRow } from './workspace/ui';
 
 /** Values the analyst can change; sender, submitter and analyst details come from the record. */
 interface Editable {
@@ -222,15 +223,27 @@ export const SampleReceiptFormSection: React.FC<SampleReceiptFormSectionProps> =
   const readCls =
     'w-full truncate rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-200';
 
+  const footer = (
+    <>
+      <span className={`mr-auto text-[11px] ${message?.tone === 'error' ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`} role={message?.tone === 'error' ? 'alert' : undefined}>
+        {message?.text ||
+          (!canEdit
+            ? form ? `Saved ${form.updatedAt} by ${form.updatedBy}.` : 'Only the allocated analyst or the Head can fill in this form.'
+            : missing.length ? `${missing.length} to fill in: ${missing.join(', ')}.` : dirty ? 'Ready to save.' : `Saved ${form?.updatedAt}.`)}
+      </span>
+      {canEdit && (
+        <Button type="submit" form="receipt-form-fields" variant="primaryTeal" icon={Save} disabled={!!missing.length || saving || !dirty}>
+          {saving ? 'Saving…' : form ? 'Update receipt form' : 'Save receipt form'}
+        </Button>
+      )}
+    </>
+  );
+
   return (
     <SectionShell
       saved={!!form}
-      summary={form ? [
-        { label: 'Lab sample no.', value: values.labSampleNo },
-        { label: 'Samples', value: `${filledSamples.length} sub sample${filledSamples.length === 1 ? '' : 's'}` },
-        { label: 'Examination', value: values.examinationRequired },
-        { label: 'Received', value: values.receivedDate ? `${paperDate(values.receivedDate)} · ${receiverName}` : receiverName },
-      ] : [{ label: 'Next', value: 'Fill in and save the receipt form' }]}
+      preview={<SampleReceiptFormPage data={preview} />}
+      footer={footer}
     >
       <div className="px-5 py-5">
         <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
@@ -239,7 +252,7 @@ export const SampleReceiptFormSection: React.FC<SampleReceiptFormSectionProps> =
               Create worksheet
             </Button>
           )}
-          <Button size="sm" icon={Eye} onClick={() => setPreviewOpen(true)}>Preview A4</Button>
+          <Button size="sm" icon={Eye} className="xl:hidden" onClick={() => setPreviewOpen(true)}>Preview A4</Button>
           <Button size="sm" icon={Printer} onClick={() => setPrinting(true)}>Print</Button>
           <Button size="sm" variant="primaryTeal" icon={Download} disabled={downloading} onClick={() => void downloadPdf()}>
             {downloading ? 'Preparing…' : 'Download PDF'}
@@ -247,6 +260,7 @@ export const SampleReceiptFormSection: React.FC<SampleReceiptFormSectionProps> =
         </div>
         {/* ------------------------------ Form ------------------------------ */}
         <form
+          id="receipt-form-fields"
           className="min-w-0 space-y-5"
           onSubmit={(event) => {
             event.preventDefault();
@@ -262,6 +276,18 @@ export const SampleReceiptFormSection: React.FC<SampleReceiptFormSectionProps> =
             </div>
           )}
 
+          <section aria-label="From reception" className="rounded-lg border border-slate-200 px-4 py-2 dark:border-slate-800">
+            <h3 className="flex items-center gap-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+              <Lock className="h-3 w-3" /> From reception
+            </h3>
+            <dl className="grid sm:grid-cols-2 sm:gap-x-6">
+              <DetailRow label="Sender">{fixed.senderName}</DetailRow>
+              <DetailRow label="Postal address">{fixed.senderPostalAddress}</DetailRow>
+              <DetailRow label="Tel no." mono>{fixed.senderTelephone}</DetailRow>
+              <DetailRow label="Submitted by">{fixed.submitterName}</DetailRow>
+            </dl>
+          </section>
+
           <Group title="Sample">
             <Field label="Lab sample no." hint="e.g. F/MISC/47-49/2026">
               {canEdit ? (
@@ -271,25 +297,21 @@ export const SampleReceiptFormSection: React.FC<SampleReceiptFormSectionProps> =
             <Field label="Date"><div className={readCls}>{paperDate(fixed.formDate)}</div></Field>
           </Group>
 
-          <Group title="Sender" locked>
-            <Field locked label="Name"><div className={readCls}>{fixed.senderName}</div></Field>
+          <Group title="Sender">
             <Field label="Physical address" required={canEdit}>
               {canEdit ? (
                 <input value={values.senderPhysicalAddress} onChange={(e) => update('senderPhysicalAddress', e.target.value)} placeholder="e.g. Industrial Area, Enterprise Road, Nairobi" className={inputCls} />
               ) : <div className={readCls}>{values.senderPhysicalAddress || '—'}</div>}
             </Field>
-            <Field locked label="Postal address"><div className={readCls}>{fixed.senderPostalAddress}</div></Field>
-            <Field locked label="Tel no."><div className={readCls}>{fixed.senderTelephone}</div></Field>
-            <Field label="Sender's ref. no." wide>
+            <Field label="Sender's ref. no.">
               {canEdit ? (
                 <input value={values.sendersRefNo} onChange={(e) => update('sendersRefNo', e.target.value)} maxLength={100} placeholder="Optional" className={inputCls} />
               ) : <div className={readCls}>{values.sendersRefNo || '—'}</div>}
             </Field>
           </Group>
 
-          <Group title="Person submitting the sample" locked>
-            <Field locked label="Name"><div className={readCls}>{fixed.submitterName}</div></Field>
-            <Field label="ID / Power of Entry">
+          <Group title="Person submitting the sample">
+            <Field label="ID / Power of Entry" wide>
               <div className="flex flex-col gap-2 sm:flex-row">
                 {canEdit ? (
                   <Select
@@ -385,7 +407,7 @@ export const SampleReceiptFormSection: React.FC<SampleReceiptFormSectionProps> =
               ) : <div className={readCls}>{values.receivedDate ? paperDate(values.receivedDate) : '—'}</div>}
             </Field>
             <div className="sm:col-span-2">
-              <SignatureInput label="Signature" value={values.receiverSignature} onChange={(v) => update('receiverSignature', v)} disabled={!canEdit} />
+              <SignatureInput label="Signature" value={values.receiverSignature} onChange={(v) => update('receiverSignature', v)} disabled={!canEdit} mine={intake.analystId === currentUser.id} />
             </div>
             <div className="space-y-1.5 sm:col-span-2">
               <span className="text-xs font-medium text-slate-700 dark:text-slate-300">Stamp <span className="font-normal text-slate-500 dark:text-slate-400">(optional)</span></span>
@@ -419,19 +441,6 @@ export const SampleReceiptFormSection: React.FC<SampleReceiptFormSectionProps> =
             </div>
           </Group>
 
-          <div className="flex flex-col-reverse gap-2 border-t border-slate-200 pt-3 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
-            <span className={`text-[11px] ${message?.tone === 'error' ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`} role={message?.tone === 'error' ? 'alert' : undefined}>
-              {message?.text ||
-                (!canEdit
-                  ? form ? `Saved ${form.updatedAt} by ${form.updatedBy}.` : 'Only the allocated analyst or the Head can fill in this form.'
-                  : missing.length ? `Still to fill in: ${missing.join(', ')}.` : dirty ? 'Ready to save.' : `Saved ${form?.updatedAt}.`)}
-            </span>
-            {canEdit && (
-              <Button type="submit" variant="primaryTeal" icon={Save} disabled={!!missing.length || saving || !dirty}>
-                {saving ? 'Saving…' : form ? 'Update receipt form' : 'Save receipt form'}
-              </Button>
-            )}
-          </div>
         </form>
 
       </div>
@@ -464,16 +473,16 @@ export const paperDate = (value: string) => {
   return match ? `${match[3]}/${match[2]}/${match[1]}` : value;
 };
 
-const SectionShell: React.FC<{ saved: boolean; summary?: CaseStepFact[]; children: React.ReactNode }> = ({ saved, summary, children }) => (
+const SectionShell: React.FC<{ saved: boolean; preview?: React.ReactNode; footer?: React.ReactNode; children: React.ReactNode }> = ({ saved, preview, footer, children }) => (
   <CaseStep
     id="receipt-form"
     step={2}
     icon={FileText}
     title="Analytical sample receipt form"
-    description="Sender and submitter details come from reception and cannot be changed here (marked with a lock). Use Preview A4 to see the printed form."
+    description="Sender and submitter details come from reception and cannot be changed here. The printed form updates as you type."
     status={saved ? { label: 'Saved', tone: 'emerald' } : { label: 'Not saved yet', tone: 'teal' }}
-    summary={summary}
-    defaultOpen={!saved}
+    preview={preview ? { content: preview } : undefined}
+    footer={footer}
   >
     {children}
   </CaseStep>

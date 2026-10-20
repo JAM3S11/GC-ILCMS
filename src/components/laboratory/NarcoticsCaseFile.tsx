@@ -18,7 +18,7 @@ import { printOfficialDocument } from '../common/print/OfficialPrintDocument';
 import { CannabisDraftReportSection } from './CannabisDraftReportSection';
 import { CaseStep } from './CaseStep';
 import { CaseFileLayout, CaseFileSectionLink } from './CaseFileLayout';
-import { NextStep, caseStages } from './CaseFlow';
+import { NextStep } from './CaseFlow';
 import { NarcoticsMemoPrint } from './NarcoticsMemoPrint';
 import { WorkAllocationViewer } from './WorkAllocationForm';
 
@@ -133,25 +133,11 @@ export const NarcoticsCaseFile: React.FC<NarcoticsCaseFileProps> = ({ intake, cu
                 blockers: memoBlockers,
               };
 
-  const stages = caseStages(
-    [true, !!intake.analysisOfficerId, complete, draftApproved && !!intake.documentsConfirmedAt, memoApproved],
-    [
-      intake.dateReceived,
-      intake.analysisOfficer ?? 'Awaiting allocation',
-      complete ? 'Draft report submitted' : intake.analysisOfficerId ? 'Draft report in progress' : undefined,
-      draftApproved && intake.documentsConfirmedAt
-        ? 'Report and documents checked'
-        : draftReportStatus === 'SUBMITTED' ? 'Head to check report' : complete && !intake.documentsConfirmedAt ? 'Documents to be checked' : undefined,
-      memoApproved ? `Memo approved ${intake.memoApprovedDate}` : undefined,
-    ],
-    [undefined, 'narcotics-allocation', 'narcotics-findings', 'narcotics-findings', 'narcotics-memo'],
-  );
-
   const sections: CaseFileSectionLink[] = [
     { id: 'narcotics-particulars', title: 'Exhibit particulars', state: 'done' },
-    { id: 'narcotics-allocation', title: 'Work allocation', state: intake.analysisOfficerId ? 'done' : 'current' },
-    { id: 'narcotics-findings', title: 'Findings', state: draftApproved ? 'done' : intake.analysisOfficerId ? 'current' : 'pending' },
-    { id: 'narcotics-memo', title: 'Documents and memo', state: memoApproved ? 'done' : complete ? 'current' : 'pending' },
+    { id: 'narcotics-allocation', title: 'Allocation form', state: intake.analysisOfficerId ? 'done' : 'current' },
+    { id: 'narcotics-findings', title: 'Draft report of analysis', state: draftApproved ? 'done' : intake.analysisOfficerId ? 'current' : 'pending' },
+    { id: 'narcotics-memo', title: 'Memo', state: memoApproved ? 'done' : complete ? 'current' : 'pending' },
   ];
 
   // The process history opens in a drawer: it is the record of what happened, not a step.
@@ -190,7 +176,6 @@ export const NarcoticsCaseFile: React.FC<NarcoticsCaseFileProps> = ({ intake, cu
       status={{ label: intake.status, tone: NARCOTICS_STATUS_TONE[intake.status] }}
       subtitle={[intake.exhibitType, /^CR/i.test(intake.crNumber) ? intake.crNumber : `CR ${intake.crNumber}`, intake.policeStation]}
       next={next}
-      stages={stages}
       receivedDate={intake.dateReceived}
       finishedDate={intake.memoApprovedDate}
       more={[
@@ -223,13 +208,6 @@ export const NarcoticsCaseFile: React.FC<NarcoticsCaseFileProps> = ({ intake, cu
         title="Exhibit particulars"
         description="Recorded at intake. The submitting officer comes from reception."
         status={{ label: 'Registered', tone: 'emerald' }}
-        summary={[
-          { label: 'Officer', value: intake.officerName },
-          { label: 'Station', value: intake.policeStation },
-          { label: 'Received', value: intake.dateReceived },
-          { label: 'Exhibit', value: intake.exhibitType },
-        ]}
-        defaultOpen={intake.status === 'Awaiting Assignment'}
       >
         <dl className="grid grid-cols-1 gap-x-8 gap-y-3 px-5 py-4 sm:grid-cols-2 lg:grid-cols-4">
           <Fact label="Lab reference" mono>{intake.labReference}</Fact>
@@ -258,14 +236,9 @@ export const NarcoticsCaseFile: React.FC<NarcoticsCaseFileProps> = ({ intake, cu
         state={intake.analysisOfficerId ? 'done' : 'current'}
         step={2}
         icon={ClipboardSignature}
-        title="Work allocation"
+        title="Allocation form"
         description="Issued by the Head of Narcotics when the exhibit is assigned. The Head keeps the original; the analyst gets a copy."
         status={intake.analysisOfficerId ? { label: 'Allocated', tone: 'emerald' } : { label: 'Not allocated', tone: 'teal' }}
-        summary={[
-          { label: 'Analysis officer', value: intake.analysisOfficer ?? 'Not yet allocated' },
-          { label: 'Assigned by', value: intake.assignedBy },
-          { label: 'Assigned', value: intake.assignedDate },
-        ]}
       >
         <div className="space-y-3 px-5 py-4">
           <dl className="grid grid-cols-1 gap-x-8 gap-y-3 sm:grid-cols-3">
@@ -288,7 +261,7 @@ export const NarcoticsCaseFile: React.FC<NarcoticsCaseFileProps> = ({ intake, cu
         state={draftApproved ? 'done' : intake.analysisOfficerId ? 'current' : 'pending'}
         step={3}
         icon={NotebookPen}
-        title="Findings"
+        title="Draft report of analysis"
         description="The Draft Report of Analysis (Cannabis). Submitting it records the findings and completes the analysis; the Head then checks and approves it."
         status={
           draftReportStatus === 'APPROVED' ? { label: 'Checked and approved', tone: 'emerald' }
@@ -296,13 +269,6 @@ export const NarcoticsCaseFile: React.FC<NarcoticsCaseFileProps> = ({ intake, cu
             : intake.status === 'Under Analysis' ? { label: 'Under analysis', tone: 'sky' }
             : { label: 'Not started', tone: 'slate' }
         }
-        summary={[
-          { label: 'Substance', value: intake.substanceIdentified },
-          { label: 'Net weight', value: intake.netWeight },
-          { label: 'Recorded', value: intake.findingsRecordedAt },
-          { label: 'By', value: intake.findingsRecordedBy },
-        ]}
-        defaultOpen={(isMine && intake.status === 'Under Analysis') || (isHead && draftReportStatus === 'SUBMITTED')}
       >
         <div className="px-5 pb-5 pt-4">
           {intake.status === 'Awaiting Assignment' ? (
@@ -329,14 +295,52 @@ export const NarcoticsCaseFile: React.FC<NarcoticsCaseFileProps> = ({ intake, cu
         state={memoApproved ? 'done' : complete ? 'current' : 'pending'}
         step={4}
         icon={FileText}
-        title="Documents and memo"
+        title="Memo"
         description="The intake documents are confirmed by the department and approved by the Head, who then approves the memo."
+        footer={isHead && !memoApproved ? (
+          <>
+            {!intake.approvedDate && (
+              <Button
+                size="sm"
+                icon={ClipboardCheck}
+                disabled={!!busy || !intake.documentsConfirmedAt}
+                onClick={() => void run('approve', 'approve')}
+                title={intake.documentsConfirmedAt ? undefined : 'The documents must be ticked as confirmed first'}
+              >
+                {busy === 'approve' ? 'Approving…' : 'Approve documents'}
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="primaryTeal"
+              icon={ShieldCheck}
+              disabled={!!busy || !complete || !intake.documentsConfirmedAt || draftReportBlocksMemo}
+              onClick={() => void run('memo', 'memo')}
+              title={
+                !complete ? 'The draft report of analysis must be submitted first'
+                  : !intake.documentsConfirmedAt ? 'The documents must be ticked as confirmed first'
+                  : draftReportBlocksMemo ? 'Check and approve the cannabis draft report first'
+                  : undefined
+              }
+            >
+              {busy === 'memo' ? 'Approving…' : 'Approve memo'}
+            </Button>
+            {memoBlockers.length > 0 && (
+              <div className="w-full text-[11px] text-slate-600 dark:text-slate-300">
+                <span className="font-semibold">Before the memo can be approved:</span>
+                <ul className="mt-1 space-y-0.5 pl-4">
+                  {memoBlockers.map((blocker) => <li key={blocker} className="list-disc">{blocker}</li>)}
+                </ul>
+              </div>
+            )}
+          </>
+        ) : memoApproved ? (
+          <>
+            <Button size="sm" variant="primaryTeal" icon={Printer} onClick={() => printOfficialDocument('portrait')}>Print memo</Button>
+            <span className="text-[11px] text-slate-500 dark:text-slate-400">Prints on the official A4 letterhead with sign-off lines.</span>
+          </>
+        ) : undefined}
         status={memoApproved ? { label: 'Memo approved', tone: 'emerald' } : complete ? { label: 'Awaiting approval', tone: 'teal' } : { label: 'After analysis', tone: 'slate' }}
-        summary={[
-          { label: 'Documents', value: intake.approvedDate ? `Approved ${intake.approvedDate}` : intake.documentsConfirmedAt ? 'Confirmed' : 'Not confirmed' },
-          { label: 'Memo', value: memoApproved ? `Approved ${intake.memoApprovedDate}` : 'Not approved' },
-        ]}
-        defaultOpen={complete && !memoApproved && (isHead || !intake.documentsConfirmedAt)}
       >
         <div className="space-y-4 px-5 py-4">
           <label className="flex cursor-pointer items-start gap-2.5 text-[13px] text-slate-700 dark:text-slate-200">
@@ -362,56 +366,8 @@ export const NarcoticsCaseFile: React.FC<NarcoticsCaseFileProps> = ({ intake, cu
             <Fact label="Documents approved by the Head">{intake.approvedBy ? `${intake.approvedBy} · ${intake.approvedDate}` : 'Not yet'}</Fact>
             <Fact label="Memo approved by the Head">{intake.memoApprovedBy ? `${intake.memoApprovedBy} · ${intake.memoApprovedDate}` : 'Not yet'}</Fact>
           </dl>
-
-          {isHead && (
-            <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
-              {!intake.approvedDate && (
-                <Button
-                  size="sm"
-                  icon={ClipboardCheck}
-                  disabled={!!busy || !intake.documentsConfirmedAt}
-                  onClick={() => void run('approve', 'approve')}
-                  title={intake.documentsConfirmedAt ? undefined : 'The documents must be ticked as confirmed first'}
-                >
-                  {busy === 'approve' ? 'Approving…' : 'Approve documents'}
-                </Button>
-              )}
-              {!memoApproved && (
-                <Button
-                  size="sm"
-                  variant="primaryTeal"
-                  icon={ShieldCheck}
-                  disabled={!!busy || !complete || !intake.documentsConfirmedAt || draftReportBlocksMemo}
-                  onClick={() => void run('memo', 'memo')}
-                  title={
-                    !complete ? 'The draft report of analysis must be submitted first'
-                      : !intake.documentsConfirmedAt ? 'The documents must be ticked as confirmed first'
-                      : draftReportBlocksMemo ? 'Check and approve the cannabis draft report first'
-                      : undefined
-                  }
-                >
-                  {busy === 'memo' ? 'Approving…' : 'Approve memo'}
-                </Button>
-              )}
-              {!memoApproved && memoBlockers.length > 0 && (
-                <div className="w-full text-[11px] text-slate-600 dark:text-slate-300">
-                  <span className="font-semibold">Before the memo can be approved:</span>
-                  <ul className="mt-1 space-y-0.5 pl-4">
-                    {memoBlockers.map((blocker) => <li key={blocker} className="list-disc">{blocker}</li>)}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
-          {memoApproved && (
-            <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
-              <Button size="sm" variant="primaryTeal" icon={Printer} onClick={() => printOfficialDocument('portrait')}>Print memo</Button>
-              <span className="text-[11px] text-slate-500 dark:text-slate-400">Prints on the official A4 letterhead with sign-off lines.</span>
-            </div>
-          )}
         </div>
       </CaseStep>
-
 
       {viewingAllocation && (
         <WorkAllocationViewer recordType="NARCOTICS_INTAKE" recordId={intake.id} onClose={() => setViewingAllocation(false)} />

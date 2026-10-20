@@ -27,6 +27,9 @@ import { SplashScreen } from './components/landing/SplashScreen';
 import { FoodDrugIntakePage } from './components/laboratory/FoodDrugIntakePage';
 import { WaterIntakePage } from './components/laboratory/WaterIntakePage';
 import { IntakeHandoverDialog } from './components/laboratory/IntakeHandoverDialog';
+import { resetSavedSignature } from './components/laboratory/SignatureInput';
+import { KeyboardShortcutsDialog } from './components/common/KeyboardShortcutsDialog';
+import type { SettingsSection } from './components/common/ProfileMenu';
 import { Header } from './components/common/Header';
 import { DashboardLayout } from './components/layout/DashboardLayout';
 import { AppSidebar } from './components/layout/AppSidebar';
@@ -297,6 +300,9 @@ export default function App() {
 
   // Prototype Modal States
   const [searchOpen, setSearchOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  // The Settings page the profile menu asked for (View profile vs Account settings).
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>('appearance');
   const [tourOpen, setTourOpen] = useState(false);
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -340,6 +346,11 @@ export default function App() {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setSearchOpen((prev) => !prev);
+      } else if (e.key === '?' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        const target = e.target as HTMLElement | null;
+        if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
+        e.preventDefault();
+        setShortcutsOpen(true);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -685,6 +696,9 @@ export default function App() {
       ? `Welcome ${user.name} — Opened Super-admin Console`
       : `Welcome ${user.name} (${user.role}) — Opened Operational Dashboard`);
   };
+
+  // The saved signature is cached per officer; a different sign-in must not reuse it.
+  useEffect(() => resetSavedSignature(), [currentUser?.id]);
 
   const handleSignOut = async () => {
     try {
@@ -1398,8 +1412,10 @@ export default function App() {
       const { intake } = await apiRequest<{ intake: FoodDrugIntake }>(path, init);
       upsertFoodDrugIntake(intake);
       showToast(success(intake));
+      return true;
     } catch (cause) {
       showToast(cause instanceof Error ? cause.message : failure);
+      return false;
     }
   };
 
@@ -1718,7 +1734,11 @@ export default function App() {
               unreadNotificationsCount={unreadCount}
               onToggleNotifications={() => setNotificationsOpen(!notificationsOpen)}
               onOpenSearch={() => setSearchOpen(true)}
-              onOpenSettings={() => handleNavigateView('settings')}
+              onOpenSettings={(section = 'appearance') => {
+                setSettingsSection(section);
+                handleNavigateView('settings');
+              }}
+              onOpenShortcuts={() => setShortcutsOpen(true)}
               onSignOut={handleSignOut}
               breadcrumb={memberProfileId ? {
                 section: 'Members',
@@ -2218,6 +2238,8 @@ export default function App() {
 
             {activeView === 'settings' && (
               <SettingsView
+                key={settingsSection}
+                initialSection={settingsSection}
                 currentUser={currentUser}
                 onSignOut={handleSignOut}
                 onSessionEnded={(message) => {
@@ -2295,6 +2317,7 @@ export default function App() {
       )}
 
       {/* Global Quick Search Modal (Ctrl + K) */}
+      <KeyboardShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <GlobalSearchModal
         isOpen={searchOpen}
         onClose={() => setSearchOpen(false)}

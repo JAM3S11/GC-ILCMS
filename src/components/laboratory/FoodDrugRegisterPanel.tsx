@@ -17,7 +17,7 @@ interface FoodDrugRegisterPanelProps {
   currentUser: Pick<User, 'id' | 'name' | 'role'>;
   /** Food & Drugs officers the Head can assign a sample to. */
   officers: Pick<User, 'id' | 'name'>[];
-  onApprove: (intakeId: string) => void;
+  onApprove: (intakeId: string) => Promise<boolean>;
   /** Assigns the sample with a completed work allocation form; resolves true when saved. */
   onAssign: (intakeId: string, analystId: string, remarks: string) => Promise<boolean>;
   onReport: (intakeId: string, reportedBy: string) => void;
@@ -137,10 +137,15 @@ const RegisterRow: React.FC<Omit<FoodDrugRegisterPanelProps, 'intakes'> & { inta
       {intake.status === 'Awaiting Approval' && (
         isHead ? (
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-[11px] text-slate-400">Review the submitted documents before assigning an officer.</p>
-            <Button size="sm" variant="primaryTeal" icon={CheckCircle2} onClick={() => onApprove(intake.id)}>
-              Approve documents
-            </Button>
+            <p className="text-[11px] text-slate-400">Review the submitted documents, then approve and allocate in one step.</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" variant="ghost" icon={CheckCircle2} onClick={() => void onApprove(intake.id)}>
+                Approve only
+              </Button>
+              <Button size="sm" variant="primaryTeal" icon={ClipboardSignature} onClick={() => setAllocating(true)}>
+                Approve &amp; allocate
+              </Button>
+            </div>
           </div>
         ) : (
           <p className="text-[11px] text-slate-400">
@@ -180,7 +185,17 @@ const RegisterRow: React.FC<Omit<FoodDrugRegisterPanelProps, 'intakes'> & { inta
           subject={`${intake.sampleType} sample · from ${intake.clientName}${intake.notes ? ` · ${intake.notes}` : ''}`}
           officers={officers}
           headName={currentUser.name}
-          onSubmit={(analystId, remarks) => onAssign(intake.id, analystId, remarks)}
+          {...(intake.status === 'Awaiting Approval' && {
+            confirmation: 'I have reviewed the submitted documents and approve them.',
+            submitLabel: 'Approve, allocate and send copy',
+          })}
+          onSubmit={async (analystId, remarks) => {
+            // Approving first keeps both steps (and both audit records) exactly as before.
+            if (intake.status === 'Awaiting Approval' && !(await onApprove(intake.id))) {
+              throw new Error('The documents could not be approved, so the work was not allocated.');
+            }
+            return onAssign(intake.id, analystId, remarks);
+          }}
           onClose={() => setAllocating(false)}
         />
       )}

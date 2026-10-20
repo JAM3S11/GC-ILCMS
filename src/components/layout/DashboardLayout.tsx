@@ -52,7 +52,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
         <main
           id="main-content"
           tabIndex={-1}
-          className="min-h-0 flex-1 overflow-y-auto focus:outline-none"
+          className="min-h-0 flex-1 overflow-y-auto bg-white focus:outline-none dark:bg-slate-950"
         >
           <div className={`mx-auto w-full max-w-screen-2xl px-4 py-5 md:px-6 md:py-6 lg:px-8 ${contentClassName}`}>
             {children}

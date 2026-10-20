@@ -24,7 +24,7 @@ import { User, WaterIntake, WaterIntakeEvent } from '../../types';
 import { apiRequest, ApiError } from '../../lib/api';
 import { formatKes } from '../../waterIntake';
 import { Button, StatusPill, Tone } from '../common/Dashboard';
-import { NextStep, caseStages } from './CaseFlow';
+import { NextStep } from './CaseFlow';
 import { CaseStep, openCaseStep } from './CaseStep';
 import { CaseFileLayout, CaseFileSectionLink } from './CaseFileLayout';
 import { Portal } from '../common/Portal';
@@ -384,22 +384,10 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
           : !intake.documentsConfirmedAt
             ? { text: 'The Water department to check the intake documents and tick "Documents checked".', action: { label: 'Go to memo', target: 'section-3' } }
             : { text: `${head} to review the results and approve the memo.`, action: { label: 'Go to memo', target: 'section-3' }, blockers: memoBlockers };
-  const stages = caseStages(
-    [true, !!intake.analysisOfficerId, isComplete, isComplete && !!intake.documentsConfirmedAt, issued],
-    [
-      intake.dateReceived ?? undefined,
-      intake.analysisOfficer ?? 'Awaiting assignment',
-      isComplete ? 'Results saved' : analysisStarted ? 'Under analysis' : undefined,
-      isComplete ? (intake.documentsConfirmedAt ? 'Documents checked' : 'Documents to be checked') : undefined,
-      issued ? 'Memo approved' : undefined,
-    ],
-    [undefined, undefined, 'section-2', 'section-3', 'section-3'],
-  );
-
   // The steps on this page and where each one stands.
   const sections: CaseFileSectionLink[] = [
     { id: 'section-1', title: 'Exhibit particulars', state: 'done' },
-    { id: 'section-2', title: 'Findings', state: isComplete ? 'done' : analysisStarted ? 'current' : 'pending' },
+    { id: 'section-2', title: 'Test results', state: isComplete ? 'done' : analysisStarted ? 'current' : 'pending' },
     { id: 'section-3', title: 'Memo', state: issued ? 'done' : isComplete ? 'current' : 'pending' },
   ];
   // The Head keeps the original work allocation form; the assigned analyst has a copy.
@@ -421,7 +409,6 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
       status={{ label: intake.status, tone: STATUS_TONE[intake.status] }}
       subtitle={[[intake.testType, intake.sourceType].filter(Boolean).join(' · ') || 'Water exhibit', intake.senderName, 'Water & Environment']}
       next={next}
-      stages={stages}
       receivedDate={intake.dateReceived}
       finishedDate={intake.certificateIssuedAt}
       more={[
@@ -451,7 +438,6 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
             title="Exhibit particulars"
             description="Recorded at intake. Client details come from reception."
             state="done"
-            summary={[{ label: 'Sender', value: intake.senderName }, { label: 'Test', value: intake.testType }, { label: 'Received', value: intake.dateReceived }]}
           >
             <div className="@container px-4 py-3.5">
             <div className="grid gap-x-8 gap-y-6 @2xl:grid-cols-2 @5xl:grid-cols-3">
@@ -510,12 +496,11 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
           <CaseStep
             id="section-2"
             icon={NotebookPen}
-            title="Findings"
-            description="Physical and chemical test results against the KS EAS 12:2018 limits."
+            title="Test results"
+            description="Physical and chemical test results against the KS EAS 12:2018 limits. The memo preview updates as you type."
+            preview={{ content: <WaterCertificatePreview {...previewProps} />, selfScaling: true }}
             state={isComplete ? 'done' : analysisStarted ? 'current' : 'pending'}
             status={isComplete ? { label: 'Results saved', tone: 'emerald' } : analysisStarted ? { label: 'Under analysis', tone: 'sky' } : undefined}
-            summary={[{ label: 'Recorded', value: intake.findingsRecordedAt }, { label: 'Analysis Officer', value: intake.analysisOfficer }]}
-            defaultOpen={intake.status === 'Under Analysis'}
           >
             <div className="px-4 py-3.5">
             <WaterTestResultsForm
@@ -537,20 +522,8 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
             description="The Certificate of Analysis of Water, as it will be printed."
             state={issued ? 'done' : isComplete ? 'current' : 'pending'}
             status={issued ? { label: 'Approved', tone: 'emerald' } : isComplete ? { label: 'Awaiting approval', tone: 'amber' } : undefined}
-            summary={[{ label: 'Approved', value: intake.certificateIssuedAt ? `${intake.certificateIssuedAt}${intake.certificateIssuedBy ? ` by ${intake.certificateIssuedBy}` : ''}` : null }]}
-            defaultOpen={isComplete && !issued}
-          >
-            <div className="px-4 py-3.5">
-            {canConfirmDocuments && !issued && (
-              <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 print:hidden dark:border-slate-800 dark:bg-slate-950/40">{documentsCheckbox}</div>
-            )}
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2 print:hidden">
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                {issued
-                  ? `Approved ${intake.certificateIssuedAt}${intake.certificateIssuedBy ? ` by ${intake.certificateIssuedBy}` : ''}.`
-                  : 'The preview updates as you enter the test results above.'}
-              </p>
-              <div className="flex flex-wrap items-center gap-2">
+            footer={
+              <>
                 {canEditResults && (
                   <Button size="sm" icon={Pencil} onClick={focusResults}>
                     Edit results
@@ -574,8 +547,18 @@ export const ExhibitCaseFile: React.FC<ExhibitCaseFileProps> = ({
                     Print / Save as PDF
                   </Button>
                 )}
-              </div>
-            </div>
+              </>
+            }
+          >
+            <div className="px-4 py-3.5">
+            {canConfirmDocuments && !issued && (
+              <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 print:hidden dark:border-slate-800 dark:bg-slate-950/40">{documentsCheckbox}</div>
+            )}
+            <p className="mb-3 text-[11px] text-slate-500 dark:text-slate-400 print:hidden">
+              {issued
+                ? `Approved ${intake.certificateIssuedAt}${intake.certificateIssuedBy ? ` by ${intake.certificateIssuedBy}` : ''}.`
+                : 'The preview updates as you enter the test results.'}
+            </p>
             {intake.approvedDate && (
               <p className="mb-3 text-[11px] text-slate-500 dark:text-slate-400 print:hidden">
                 Intake documents approved {intake.approvedDate}{intake.approvedBy ? ` by ${intake.approvedBy}` : ''}.

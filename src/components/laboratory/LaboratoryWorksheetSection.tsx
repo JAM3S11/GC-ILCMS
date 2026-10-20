@@ -24,7 +24,7 @@ import { SignatureInput } from './SignatureInput';
 import { Field, Group, paperDate } from './SampleReceiptFormSection';
 import { A4PreviewDialog, downloadA4Pdf, usePrintTarget } from './a4Preview';
 import { LaboratoryWorksheetData, LaboratoryWorksheetPages } from './LaboratoryWorksheetPages';
-import { CaseStep, CaseStepFact } from './CaseStep';
+import { CaseStep } from './CaseStep';
 
 interface ReceiptPrefill {
   labSampleNo: string;
@@ -154,7 +154,7 @@ export const LaboratoryWorksheetSection: React.FC<LaboratoryWorksheetSectionProp
   );
 
   const shell = (body: React.ReactNode, stage?: string) => (
-    <SectionShell stage={stage} summary={[{ label: 'Status', value: meta && !meta.sampleDescription ? 'Waiting for the receipt form' : 'Loading…' }]}>{body}</SectionShell>
+    <SectionShell stage={stage}>{body}</SectionShell>
   );
   if (loading) {
     return shell(
@@ -300,17 +300,53 @@ export const LaboratoryWorksheetSection: React.FC<LaboratoryWorksheetSectionProp
     'w-full whitespace-pre-wrap break-words rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700 dark:border-slate-800 dark:bg-slate-800/60 dark:text-slate-200';
   const attachments = worksheet?.attachments ?? [];
 
+  const footer = (
+    <>
+      <span className={`mr-auto text-[11px] ${message?.tone === 'error' ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`} role={message?.tone === 'error' ? 'alert' : undefined}>
+        {message?.text ||
+          (canEdit
+            ? missing.length ? `${missing.length} to fill in: ${missing.join(', ')}.` : dirty ? 'Ready to save.' : `Saved ${worksheet?.updatedAt} by ${worksheet?.updatedBy}.`
+            : meta.canCheck ? 'Review the worksheet, sign, then mark it checked.'
+            : worksheet ? `Last saved ${worksheet.updatedAt} by ${worksheet.updatedBy}.` : 'Only the allocated analyst or the Head can fill in this worksheet.')}
+      </span>
+      <div className="flex flex-wrap gap-2">
+        {canEdit && (
+          <Button type="submit" form="worksheet-fields" icon={Save} disabled={!!missing.length || !!busy || !dirty}>
+            {busy === 'save' ? 'Saving…' : 'Save draft'}
+          </Button>
+        )}
+        {meta.canSubmit && (
+          confirmingSubmit ? (
+            <Button variant="primaryTeal" icon={Send} disabled={!!busy} onClick={() => void run('submit')}>
+              {busy === 'submit' ? 'Submitting…' : 'Confirm — submit for checking'}
+            </Button>
+          ) : (
+            <Button
+              variant="primaryTeal"
+              icon={Send}
+              disabled={!!missing.length || !!busy || !values.analystSignature}
+              title={!values.analystSignature ? 'Sign the worksheet first' : 'Locks the worksheet and sends it to the Head of Department'}
+              onClick={() => setConfirmingSubmit(true)}
+            >
+              Submit as analysed
+            </Button>
+          )
+        )}
+        {meta.canCheck && (
+          <Button variant="primaryTeal" icon={CheckCircle2} disabled={!!busy || !checkerSignature} title={!checkerSignature ? 'Sign first' : undefined} onClick={() => void run('check')}>
+            {busy === 'check' ? 'Checking…' : 'Mark as checked'}
+          </Button>
+        )}
+      </div>
+    </>
+  );
+
   return (
     <SectionShell
       stage={stage}
       linkedTo={meta.fromReceipt?.labSampleNo}
-      defaultOpen={canEdit || meta.canCheck}
-      summary={worksheet ? [
-        { label: 'Analysis started', value: worksheet.analysisStartedOn ? paperDate(worksheet.analysisStartedOn) : '—' },
-        { label: 'Test method', value: (worksheet.testMethods ?? '').split('\n')[0] },
-        { label: 'Analysed by', value: worksheet.analysedBy ? `${worksheet.analysedBy} · ${paperDate(worksheet.analysedDate ?? '')}` : 'Not submitted' },
-        { label: 'Checked by', value: worksheet.checkedBy ? `${worksheet.checkedBy} · ${paperDate(worksheet.checkedDate ?? '')}` : 'Not checked' },
-      ] : [{ label: 'Next', value: 'Fill in the worksheet' }]}
+      preview={{ content: <LaboratoryWorksheetPages data={preview} />, pages: pageCount }}
+      footer={footer}
     >
       <div className="px-5 py-5">
         <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
@@ -319,7 +355,7 @@ export const LaboratoryWorksheetSection: React.FC<LaboratoryWorksheetSectionProp
               Create draft reports
             </Button>
           )}
-          <Button size="sm" icon={Eye} onClick={() => setPreviewOpen(true)}>Preview A4</Button>
+          <Button size="sm" icon={Eye} className="xl:hidden" onClick={() => setPreviewOpen(true)}>Preview A4</Button>
           <Button size="sm" icon={Printer} onClick={() => setPrinting(true)}>Print</Button>
           <Button size="sm" variant="primaryTeal" icon={Download} disabled={downloading} onClick={() => void downloadPdf()}>
             {downloading ? 'Preparing…' : 'Download PDF'}
@@ -327,6 +363,7 @@ export const LaboratoryWorksheetSection: React.FC<LaboratoryWorksheetSectionProp
         </div>
 
         <form
+          id="worksheet-fields"
           className="min-w-0 space-y-5"
           onSubmit={(event) => {
             event.preventDefault();
@@ -467,7 +504,7 @@ export const LaboratoryWorksheetSection: React.FC<LaboratoryWorksheetSectionProp
             <Field label="Name"><div className={readCls}>{preview.analysedBy || '—'}</div></Field>
             <Field label="Date"><div className={readCls}>{worksheet?.analysedDate ? paperDate(worksheet.analysedDate) : 'Set when submitted'}</div></Field>
             <div className="sm:col-span-2">
-              <SignatureInput label="Analyst's signature" value={values.analystSignature} onChange={(v) => update('analystSignature', v)} disabled={!canEdit} />
+              <SignatureInput label="Analyst's signature" value={values.analystSignature} onChange={(v) => update('analystSignature', v)} disabled={!canEdit} mine={intake.analystId === currentUser.id} />
             </div>
           </Group>
 
@@ -479,49 +516,12 @@ export const LaboratoryWorksheetSection: React.FC<LaboratoryWorksheetSectionProp
                 label="Head of Department's signature"
                 value={worksheet?.checkerSignature ?? checkerSignature}
                 onChange={setCheckerSignature}
+                mine
                 disabled={!meta.canCheck}
               />
             </div>
           </Group>
 
-          <div className="flex flex-col-reverse gap-2 border-t border-slate-200 pt-3 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
-            <span className={`text-[11px] ${message?.tone === 'error' ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`} role={message?.tone === 'error' ? 'alert' : undefined}>
-              {message?.text ||
-                (canEdit
-                  ? missing.length ? `Still to fill in: ${missing.join(', ')}.` : dirty ? 'Ready to save.' : `Saved ${worksheet?.updatedAt} by ${worksheet?.updatedBy}.`
-                  : meta.canCheck ? 'Review the worksheet, sign, then mark it checked.'
-                  : worksheet ? `Last saved ${worksheet.updatedAt} by ${worksheet.updatedBy}.` : 'Only the allocated analyst or the Head can fill in this worksheet.')}
-            </span>
-            <div className="flex flex-wrap gap-2">
-              {canEdit && (
-                <Button type="submit" icon={Save} disabled={!!missing.length || !!busy || !dirty}>
-                  {busy === 'save' ? 'Saving…' : 'Save draft'}
-                </Button>
-              )}
-              {meta.canSubmit && (
-                confirmingSubmit ? (
-                  <Button variant="primaryTeal" icon={Send} disabled={!!busy} onClick={() => void run('submit')}>
-                    {busy === 'submit' ? 'Submitting…' : 'Confirm — submit for checking'}
-                  </Button>
-                ) : (
-                  <Button
-                    variant="primaryTeal"
-                    icon={Send}
-                    disabled={!!missing.length || !!busy || !values.analystSignature}
-                    title={!values.analystSignature ? 'Sign the worksheet first' : 'Locks the worksheet and sends it to the Head of Department'}
-                    onClick={() => setConfirmingSubmit(true)}
-                  >
-                    Submit as analysed
-                  </Button>
-                )
-              )}
-              {meta.canCheck && (
-                <Button variant="primaryTeal" icon={CheckCircle2} disabled={!!busy || !checkerSignature} title={!checkerSignature ? 'Sign first' : undefined} onClick={() => void run('check')}>
-                  {busy === 'check' ? 'Checking…' : 'Mark as checked'}
-                </Button>
-              )}
-            </div>
-          </div>
         </form>
       </div>
 
@@ -549,13 +549,13 @@ export const LaboratoryWorksheetSection: React.FC<LaboratoryWorksheetSectionProp
 
 const STAGE_TONE: Record<string, Tone> = { Checked: 'emerald', 'Awaiting check': 'violet', Draft: 'teal', 'Not started': 'slate' };
 
-const SectionShell: React.FC<{ stage?: string; linkedTo?: string; summary?: CaseStepFact[]; defaultOpen?: boolean; children: React.ReactNode }> = ({
-  stage = 'Not started',
-  linkedTo,
-  summary,
-  defaultOpen = false,
-  children,
-}) => (
+const SectionShell: React.FC<{
+  stage?: string;
+  linkedTo?: string;
+  preview?: { content: React.ReactNode; pages?: number };
+  footer?: React.ReactNode;
+  children: React.ReactNode;
+}> = ({ stage = 'Not started', linkedTo, preview, footer, children }) => (
   <CaseStep
     id="laboratory-worksheet"
     step={3}
@@ -572,8 +572,8 @@ const SectionShell: React.FC<{ stage?: string; linkedTo?: string; summary?: Case
       </span>
     }
     status={{ label: stage, tone: STAGE_TONE[stage] ?? 'slate' }}
-    summary={summary}
-    defaultOpen={defaultOpen}
+    preview={preview}
+    footer={footer}
   >
     {children}
   </CaseStep>

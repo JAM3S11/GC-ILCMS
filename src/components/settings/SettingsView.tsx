@@ -25,6 +25,7 @@ import { apiRequest } from '../../lib/api';
 import { Select } from '../common/Select';
 import { departmentLabel, departmentsForRole, isLabScopedRole } from '../../lib/departments';
 import { roleLabel } from '../admin/roles';
+import { SignatureInput, setSavedSignature, useSavedSignature } from '../laboratory/SignatureInput';
 import {
   ACCENT_OPTIONS,
   AVATAR_OPTIONS,
@@ -397,10 +398,61 @@ const SettingsGroup: React.FC<{ id: string; title: string; children: React.React
   </section>
 );
 
+/**
+ * The officer's saved signature. Forms they sign offer it in one click ("Use my saved
+ * signature") instead of drawing it again; each signed form keeps its own copy.
+ */
+const SavedSignatureGroup: React.FC = () => {
+  const saved = useSavedSignature();
+  const [draft, setDraft] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+
+  useEffect(() => setDraft(saved), [saved]);
+
+  const save = async (signature: string | null) => {
+    setSaving(true);
+    setMessage(null);
+    try {
+      await apiRequest('/api/account/signature', { method: 'PUT', body: JSON.stringify({ signature }) });
+      setSavedSignature(signature);
+      setMessage({ tone: 'ok', text: signature ? 'Signature saved. Use it on any form you sign.' : 'Saved signature removed.' });
+    } catch (error) {
+      setMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Could not save the signature.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <SettingsGroup id="profile-signature" title="My signature">
+      <div className="max-w-xl space-y-3">
+        <p className="text-[13px] leading-relaxed text-slate-500 dark:text-slate-400">
+          Save your signature once and apply it with one click on receipt forms, worksheets and reports you sign. Changing it later does not alter documents you have already signed.
+        </p>
+        <SignatureInput label="Signature" value={draft} onChange={setDraft} />
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="primary" icon={Check} disabled={saving || !draft || draft === saved} onClick={() => void save(draft)}>
+            {saving ? 'Saving…' : 'Save signature'}
+          </Button>
+          {saved && (
+            <Button variant="ghost" disabled={saving} onClick={() => void save(null)}>
+              Remove saved signature
+            </Button>
+          )}
+        </div>
+        {message && <Notice tone={message.tone}>{message.text}</Notice>}
+      </div>
+    </SettingsGroup>
+  );
+};
+
 /* --------------------------------- View --------------------------------- */
 
 interface SettingsViewProps {
   currentUser: User;
+  /** The page to open on, e.g. Profile from the profile menu's "View profile". */
+  initialSection?: SectionId;
   onSignOut: () => void;
   /** The server ended every session for this user (e.g. after requesting a move). */
   onSessionEnded: (message: string) => void;
@@ -451,9 +503,9 @@ type BrowserPermission =NotificationPermission | 'unsupported';
 const browserPermission = (): BrowserPermission =>
   typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'unsupported';
 
-export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onSignOut, onSessionEnded, onProfileUpdated }) => {
+export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, initialSection = 'appearance', onSignOut, onSessionEnded, onProfileUpdated }) => {
   const { setMode } = useTheme();
-  const [section, setSection] = useState<SectionId>('appearance');
+  const [section, setSection] = useState<SectionId>(initialSection);
   const [settings, setSettings] = useState<UserSettings>(() => readUserSettings(currentUser.id));
   const [saved, setSaved] = useState(false);
   const savedTimer = useRef<number | null>(null);
@@ -784,6 +836,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onSignO
                   </div>
                 </div>
               </SettingsGroup>
+
+              {!isSuperAdmin && <SavedSignatureGroup />}
 
               <SettingsGroup id="profile-details" title="Details">
                 {isSuperAdmin ? (

@@ -50,10 +50,9 @@ export const WorkAllocationStep: React.FC<{ intake: FoodDrugIntake; canView: boo
       id="work-allocation"
       step={1}
       icon={ClipboardSignature}
-      title="Work allocation"
+      title="Allocation form"
       description="Issued by the Head of Department when the sample is assigned. The Head keeps the original; the analyst gets a copy."
       status={allocated ? { label: 'Allocated', tone: 'emerald' } : { label: 'Not allocated', tone: 'teal' }}
-      summary={facts}
     >
       <div className="space-y-3 px-5 py-4">
         <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-xs sm:grid-cols-4">

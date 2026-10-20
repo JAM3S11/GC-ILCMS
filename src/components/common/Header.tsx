@@ -1,7 +1,7 @@
 import React from 'react';
 import { Bell, ChevronRight, Search } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
-import { ProfileMenu } from './ProfileMenu';
+import { ProfileMenu, type SettingsSection } from './ProfileMenu';
 import { Kbd, isMacPlatform } from './GlobalSearchModal';
 import { User } from '../../types';
 import { viewBreadcrumb } from '../layout/appNav';
@@ -21,7 +21,8 @@ interface HeaderProps {
   unreadNotificationsCount: number;
   onToggleNotifications: () => void;
   onOpenSearch?: () => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (section?: SettingsSection) => void;
+  onOpenShortcuts: () => void;
   onSignOut: () => void;
   /** Overrides the breadcrumb for pages named after a record, e.g. Members / Jane Doe. */
   breadcrumb?: { section: string; page: string; onSection?: () => void };
@@ -37,6 +38,7 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleNotifications,
   onOpenSearch,
   onOpenSettings,
+  onOpenShortcuts,
   onSignOut,
   breadcrumb,
 }) => {
@@ -104,7 +106,7 @@ export const Header: React.FC<HeaderProps> = ({
 
         <ThemeToggle variant="icon" />
         <div className="mx-0.5 h-5 w-px shrink-0 bg-slate-200 dark:bg-slate-800" aria-hidden="true" />
-        <ProfileMenu currentUser={currentUser} onOpenSettings={onOpenSettings} onSignOut={onSignOut} />
+        <ProfileMenu currentUser={currentUser} onOpenSettings={onOpenSettings} onOpenShortcuts={onOpenShortcuts} onSignOut={onSignOut} />
       </div>
     </header>
   );

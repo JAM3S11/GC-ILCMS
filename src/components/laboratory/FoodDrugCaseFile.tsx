@@ -8,7 +8,7 @@ import { DraftReportSection } from './DraftReportSection';
 import { WorkAllocationStep } from './WorkAllocationStep';
 import { openCaseStep } from './CaseStep';
 import { CaseFileLayout, CaseFileSectionLink } from './CaseFileLayout';
-import { FOOD_DRUG_STATUS_TONE, displayName, foodDrugNextStep, foodDrugStages, formatDate } from './foodDrugCaseFlow';
+import { FOOD_DRUG_STATUS_TONE, displayName, foodDrugNextStep, formatDate } from './foodDrugCaseFlow';
 
 interface FoodDrugCaseFileProps {
   intake: FoodDrugIntake;
@@ -38,7 +38,7 @@ export const FoodDrugCaseFile: React.FC<FoodDrugCaseFileProps> = ({ intake, curr
   const worksheet = intake.worksheetStatus;
   const reported = intake.status === 'Reported';
   const sections: CaseFileSectionLink[] = [
-    { id: 'work-allocation', title: 'Work allocation', state: intake.analystId ? 'done' : 'current' },
+    { id: 'work-allocation', title: 'Allocation form', state: intake.analystId ? 'done' : 'current' },
     { id: 'receipt-form', title: 'Sample receipt form', state: intake.receiptFormSaved ? 'done' : intake.analystId ? 'current' : 'pending' },
     { id: 'laboratory-worksheet', title: 'Laboratory worksheet', state: worksheet === 'Checked' ? 'done' : intake.receiptFormSaved ? 'current' : 'pending' },
     { id: 'draft-reports', title: 'Certificate of analysis', state: reported ? 'done' : worksheet === 'Checked' ? 'current' : 'pending' },
@@ -52,7 +52,6 @@ export const FoodDrugCaseFile: React.FC<FoodDrugCaseFileProps> = ({ intake, curr
       status={{ label: intake.status, tone: FOOD_DRUG_STATUS_TONE[intake.status] }}
       subtitle={[`${intake.sampleType} sample`, displayName(intake.clientName), 'Foods, Drugs & Chemical Substances']}
       next={foodDrugNextStep(intake, isHead, isAssigned)}
-      stages={foodDrugStages(intake)}
       receivedDate={intake.intakeDate}
       finishedDate={intake.reportedDate}
       more={canViewAllocation ? [{ label: isHead ? 'Allocation form' : 'Allocation form (copy)', icon: ClipboardSignature, onClick: () => setViewingAllocation(true) }] : []}

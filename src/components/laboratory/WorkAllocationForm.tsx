@@ -68,6 +68,10 @@ interface WorkAllocationDialogProps {
   excludeOfficerId?: string;
   headName: string;
   isTransfer?: boolean;
+  /** A statement the Head must tick before submitting, e.g. that the documents were reviewed. */
+  confirmation?: string;
+  /** Overrides the submit button text. */
+  submitLabel?: string;
   /** Assigns the work with this form; resolves true when it was saved. */
   onSubmit: (analystId: string, remarks: string) => Promise<boolean>;
   onClose: () => void;
@@ -87,17 +91,20 @@ export const WorkAllocationDialog: React.FC<WorkAllocationDialogProps> = ({
   excludeOfficerId,
   headName,
   isTransfer = false,
+  confirmation,
+  submitLabel,
   onSubmit,
   onClose,
 }) => {
   const [analystId, setAnalystId] = useState('');
   const [remarks, setRemarks] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const options = officers.filter((o) => o.id !== excludeOfficerId);
   const trimmed = remarks.trim();
   const remarksShort = trimmed.length > 0 && trimmed.length < REMARKS_MIN;
-  const canSubmit = !!analystId && trimmed.length >= REMARKS_MIN && trimmed.length <= 2000;
+  const canSubmit = !!analystId && trimmed.length >= REMARKS_MIN && trimmed.length <= 2000 && (!confirmation || confirmed);
 
   const submit = async () => {
     if (!canSubmit || saving) return;
@@ -192,6 +199,18 @@ export const WorkAllocationDialog: React.FC<WorkAllocationDialogProps> = ({
             />
           </label>
           <ReadOnlyField label="Allocated by (Head of Department)" value={headName} />
+
+          {confirmation && (
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-xs text-slate-700 sm:col-span-2 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-300">
+              <input
+                type="checkbox"
+                checked={confirmed}
+                onChange={(event) => setConfirmed(event.target.checked)}
+                className="mt-0.5 h-4 w-4 shrink-0 accent-teal-600"
+              />
+              <span>{confirmation} <span className="text-rose-500">*</span></span>
+            </label>
+          )}
         </div>
 
         {error && (
@@ -205,7 +224,7 @@ export const WorkAllocationDialog: React.FC<WorkAllocationDialogProps> = ({
           <div className="flex gap-2">
             <Button onClick={onClose} disabled={saving}>Cancel</Button>
             <Button type="submit" variant="primaryTeal" icon={Send} disabled={!canSubmit || saving}>
-              {saving ? 'Allocating…' : isTransfer ? 'Transfer and send copy' : 'Allocate and send copy'}
+              {saving ? 'Allocating…' : submitLabel ?? (isTransfer ? 'Transfer and send copy' : 'Allocate and send copy')}
             </Button>
           </div>
         </div>

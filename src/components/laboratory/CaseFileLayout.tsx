@@ -1,23 +1,26 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Check, Copy, History, Hourglass, Info, LucideIcon, MoreHorizontal, X } from 'lucide-react';
-import { Button, StatusPill, Tone } from '../common/Dashboard';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ArrowLeft, ArrowRight, Check, CheckCircle2, ChevronLeft, ChevronRight, Circle, CircleDot, Copy, History, Hourglass, Info, LucideIcon, MoreHorizontal } from 'lucide-react';
+import { Tone } from '../common/Dashboard';
 import { PANEL_TEXT, PANEL_TEXT_2, SidePanel } from '../common/SidePanel';
-import { CaseProgress, CaseStage, DAYS_IN_LAB_WARNING, NextStep, daysInLab } from './CaseFlow';
-import { openCaseStep } from './CaseStep';
+import { DAYS_IN_LAB_WARNING, NextStep, daysInLab } from './CaseFlow';
+import { CaseFolderContext, useCaseStepOpen } from './CaseStep';
+import { OutlineButton, StatusText } from './workspace/ui';
 
 /* ---------------------------------------------------------------------------
- * CaseFileLayout — the one page every department's case file is built on.
+ * CaseFileLayout — the one page every department's case file is built on,
+ * laid out like the paper folder it replaces.
  *
  *   ← Back
- *   REFERENCE  ● Status                              [⋯]  [Main action]
- *   What it is · who it is for · Day n in lab
- *   → Next: who does what (and what still stands in the way)
- *   ━━ five shared stages ━━
- *   ┌ steps (only the current one open) ┐ ┌ Details · On this page · History ┐
+ *   REFERENCE  ● Status · Day n in lab                       [⋯]
+ *   → Next: who does what                               [Main action]
+ *   [‹ Previous document]   2 of 4 · Open document   [Next document ›]
+ *   ┌ the open document: form · A4 preview ┐
+ *   │ [sticky save / submit bar]           │
  *
- * Departments supply the steps (CaseStep) and the facts; the layout supplies the
- * navigation: a sticky bar while scrolling, [ and ] to move between steps, Esc to
- * go back, and on phones a bottom bar with the main action.
+ * Departments supply the documents (CaseStep) and the facts; the layout
+ * decides which document is open. openCaseStep(id) switches to a document,
+ * [ and ] move between them, and Esc goes back. Case details and the process
+ * history open from the More (⋯) menu.
  * --------------------------------------------------------------------------- */
 
 export interface CaseFileDetail {
@@ -47,17 +50,18 @@ interface CaseFileLayoutProps {
   /** Short facts under the reference, joined with dots. */
   subtitle: React.ReactNode[];
   next: NextStep;
-  stages: CaseStage[];
   /** YYYY-MM-DD the exhibit was received and, once finished, issued. */
   receivedDate?: string | null;
   finishedDate?: string | null;
   /** Secondary actions, kept in the "More" menu. */
   more?: CaseFileMenuAction[];
+  /** Key facts, opened from the More menu as "Case details". */
   details: CaseFileDetail[];
+  /** The documents in the folder, in order; each id matches a CaseStep. */
   sections: CaseFileSectionLink[];
-  /** The process history, opened in the side panel. */
+  /** The process history, opened from the More menu. */
   history?: { count: number; content: React.ReactNode };
-  /** Shown above the steps, e.g. an error from the last action. */
+  /** Shown above the open document, e.g. an error from the last action. */
   notice?: React.ReactNode;
   children: React.ReactNode;
 }
@@ -82,7 +86,7 @@ const CopyButton: React.FC<{ value: string; label: string }> = ({ value, label }
       }}
       aria-label={copied ? `${label} copied` : `Copy ${label}`}
       title={copied ? 'Copied' : `Copy ${label}`}
-      className="inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+      className="inline-flex h-5 w-5 shrink-0 cursor-pointer items-center justify-center rounded text-slate-400 transition-colors hover:text-slate-700 dark:hover:text-slate-200"
     >
       {copied ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
     </button>
@@ -108,7 +112,7 @@ const MoreMenu: React.FC<{ actions: CaseFileMenuAction[] }> = ({ actions }) => {
   if (!actions.length) return null;
   return (
     <div ref={ref} className="relative">
-      <Button icon={MoreHorizontal} aria-label="More actions" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((value) => !value)} className="!px-2.5" />
+      <OutlineButton size="md" icon={MoreHorizontal} aria-label="More actions" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((value) => !value)} className="!px-2.5" />
       {open && (
         <div role="menu" className="absolute right-0 z-30 mt-1 min-w-48 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-700 dark:bg-slate-900">
           {actions.map((action) => (
@@ -120,7 +124,7 @@ const MoreMenu: React.FC<{ actions: CaseFileMenuAction[] }> = ({ actions }) => {
                 setOpen(false);
                 action.onClick();
               }}
-              className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-2 text-left text-[13px] text-slate-700 transition-colors hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800"
+              className="flex w-full cursor-pointer items-center gap-2.5 px-3 py-2 text-left text-[13px] text-slate-700 transition-colors hover:bg-slate-500/[0.06] dark:text-slate-200"
             >
               <action.icon className="h-4 w-4 text-slate-400" />
               {action.label}
@@ -132,38 +136,42 @@ const MoreMenu: React.FC<{ actions: CaseFileMenuAction[] }> = ({ actions }) => {
   );
 };
 
-/** The process history in the app's side panel; it is a record, not a step. */
-const HistoryDrawer: React.FC<{ open: boolean; reference: string; count: number; onClose: () => void; children: React.ReactNode }> = ({ open, reference, count, onClose, children }) => (
-  <SidePanel
-    open={open}
-    onClose={onClose}
-    section="Process history"
-    recordId={reference}
-    titleId="process-history-title"
-    footer={<p className={`text-[11px] ${PANEL_TEXT_2}`}>Every step is recorded with who did it and when, for the audit trail.</p>}
-  >
-    <div className="px-4 py-6 sm:px-6">
-      <div className="mb-5 flex items-center gap-3">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500 dark:bg-[#2A2A2A] dark:text-[#9A9A9A]">
-          <History className="h-5 w-5" />
-        </span>
-        <div className="min-w-0">
-          <h2 id="process-history-title" className={`text-[22px] font-semibold leading-tight ${PANEL_TEXT}`}>Process history</h2>
-          <p className={`text-[13px] ${PANEL_TEXT_2}`}>{count} recorded step{count === 1 ? '' : 's'} for {reference}</p>
-        </div>
-      </div>
-      {children}
-    </div>
-  </SidePanel>
-);
-
-const STATE_DOT: Record<CaseFileSectionLink['state'], string> = {
-  done: 'bg-emerald-500',
-  current: 'bg-amber-500',
-  pending: 'bg-slate-300 dark:bg-slate-600',
+const STATE_ICON: Record<CaseFileSectionLink['state'], { icon: LucideIcon; className: string; label: string }> = {
+  done: { icon: CheckCircle2, className: 'text-emerald-600 dark:text-emerald-400', label: 'Done' },
+  current: { icon: CircleDot, className: 'text-amber-500 dark:text-amber-400', label: 'Needs action' },
+  pending: { icon: Circle, className: 'text-slate-300 dark:text-slate-600', label: 'Not reached yet' },
 };
 
-const railHeading = 'px-3.5 pb-1.5 pt-3 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500 dark:text-slate-400';
+/** A record (history, case details) in the app's side panel; it is read, not worked on. */
+const RecordDrawer: React.FC<{
+  open: boolean;
+  onClose: () => void;
+  section: string;
+  reference: string;
+  icon: LucideIcon;
+  title: string;
+  subtitle: string;
+  footer?: React.ReactNode;
+  children: React.ReactNode;
+}> = ({ open, onClose, section, reference, icon: Icon, title, subtitle, footer, children }) => {
+  const titleId = `case-file-${section.toLowerCase().replace(/\s+/g, '-')}-title`;
+  return (
+    <SidePanel open={open} onClose={onClose} section={section} recordId={reference} titleId={titleId} footer={footer}>
+      <div className="px-4 py-6 sm:px-6">
+        <div className="mb-5 flex items-center gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 dark:border-[#2A2A2A] dark:text-[#9A9A9A]">
+            <Icon className="h-5 w-5" />
+          </span>
+          <div className="min-w-0">
+            <h2 id={titleId} className={`text-[22px] font-semibold leading-tight ${PANEL_TEXT}`}>{title}</h2>
+            <p className={`text-[13px] ${PANEL_TEXT_2}`}>{subtitle}</p>
+          </div>
+        </div>
+        {children}
+      </div>
+    </SidePanel>
+  );
+};
 
 export const CaseFileLayout: React.FC<CaseFileLayoutProps> = ({
   back,
@@ -171,7 +179,6 @@ export const CaseFileLayout: React.FC<CaseFileLayoutProps> = ({
   status,
   subtitle,
   next,
-  stages,
   receivedDate,
   finishedDate,
   more = [],
@@ -181,252 +188,198 @@ export const CaseFileLayout: React.FC<CaseFileLayoutProps> = ({
   notice,
   children,
 }) => {
-  const headerRef = useRef<HTMLElement>(null);
-  const [scrolledPast, setScrolledPast] = useState(false);
-  const [inView, setInView] = useState(sections[0]?.id ?? '');
-  const [historyOpen, setHistoryOpen] = useState(false);
   const days = daysInLab(receivedDate, finishedDate);
   const overdue = days !== null && days > DAYS_IN_LAB_WARNING && !next.done;
-  const sectionIds = sections.map((section) => section.id).join('|');
+  const documentIds = sections.map((section) => section.id);
+  const known = (id?: string) => !!id && documentIds.includes(id);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
 
-  // The sticky bar appears once the header has scrolled out of view.
-  useEffect(() => {
-    const header = headerRef.current;
-    if (!header || typeof IntersectionObserver === 'undefined') return undefined;
-    const observer = new IntersectionObserver(([entry]) => setScrolledPast(!entry.isIntersecting), { threshold: 0 });
-    observer.observe(header);
-    return () => observer.disconnect();
-  }, []);
+  // Opens on the document the next step points to, else the first that needs action.
+  const [active, setActive] = useState(() =>
+    known(next.action?.target) ? next.action!.target : sections.find((section) => section.state === 'current')?.id ?? sections[0]?.id ?? '',
+  );
+  const idsKey = documentIds.join('|');
+  const open = useCallback(
+    (id: string) => {
+      if (!idsKey.split('|').includes(id)) return;
+      setActive(id);
+      document.getElementById('main-content')?.scrollTo({ top: 0, behavior: 'smooth' });
+    },
+    [idsKey],
+  );
+  useCaseStepOpen(open);
 
-  // "On this page" follows the step nearest the top of the reading area.
-  useEffect(() => {
-    const ids = sectionIds.split('|');
-    const elements = ids.map((id) => document.getElementById(id)).filter((el): el is HTMLElement => !!el);
-    if (!elements.length || typeof IntersectionObserver === 'undefined') return undefined;
-    const visible = new Set<string>();
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => (entry.isIntersecting ? visible.add(entry.target.id) : visible.delete(entry.target.id)));
-        const first = ids.find((id) => visible.has(id));
-        if (first) setInView(first);
-      },
-      { rootMargin: '-15% 0px -55% 0px' },
-    );
-    elements.forEach((el) => observer.observe(el));
-    return () => observer.disconnect();
-  }, [sectionIds]);
+  const activeIndex = documentIds.indexOf(active);
+  const step = useCallback(
+    (by: 1 | -1) => {
+      const ids = idsKey.split('|').filter(Boolean);
+      const target = ids[Math.min(ids.length - 1, Math.max(0, ids.indexOf(active) + by))];
+      if (target && target !== active) open(target);
+    },
+    [idsKey, active, open],
+  );
 
-  // [ and ] move between steps; Esc goes back when nothing else is open.
+  // [ and ] move between documents; Esc goes back when nothing else is open.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || isTyping(event.target)) return;
       if (document.querySelector('[role="dialog"], [role="alertdialog"], [aria-modal="true"], [role="menu"]')) return;
-      const ids = sectionIds.split('|').filter(Boolean);
       if (event.key === ']' || event.key === '[') {
-        const index = Math.max(0, ids.indexOf(inView));
-        const target = ids[Math.min(ids.length - 1, Math.max(0, index + (event.key === ']' ? 1 : -1)))];
-        if (target) {
-          event.preventDefault();
-          setInView(target);
-          openCaseStep(target);
-        }
+        event.preventDefault();
+        step(event.key === ']' ? 1 : -1);
       } else if (event.key === 'Escape') {
         back.onClick();
       }
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [sectionIds, inView, back]);
+  }, [back, step]);
 
-  const mainAction = next.action && (
-    <Button variant={next.done ? 'secondary' : 'primary'} onClick={() => openCaseStep(next.action!.target)}>
-      {next.action.label}
-      <ArrowRight className="h-4 w-4" />
-    </Button>
-  );
-  const moreActions: CaseFileMenuAction[] = [...more, ...(history ? [{ label: `Process history (${history.count})`, icon: History, onClick: () => setHistoryOpen(true) }] : [])];
+  const nextOnOpenDocument = next.action?.target === active;
+  const previousSection = sections[activeIndex - 1];
+  const nextSection = sections[activeIndex + 1];
+  const current = sections[activeIndex];
+  const CurrentIcon = current ? STATE_ICON[current.state].icon : null;
+  const shownDetails = details.filter((detail) => detail.value !== null && detail.value !== undefined && detail.value !== '');
+  const moreActions: CaseFileMenuAction[] = [
+    ...more,
+    ...(shownDetails.length ? [{ label: 'Case details', icon: Info, onClick: () => setDetailsOpen(true) }] : []),
+    ...(history ? [{ label: `Process history (${history.count})`, icon: History, onClick: () => setHistoryOpen(true) }] : []),
+  ];
 
   return (
-    <div className="mx-auto w-full max-w-[1400px] space-y-4 pb-20 lg:pb-0">
-      {/* Sticky bar while scrolling: the reference and the main action stay in reach. */}
-      {/* A zero-height anchor, so showing and hiding the bar never moves the page. */}
-      <div className="sticky top-0 z-20 h-0 print:hidden">
-        <div
-          aria-hidden={!scrolledPast}
-          className={`absolute -left-4 -right-4 top-0 flex h-11 items-center gap-3 border-b border-slate-200 bg-white/95 px-4 backdrop-blur transition-opacity duration-150 md:-left-6 md:-right-6 md:px-6 lg:-left-8 lg:-right-8 lg:px-8 dark:border-slate-800 dark:bg-slate-950/95 ${
-            scrolledPast ? 'opacity-100' : 'pointer-events-none opacity-0'
-          }`}
-        >
-          {scrolledPast && (
-            <>
-              <span className="truncate font-mono text-[13px] font-semibold text-slate-900 dark:text-white">{reference}</span>
-              <StatusPill tone={status.tone}>{status.label}</StatusPill>
-              <span className="ml-auto hidden lg:block">{next.action && (
-                <Button size="sm" variant={next.done ? 'secondary' : 'primary'} onClick={() => openCaseStep(next.action!.target)}>{next.action.label}</Button>
-              )}</span>
-            </>
-          )}
-        </div>
-      </div>
-
-      <header ref={headerRef} className="space-y-3">
+    <div className="mx-auto w-full max-w-[1500px] space-y-4">
+      <header className="space-y-3">
         <button
           type="button"
           onClick={back.onClick}
-          className="-ml-1.5 inline-flex cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1 text-[13px] text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 print:hidden dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+          className="-ml-1.5 inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-transparent px-1.5 py-1 text-[13px] text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-900 print:hidden dark:text-slate-400 dark:hover:border-slate-700 dark:hover:text-white"
           title="Back (Esc)"
         >
           <ArrowLeft className="h-4 w-4" /> {back.label}
         </button>
 
-        <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
+        <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-              <h1 className="flex items-center gap-1 break-all font-mono text-[23px] font-semibold leading-tight tracking-[-0.02em] text-slate-900 dark:text-white">
+              <h1 className="flex items-center gap-1 break-all font-mono text-[22px] font-semibold leading-tight tracking-[-0.02em] text-slate-900 dark:text-white">
                 {reference}
                 <span className="print:hidden"><CopyButton value={reference} label="reference" /></span>
               </h1>
-              <StatusPill tone={status.tone}>{status.label}</StatusPill>
+              <StatusText tone={status.tone}>{status.label}</StatusText>
+              {days !== null && (
+                <span
+                  className={`inline-flex items-center gap-1 text-[13px] tabular-nums ${overdue ? 'font-medium text-rose-600 dark:text-rose-400' : days > DAYS_IN_LAB_WARNING - 4 && !next.done ? 'font-medium text-warning-700 dark:text-warning-300' : 'text-slate-500 dark:text-slate-400'}`}
+                  title={`Counted from the day the exhibit was received; the target is ${DAYS_IN_LAB_WARNING} days`}
+                >
+                  <Hourglass className="h-3.5 w-3.5" />
+                  {next.done ? `${days} ${days === 1 ? 'day' : 'days'} in lab` : `Day ${days} in lab${overdue ? ' · overdue' : ''}`}
+                </span>
+              )}
             </div>
-            <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] text-slate-600 dark:text-slate-300">
+            <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] text-slate-500 dark:text-slate-400">
               {subtitle.filter(Boolean).map((item, index) => (
                 <React.Fragment key={index}>
                   {index > 0 && <span className="text-slate-300 dark:text-slate-600" aria-hidden="true">·</span>}
                   <span>{item}</span>
                 </React.Fragment>
               ))}
-              {days !== null && (
-                <>
-                  <span className="text-slate-300 dark:text-slate-600" aria-hidden="true">·</span>
-                  <span
-                    className={`inline-flex items-center gap-1 tabular-nums ${overdue ? 'font-medium text-rose-600 dark:text-rose-400' : days > DAYS_IN_LAB_WARNING - 4 && !next.done ? 'font-medium text-warning-700 dark:text-warning-300' : ''}`}
-                    title={`Counted from the day the exhibit was received; the target is ${DAYS_IN_LAB_WARNING} days`}
-                  >
-                    <Hourglass className="h-3.5 w-3.5" />
-                    {next.done ? `${days} ${days === 1 ? 'day' : 'days'} in lab` : `Day ${days} in lab${overdue ? ' · overdue' : ''}`}
-                  </span>
-                </>
-              )}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2 print:hidden">
             <MoreMenu actions={moreActions} />
-            <span className="hidden lg:block">{mainAction}</span>
           </div>
         </div>
 
-        {/* Who does what next, in one line; anything still in the way is listed, not hidden in a tooltip. */}
-        <div className={`rounded-lg px-3.5 py-2.5 text-[13px] ${next.done ? 'bg-emerald-50 text-emerald-900 dark:bg-emerald-500/10 dark:text-emerald-100' : 'bg-slate-100/70 text-slate-700 dark:bg-slate-800/60 dark:text-slate-200'}`} aria-live="polite">
-          <p className="flex items-start gap-2">
+        {/* Who does what next, in one line, with the button that opens that document. */}
+        <div
+          className={`flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border px-3.5 py-2 text-[13px] print:hidden ${
+            next.done ? 'border-emerald-300/70 text-emerald-900 dark:border-emerald-500/30 dark:text-emerald-100' : 'border-amber-300/70 text-slate-700 dark:border-amber-400/30 dark:text-slate-200'
+          }`}
+          aria-live="polite"
+        >
+          <p className="flex min-w-0 flex-1 items-start gap-2">
             {next.done ? <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" /> : <ArrowRight className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />}
             <span><span className="font-semibold">{next.done ? 'Complete. ' : 'Next: '}</span>{next.text}</span>
           </p>
+          {next.action && !nextOnOpenDocument && (
+            <OutlineButton tone={next.done ? 'default' : 'accent'} onClick={() => open(next.action!.target)}>
+              {next.action.label}
+              <ArrowRight className="h-3.5 w-3.5" />
+            </OutlineButton>
+          )}
           {!!next.blockers?.length && (
-            <div className="mt-1.5 flex items-start gap-2 pl-6 text-xs text-slate-600 dark:text-slate-300">
+            <p className="flex w-full items-start gap-2 pl-6 text-xs text-slate-600 dark:text-slate-300">
               <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
               <span>Still needed first: {next.blockers.join(' ')}</span>
-            </div>
+            </p>
           )}
         </div>
-
-        <CaseProgress stages={stages} onSelect={openCaseStep} />
       </header>
 
-      {notice}
+      {/* Previous / next document, named, with where the open one sits in the file. */}
+      <nav aria-label="Move between documents" className="flex items-center gap-2 sm:gap-3 print:hidden">
+        <OutlineButton icon={ChevronLeft} onClick={() => step(-1)} disabled={!previousSection} title="Previous document ([)" className="min-w-0">
+          <span className="hidden max-w-[12rem] truncate sm:inline">{previousSection?.title ?? 'Previous'}</span>
+          <span className="sm:hidden">Back</span>
+        </OutlineButton>
+        <span className="flex min-w-0 flex-1 items-center justify-center gap-1.5 text-[12px] tabular-nums text-slate-500 sm:flex-none dark:text-slate-400">
+          {CurrentIcon && current && <CurrentIcon className={`h-3.5 w-3.5 shrink-0 ${STATE_ICON[current.state].className}`} aria-label={STATE_ICON[current.state].label} />}
+          <span className="shrink-0">{activeIndex + 1} of {sections.length}</span>
+          <span aria-hidden="true">·</span>
+          <span className="truncate font-medium text-slate-800 dark:text-slate-100">{current?.title}</span>
+        </span>
+        <OutlineButton onClick={() => step(1)} disabled={!nextSection} title="Next document (])" className="min-w-0">
+          <span className="hidden max-w-[12rem] truncate sm:inline">{nextSection?.title ?? 'Next'}</span>
+          <span className="sm:hidden">Next</span>
+          <ChevronRight className="h-4 w-4" />
+        </OutlineButton>
+      </nav>
 
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_17rem]">
-        <div className="min-w-0 space-y-2.5">{children}</div>
-
-        {/* The quiet right rail: facts at a glance, the page's steps and the history. */}
-        <aside className="order-first overflow-hidden rounded-[10px] border border-slate-200 bg-white lg:sticky lg:top-14 lg:order-none print:hidden dark:border-slate-800 dark:bg-slate-900">
-          <details className="group lg:hidden">
-            <summary className="flex cursor-pointer list-none items-center justify-between px-3.5 py-2.5 text-[13px] font-medium text-slate-700 dark:text-slate-200">
-              Details and steps
-              <ArrowRight className="h-4 w-4 text-slate-400 transition-transform group-open:rotate-90" />
-            </summary>
-            <RailContent details={details} sections={sections} inView={inView} onSelect={(id) => { setInView(id); openCaseStep(id); }} history={history} onOpenHistory={() => setHistoryOpen(true)} />
-          </details>
-          <div className="hidden lg:block">
-            <RailContent details={details} sections={sections} inView={inView} onSelect={(id) => { setInView(id); openCaseStep(id); }} history={history} onOpenHistory={() => setHistoryOpen(true)} />
-          </div>
-        </aside>
+      <div className="min-w-0 space-y-3">
+        {notice}
+        <CaseFolderContext.Provider value={{ active }}>{children}</CaseFolderContext.Provider>
       </div>
 
-      {/* Phones: the main action in a bottom bar with a full-size touch target. */}
-      {next.action && (
-        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur lg:hidden print:hidden dark:border-slate-800 dark:bg-slate-950/95">
-          <Button variant={next.done ? 'secondary' : 'primary'} className="h-12 w-full" onClick={() => openCaseStep(next.action!.target)}>
-            {next.action.label}
-          </Button>
-        </div>
+      {shownDetails.length > 0 && (
+        <RecordDrawer
+          open={detailsOpen}
+          onClose={() => setDetailsOpen(false)}
+          section="Case details"
+          reference={reference}
+          icon={Info}
+          title="Case details"
+          subtitle={`Key facts for ${reference}`}
+        >
+          <dl className="divide-y divide-slate-200 dark:divide-[#2A2A2A]">
+            {shownDetails.map((detail) => (
+              <div key={detail.label} className="grid grid-cols-[8rem_minmax(0,1fr)] gap-3 py-2.5 text-[13px]">
+                <dt className={PANEL_TEXT_2}>{detail.label}</dt>
+                <dd className={`flex min-w-0 items-center gap-1 ${PANEL_TEXT} ${detail.mono ? 'font-mono text-[12.5px]' : ''}`}>
+                  <span className="min-w-0 break-words">{detail.value}</span>
+                  {detail.copy && <CopyButton value={detail.copy} label={detail.label.toLowerCase()} />}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </RecordDrawer>
       )}
 
       {history && (
-        <HistoryDrawer open={historyOpen} reference={reference} count={history.count} onClose={() => setHistoryOpen(false)}>
+        <RecordDrawer
+          open={historyOpen}
+          onClose={() => setHistoryOpen(false)}
+          section="Process history"
+          reference={reference}
+          icon={History}
+          title="Process history"
+          subtitle={`${history.count} recorded step${history.count === 1 ? '' : 's'} for ${reference}`}
+          footer={<p className={`text-[11px] ${PANEL_TEXT_2}`}>Every step is recorded with who did it and when, for the audit trail.</p>}
+        >
           {history.content}
-        </HistoryDrawer>
+        </RecordDrawer>
       )}
     </div>
   );
 };
-
-const RailContent: React.FC<{
-  details: CaseFileDetail[];
-  sections: CaseFileSectionLink[];
-  inView: string;
-  onSelect: (id: string) => void;
-  history?: { count: number };
-  onOpenHistory: () => void;
-}> = ({ details, sections, inView, onSelect, history, onOpenHistory }) => (
-  <>
-    <h2 className={railHeading}>Details</h2>
-    <dl className="space-y-2 px-3.5 pb-3">
-      {details.filter((detail) => detail.value !== null && detail.value !== undefined && detail.value !== '').map((detail) => (
-        <div key={detail.label} className="grid grid-cols-[6.5rem_minmax(0,1fr)] items-baseline gap-2 text-[12.5px]">
-          <dt className="text-slate-500 dark:text-slate-400">{detail.label}</dt>
-          <dd className={`flex min-w-0 items-center gap-1 text-slate-900 dark:text-white ${detail.mono ? 'font-mono text-[12px]' : ''}`}>
-            <span className="min-w-0 break-words">{detail.value}</span>
-            {detail.copy && <CopyButton value={detail.copy} label={detail.label.toLowerCase()} />}
-          </dd>
-        </div>
-      ))}
-    </dl>
-
-    <h2 className={`${railHeading} border-t border-slate-100 dark:border-slate-800`}>On this page</h2>
-    <nav aria-label="Case file steps" className="px-1.5 pb-2">
-      {sections.map((section) => {
-        const active = section.id === inView;
-        return (
-          <button
-            key={section.id}
-            type="button"
-            onClick={() => onSelect(section.id)}
-            aria-current={active ? 'location' : undefined}
-            className={`flex w-full cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] transition-colors ${
-              active ? 'bg-slate-100 font-medium text-slate-900 dark:bg-slate-800 dark:text-white' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800/60'
-            }`}
-          >
-            <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${STATE_DOT[section.state]}`} aria-hidden="true" />
-            <span className="truncate">{section.title}</span>
-            {section.state === 'current' && <span className="ml-auto text-[11px] text-amber-700 dark:text-amber-300">Now</span>}
-          </button>
-        );
-      })}
-    </nav>
-    <p className="hidden border-t border-slate-100 px-3.5 py-2 text-[11px] text-slate-400 lg:block dark:border-slate-800">
-      <kbd className="font-sans">[</kbd> <kbd className="font-sans">]</kbd> move between steps · <kbd className="font-sans">Esc</kbd> back
-    </p>
-
-    {history && (
-      <button
-        type="button"
-        onClick={onOpenHistory}
-        className="flex w-full cursor-pointer items-center gap-2 border-t border-slate-100 px-3.5 py-2.5 text-left text-[13px] text-slate-600 transition-colors hover:bg-slate-50 hover:text-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800/60"
-      >
-        <History className="h-4 w-4 text-slate-400" />
-        Process history
-        <span className="ml-auto tabular-nums text-slate-400">{history.count}</span>
-      </button>
-    )}
-  </>
-);

@@ -5,11 +5,11 @@ import { apiRequest } from '../../lib/api';
 import { Button, StatusPill, Tone } from '../common/Dashboard';
 import { Portal } from '../common/Portal';
 import { Select } from '../common/Select';
-import { SignatureInput } from './SignatureInput';
+import { SignatureInput, useSavedSignature } from './SignatureInput';
 import { Field, Group, paperDate } from './SampleReceiptFormSection';
 import { A4PreviewDialog, downloadA4Pdf, usePrintTarget } from './a4Preview';
 import { DraftReportData, DraftReportPages } from './DraftReportPages';
-import { CaseStep, CaseStepFact } from './CaseStep';
+import { CaseStep } from './CaseStep';
 
 interface DraftReportsResponse {
   reports: FoodDrugDraftReport[];
@@ -147,7 +147,7 @@ export const DraftReportSection: React.FC<DraftReportSectionProps> = ({ intake, 
   }
   if (!data.worksheetChecked && !data.reports.length) {
     return (
-      <SectionShell status={{ label: 'Locked', tone: 'slate' }} summary={[{ label: 'Status', value: 'Waiting for the Head to check the worksheet' }]}>
+      <SectionShell status={{ label: 'Locked', tone: 'slate' }}>
         <p className="flex items-center gap-2 px-5 py-8 text-sm text-slate-500 dark:text-slate-400">
           <Lock className="h-4 w-4" /> Available once the Head of Department has checked the laboratory worksheet.
         </p>
@@ -161,18 +161,7 @@ export const DraftReportSection: React.FC<DraftReportSectionProps> = ({ intake, 
   const update = <K extends keyof Editable>(key: K, value: Editable[K]) =>
     setValues((previous) => (previous ? { ...previous, [key]: value } : previous));
 
-  const missing = values
-    ? ([
-        !values.labSampleNo.trim() && 'lab sample no.',
-        values.senderContacts.trim().length < 2 && "sender's address/contacts",
-        !values.dateReceived && 'date received',
-        !values.analysisStartedOn && 'date analysis started',
-        values.analysisStartedOn && values.dateReceived && values.analysisStartedOn < values.dateReceived && 'an analysis date on or after the date received',
-        values.sampleDescription.trim().length < 2 && 'description of sample',
-        values.analysisRequired.trim().length < 2 && 'analysis required',
-        values.testMethods.trim().length < 2 && 'test method(s)',
-      ].filter(Boolean) as string[])
-    : [];
+  const missing = values ? missingFields(values) : [];
   const dirty = !!values && (!report || JSON.stringify(toEditable(report)) !== JSON.stringify(values));
 
   const call = async (key: string, action: () => Promise<{ report: FoodDrugDraftReport }>, done: string, notify = false) => {
@@ -251,16 +240,53 @@ export const DraftReportSection: React.FC<DraftReportSectionProps> = ({ intake, 
     : data.reports.length ? { label: 'In progress', tone: 'teal' as Tone }
     : { label: 'Not started', tone: 'slate' as Tone };
 
+  // Built only once a sub sample is chosen; the form it submits exists only then.
+  const footer = values && (
+    <>
+      <span className={`mr-auto text-[11px] ${message?.tone === 'error' ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`} role={message?.tone === 'error' ? 'alert' : undefined}>
+        {message?.text ||
+          (canEdit
+            ? missing.length ? `${missing.length} to fill in: ${missing.join(', ')}.` : dirty ? 'Ready to save.' : `Saved ${report?.updatedAt} by ${report?.updatedBy}.`
+            : data.canApprove && report?.status === 'SUBMITTED' ? 'Review the report, sign, then approve it.'
+            : report ? `Last saved ${report.updatedAt} by ${report.updatedBy}.` : 'Only the allocated analyst can prepare this draft report.')}
+      </span>
+      <div className="flex flex-wrap gap-2">
+        {canEdit && (
+          <Button type="submit" form="draft-report-fields" icon={report ? Save : FilePlus2} disabled={!!missing.length || !!busy || !dirty}>
+            {busy === 'save' ? 'Saving…' : report ? 'Save draft' : 'Create draft report'}
+          </Button>
+        )}
+        {canEdit && data.isAnalyst && (
+          confirmingSubmit ? (
+            <Button variant="primaryTeal" icon={Send} disabled={!!busy} onClick={() => void submit()}>
+              {busy === 'submit' ? 'Submitting…' : 'Confirm — send for approval'}
+            </Button>
+          ) : (
+            <Button
+              variant="primaryTeal"
+              icon={FileSignature}
+              disabled={!!missing.length || !!busy || !values.analystSignature || !values.analyticalReport.trim()}
+              title={!values.analystSignature ? 'Sign first' : !values.analyticalReport.trim() ? 'Write the analytical report first' : 'Locks the report and sends it to the Head of Department'}
+              onClick={() => setConfirmingSubmit(true)}
+            >
+              Submit for approval
+            </Button>
+          )
+        )}
+        {data.canApprove && report?.status === 'SUBMITTED' && (
+          <Button variant="primaryTeal" icon={CheckCircle2} disabled={!!busy || !checkerSignature} title={!checkerSignature ? 'Sign first' : undefined} onClick={() => void approve()}>
+            {busy === 'approve' ? 'Approving…' : 'Approve'}
+          </Button>
+        )}
+      </div>
+    </>
+  );
+
   return (
     <SectionShell
       status={overall}
-      defaultOpen={(data.canWrite && approvedCount < keys.length) || (data.canApprove && awaiting > 0)}
-      summary={[
-        { label: 'Sub samples', value: keys.join(', ') },
-        { label: 'Approved', value: `${approvedCount} of ${keys.length}` },
-        { label: 'Awaiting approval', value: String(awaiting) },
-        { label: 'Drafts', value: String(data.reports.filter((r) => r.status === 'DRAFT').length) },
-      ]}
+      preview={preview ? { content: <DraftReportPages data={preview} />, pages: pageCount } : undefined}
+      footer={footer || undefined}
     >
       <div className="px-5 py-5">
         {/* One draft report per sub sample */}
@@ -290,7 +316,7 @@ export const DraftReportSection: React.FC<DraftReportSectionProps> = ({ intake, 
           </div>
           {values && (
             <div className="flex flex-wrap gap-2">
-              <Button size="sm" icon={Eye} onClick={() => setPreviewOpen(true)}>Preview A4</Button>
+              <Button size="sm" icon={Eye} className="xl:hidden" onClick={() => setPreviewOpen(true)}>Preview A4</Button>
               <Button size="sm" icon={Printer} onClick={() => setPrinting(true)}>Print</Button>
               <Button size="sm" variant="primaryTeal" icon={Download} disabled={downloading} onClick={() => void downloadPdf()}>
                 {downloading ? 'Preparing…' : 'Download PDF'}
@@ -299,10 +325,22 @@ export const DraftReportSection: React.FC<DraftReportSectionProps> = ({ intake, 
           )}
         </div>
 
+        <BulkActions
+          data={data}
+          analystIsMe={intake.analystId === currentUser.id}
+          dirty={canEdit && !!report && dirty}
+          onFinished={async (text, tone) => {
+            setMessage({ tone, text });
+            await load(selected).catch(() => undefined);
+            onChanged?.();
+          }}
+        />
+
         {!values ? (
           <p className="text-sm text-slate-500 dark:text-slate-400">Choose a sub sample.</p>
         ) : (
           <form
+            id="draft-report-fields"
             className="space-y-5"
             onSubmit={(event) => {
               event.preventDefault();
@@ -364,7 +402,7 @@ export const DraftReportSection: React.FC<DraftReportSectionProps> = ({ intake, 
               <Field label="Name"><div className={readCls}>{preview?.analysedBy || '—'}</div></Field>
               <Field label="Date"><div className={readCls}>{report?.analysedDate ? paperDate(report.analysedDate) : 'Set when submitted'}</div></Field>
               <div className="sm:col-span-2">
-                <SignatureInput label="Analyst's signature" value={values.analystSignature} onChange={(v) => update('analystSignature', v)} disabled={!canEdit} />
+                <SignatureInput label="Analyst's signature" value={values.analystSignature} onChange={(v) => update('analystSignature', v)} disabled={!canEdit} mine={intake.analystId === currentUser.id} />
               </div>
             </Group>
 
@@ -376,6 +414,7 @@ export const DraftReportSection: React.FC<DraftReportSectionProps> = ({ intake, 
                   label="Head of Department's signature"
                   value={report?.checkerSignature ?? checkerSignature}
                   onChange={setCheckerSignature}
+                  mine
                   disabled={!(data.canApprove && report?.status === 'SUBMITTED')}
                 />
               </div>
@@ -390,44 +429,6 @@ export const DraftReportSection: React.FC<DraftReportSectionProps> = ({ intake, 
               </div>
             )}
 
-            <div className="flex flex-col-reverse gap-2 border-t border-slate-200 pt-3 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
-              <span className={`text-[11px] ${message?.tone === 'error' ? 'text-rose-600 dark:text-rose-400' : 'text-slate-500 dark:text-slate-400'}`} role={message?.tone === 'error' ? 'alert' : undefined}>
-                {message?.text ||
-                  (canEdit
-                    ? missing.length ? `Still to fill in: ${missing.join(', ')}.` : dirty ? 'Ready to save.' : `Saved ${report?.updatedAt} by ${report?.updatedBy}.`
-                    : data.canApprove && report?.status === 'SUBMITTED' ? 'Review the report, sign, then approve it.'
-                    : report ? `Last saved ${report.updatedAt} by ${report.updatedBy}.` : 'Only the allocated analyst can prepare this draft report.')}
-              </span>
-              <div className="flex flex-wrap gap-2">
-                {canEdit && (
-                  <Button type="submit" icon={report ? Save : FilePlus2} disabled={!!missing.length || !!busy || !dirty}>
-                    {busy === 'save' ? 'Saving…' : report ? 'Save draft' : 'Create draft report'}
-                  </Button>
-                )}
-                {canEdit && data.isAnalyst && (
-                  confirmingSubmit ? (
-                    <Button variant="primaryTeal" icon={Send} disabled={!!busy} onClick={() => void submit()}>
-                      {busy === 'submit' ? 'Submitting…' : 'Confirm — send for approval'}
-                    </Button>
-                  ) : (
-                    <Button
-                      variant="primaryTeal"
-                      icon={FileSignature}
-                      disabled={!!missing.length || !!busy || !values.analystSignature || !values.analyticalReport.trim()}
-                      title={!values.analystSignature ? 'Sign first' : !values.analyticalReport.trim() ? 'Write the analytical report first' : 'Locks the report and sends it to the Head of Department'}
-                      onClick={() => setConfirmingSubmit(true)}
-                    >
-                      Submit for approval
-                    </Button>
-                  )
-                )}
-                {data.canApprove && report?.status === 'SUBMITTED' && (
-                  <Button variant="primaryTeal" icon={CheckCircle2} disabled={!!busy || !checkerSignature} title={!checkerSignature ? 'Sign first' : undefined} onClick={() => void approve()}>
-                    {busy === 'approve' ? 'Approving…' : 'Approve'}
-                  </Button>
-                )}
-              </div>
-            </div>
           </form>
         )}
       </div>
@@ -453,25 +454,141 @@ export const DraftReportSection: React.FC<DraftReportSectionProps> = ({ intake, 
   );
 };
 
+/** Required fields still empty on a draft report, as phrases for "Still to fill in: …". */
+const missingFields = (values: Editable) =>
+  [
+    !values.labSampleNo.trim() && 'lab sample no.',
+    values.senderContacts.trim().length < 2 && "sender's address/contacts",
+    !values.dateReceived && 'date received',
+    !values.analysisStartedOn && 'date analysis started',
+    values.analysisStartedOn && values.dateReceived && values.analysisStartedOn < values.dateReceived && 'an analysis date on or after the date received',
+    values.sampleDescription.trim().length < 2 && 'description of sample',
+    values.analysisRequired.trim().length < 2 && 'analysis required',
+    values.testMethods.trim().length < 2 && 'test method(s)',
+  ].filter(Boolean) as string[];
+
+/**
+ * Submit or approve several sub samples' reports in one go instead of opening each tab.
+ * It uses the same per-report endpoints as the single buttons, one after another, so every
+ * report keeps its own checks, signature copy and audit record.
+ */
+const BulkActions: React.FC<{
+  data: DraftReportsResponse;
+  /** The signed-in officer is the allocated analyst, so their saved signature may be applied. */
+  analystIsMe: boolean;
+  /** Unsaved edits on the open tab would be skipped; ask to save them first. */
+  dirty: boolean;
+  onFinished: (text: string, tone: 'ok' | 'error') => Promise<void>;
+}> = ({ data, analystIsMe, dirty, onFinished }) => {
+  const saved = useSavedSignature(analystIsMe || data.canApprove);
+  const [mode, setMode] = useState<'submit' | 'approve' | null>(null);
+  const [checkerSignature, setCheckerSignature] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const signatureFor = (report: FoodDrugDraftReport) => report.analystSignature ?? (analystIsMe ? saved : null);
+  const submittable = data.canWrite && data.isAnalyst
+    ? data.reports.filter((r) => r.status === 'DRAFT' && signatureFor(r) && r.analyticalReport?.trim() && !missingFields(toEditable(r)).length)
+    : [];
+  const approvable = data.canApprove ? data.reports.filter((r) => r.status === 'SUBMITTED') : [];
+  if (submittable.length < 2 && approvable.length < 2) return null;
+
+  const run = async (items: FoodDrugDraftReport[], request: (report: FoodDrugDraftReport) => Promise<unknown>, verb: string) => {
+    setBusy(true);
+    const failed: string[] = [];
+    for (const report of items) {
+      try {
+        await request(report);
+      } catch (cause) {
+        failed.push(`${report.labSampleNo} (${cause instanceof Error ? cause.message : 'failed'})`);
+      }
+    }
+    const done = items.length - failed.length;
+    setBusy(false);
+    setMode(null);
+    await onFinished(
+      failed.length ? `${done} of ${items.length} ${verb}. Not done: ${failed.join('; ')}` : `${done} draft reports ${verb}.`,
+      failed.length ? 'error' : 'ok',
+    );
+  };
+
+  const items = mode === 'approve' ? approvable : submittable;
+  return (
+    <div className="mb-4 rounded-lg border border-teal-200 bg-teal-50/60 p-3 dark:border-teal-900 dark:bg-teal-950/20">
+      {!mode ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-700 dark:text-slate-300">
+          <span>{dirty ? 'Save the open report first to act on several at once.' : 'Several reports are ready. Handle them together:'}</span>
+          <div className="flex flex-wrap gap-2">
+            {submittable.length >= 2 && (
+              <Button size="sm" variant="primaryTeal" icon={Send} disabled={dirty} onClick={() => setMode('submit')}>
+                Submit all ready ({submittable.length})
+              </Button>
+            )}
+            {approvable.length >= 2 && (
+              <Button size="sm" variant="primaryTeal" icon={CheckCircle2} disabled={dirty} onClick={() => setMode('approve')}>
+                Approve all submitted ({approvable.length})
+              </Button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3 text-xs text-slate-700 dark:text-slate-300">
+          <p className="font-medium">
+            {mode === 'submit'
+              ? 'These reports will be locked and sent to the Head of Department. Reports you have not signed get your saved signature.'
+              : 'These reports will be approved and locked with the signature below.'}
+          </p>
+          <ul className="divide-y divide-teal-100 rounded-md border border-teal-100 bg-white dark:divide-slate-800 dark:border-slate-800 dark:bg-slate-900">
+            {items.map((r) => (
+              <li key={r.id} className="px-3 py-2">
+                <span className="font-mono font-semibold">{r.labSampleNo}</span>
+                <span className="text-slate-500 dark:text-slate-400"> · {r.analyticalReport?.trim().slice(0, 140) || 'No analytical report'}{(r.analyticalReport?.trim().length ?? 0) > 140 ? '…' : ''}</span>
+              </li>
+            ))}
+          </ul>
+          {mode === 'approve' && (
+            <SignatureInput label="Head of Department's signature" value={checkerSignature} onChange={setCheckerSignature} mine />
+          )}
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button size="sm" disabled={busy} onClick={() => setMode(null)}>Cancel</Button>
+            <Button
+              size="sm"
+              variant="primaryTeal"
+              icon={mode === 'approve' ? CheckCircle2 : Send}
+              disabled={busy || (mode === 'approve' && !checkerSignature)}
+              onClick={() =>
+                void (mode === 'approve'
+                  ? run(approvable, (r) => apiRequest(`/api/food-drug/draft-reports/${r.id}/approve`, { method: 'POST', body: JSON.stringify({ checkerSignature }) }), 'approved and locked')
+                  : run(submittable, (r) => apiRequest(`/api/food-drug/draft-reports/${r.id}/submit`, { method: 'POST', body: JSON.stringify({ ...toEditable(r), analystSignature: signatureFor(r) }) }), 'sent for approval'))
+              }
+            >
+              {busy ? 'Working…' : mode === 'approve' ? `Confirm — approve ${items.length}` : `Confirm — submit ${items.length}`}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 /** Saved reports and sub samples still to be reported, in lab sample order. */
 const tabKeys = (data: DraftReportsResponse) =>
   Array.from(new Set([...data.reports.map((r) => r.labSampleNo), ...data.prefills.map((p) => p.labSampleNo)])).sort();
 
-const SectionShell: React.FC<{ status?: { label: string; tone: Tone }; summary?: CaseStepFact[]; defaultOpen?: boolean; children: React.ReactNode }> = ({
-  status,
-  summary,
-  defaultOpen = false,
-  children,
-}) => (
+const SectionShell: React.FC<{
+  status?: { label: string; tone: Tone };
+  preview?: { content: React.ReactNode; pages?: number };
+  footer?: React.ReactNode;
+  children: React.ReactNode;
+}> = ({ status, preview, footer, children }) => (
   <CaseStep
     id="draft-reports"
     step={4}
     icon={FileSignature}
-    title="Certificate of analysis – draft report"
+    title="Certificate of analysis"
     description="One per sub sample. Prepared by the analyst after the worksheet is checked, then approved and signed by the Head of Department."
     status={status}
-    summary={summary}
-    defaultOpen={defaultOpen}
+    preview={preview}
+    footer={footer}
   >
     {children}
   </CaseStep>

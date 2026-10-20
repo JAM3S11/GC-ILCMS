@@ -59,7 +59,7 @@ interface LaboratoryWorkspaceProps {
   currentUserRole?: UserRole;
   /** Food & Drugs officers the Head of Section can assign samples to. */
   foodDrugOfficers?: Pick<User, 'id' | 'name'>[];
-  onApproveFoodDrugIntake?: (intakeId: string) => void;
+  onApproveFoodDrugIntake?: (intakeId: string) => Promise<boolean>;
   onAssignFoodDrugIntake?: (intakeId: string, analystId: string, remarks: string) => Promise<boolean>;
   onReportFoodDrugIntake?: (intakeId: string, reportedBy: string) => void;
   onEditFoodDrugIntake?: (intakeId: string, edit: FoodDrugIntakeEdit) => void;
@@ -213,7 +213,7 @@ export const LaboratoryWorkspace: React.FC<LaboratoryWorkspaceProps> = ({
         currentUser={{ id: currentUserId ?? '', name: currentUserName ?? '', role: currentUserRole ?? 'ANALYST' }}
         officers={foodDrugOfficers}
         onOpenIntake={onOpenIntake}
-        onApprove={(id) => onApproveFoodDrugIntake?.(id)}
+        onApprove={(id) => onApproveFoodDrugIntake?.(id) ?? Promise.resolve(false)}
         onAssign={(id, analystId, remarks) => onAssignFoodDrugIntake?.(id, analystId, remarks) ?? Promise.resolve(false)}
         onReport={(id, reportedBy) => onReportFoodDrugIntake?.(id, reportedBy)}
         onEdit={onEditFoodDrugIntake}

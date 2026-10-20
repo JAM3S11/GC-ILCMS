@@ -145,7 +145,10 @@ export const labRegisterViews = (user: Pick<User, 'role' | 'department'>): { id:
       { id: 'all', label: 'All samples' },
     ];
   }
-  if (user.department === 'Water' || user.department === 'Narcotics') {
+  // Narcotics' page holds its own status tabs and "Assigned to me" scope, so the
+  // sidebar keeps a single Exhibit Laboratory link instead of repeating them.
+  if (user.department === 'Narcotics') return [];
+  if (user.department === 'Water') {
     return [
       { id: 'all', label: 'All exhibits' },
       ...mine,

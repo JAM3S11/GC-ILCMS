@@ -43,7 +43,7 @@ interface FoodDrugLaboratoryViewProps {
   currentUser: Pick<User, 'id' | 'name' | 'role'>;
   officers: Pick<User, 'id' | 'name'>[];
   onOpenIntake?: () => void;
-  onApprove: (intakeId: string) => void;
+  onApprove: (intakeId: string) => Promise<boolean>;
   onAssign: (intakeId: string, analystId: string, remarks: string) => Promise<boolean>;
   onReport: (intakeId: string, reportedBy: string) => void;
   onOpenCaseFile?: (intake: FoodDrugIntake) => void;

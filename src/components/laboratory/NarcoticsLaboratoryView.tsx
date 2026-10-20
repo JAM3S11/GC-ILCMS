@@ -1,13 +1,14 @@
 import React from 'react';
-import { CheckCircle2, Pill, Plus, Users } from 'lucide-react';
+import { CheckCircle2, Plus } from 'lucide-react';
 import { NarcoticsIntake, OfficerVisitor, User } from '../../types';
-import { Button, DashboardPage, Panel, StatusPill } from '../common/Dashboard';
+import { DashboardPage } from '../common/Dashboard';
 import { NarcoticsRegisterPanel } from './NarcoticsRegisterPanel';
+import { OutlineButton, StatusText } from './workspace/ui';
 
 /**
- * Narcotics laboratory page. Laid out like the Water & Environment page: a
- * banner with stage counts, the police officers sent over by reception, then
- * the exhibit register. Everything comes from the database.
+ * Narcotics laboratory page: a plain title with the one main action, the police
+ * officers reception has sent over (only while there are any), then the exhibit
+ * register with its details panel. Everything comes from the database.
  */
 
 interface NarcoticsLaboratoryViewProps {
@@ -28,7 +29,7 @@ interface NarcoticsLaboratoryViewProps {
   onAcceptClient?: (visitId: string) => void;
   /** Opens the intake form for an officer who has been received. */
   onRegisterExhibit?: (visit: OfficerVisitor) => void;
-  /** Register tab to open on, e.g. from a sidebar shortcut. */
+  /** Register tab to open on. */
   initialRegisterView?: string;
   onRegisterViewChange?: (view: string) => void;
 }
@@ -50,114 +51,79 @@ export const NarcoticsLaboratoryView: React.FC<NarcoticsLaboratoryViewProps> = (
   onRegisterExhibit,
   initialRegisterView,
   onRegisterViewChange,
-}) => {
-  const awaiting = intakes.filter((i) => i.status === 'Awaiting Assignment').length;
-  const underAnalysis = intakes.filter((i) => i.status === 'Under Analysis').length;
-  const complete = intakes.filter((i) => i.status === 'Analysis Complete').length;
-
-  return (
-    <DashboardPage>
-      <header className="rounded-2xl border border-slate-200 bg-white px-6 py-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex min-w-0 items-start gap-4">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-violet-500/10 text-violet-600 ring-1 ring-inset ring-violet-500/20 dark:text-violet-400">
-              <Pill className="h-5 w-5" />
-            </span>
-            <div className="min-w-0">
-              <p className="text-[12px] font-medium text-slate-500 dark:text-slate-400">Laboratory · Narcotics</p>
-              <h1 className="mt-0.5 text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">Exhibit laboratory</h1>
-              <p className="mt-1 text-[13px] text-slate-500 dark:text-slate-400">
-                {intakes.length} {intakes.length === 1 ? 'exhibit' : 'exhibits'} on record · {clients.length} {clients.length === 1 ? 'officer' : 'officers'} at the laboratory
-              </p>
-            </div>
-          </div>
-          {onOpenIntake && (
-            <Button variant="primaryTeal" icon={Plus} onClick={onOpenIntake} id="btn-open-intake-modal">
-              Exhibit intake
-            </Button>
-          )}
-        </div>
-        <ul aria-label="Stage counts" className="mt-5 flex flex-wrap gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
-          {[
-            { label: 'Awaiting assignment', count: awaiting, dot: 'bg-teal-300' },
-            { label: 'Under analysis', count: underAnalysis, dot: 'bg-sky-500' },
-            { label: 'Complete', count: complete, dot: 'bg-emerald-500' },
-          ].map((stage) => (
-            <li key={stage.label} className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1.5 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-              <span className={`h-2 w-2 rounded-full ${stage.dot}`} />
-              <span className="font-mono text-sm font-semibold tabular-nums text-slate-900 dark:text-white">{stage.count}</span>
-              {stage.label}
-            </li>
-          ))}
-        </ul>
-      </header>
-
-      {error && (
-        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
-          Narcotics exhibits could not be refreshed: {error}
-        </div>
+}) => (
+  <DashboardPage>
+    <header className="flex flex-wrap items-end justify-between gap-4">
+      <div className="min-w-0">
+        <p className="text-[12px] font-medium text-slate-500 dark:text-slate-400">Laboratory · Narcotics</p>
+        <h1 className="mt-0.5 text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">Exhibit laboratory</h1>
+        <p className="mt-1 text-[13px] text-slate-500 dark:text-slate-400">Receive exhibits, allocate the work and follow each analysis to the memo.</p>
+      </div>
+      {onOpenIntake && (
+        <OutlineButton size="md" tone="accent" icon={Plus} onClick={onOpenIntake} id="btn-open-intake-modal">
+          Receive exhibit
+        </OutlineButton>
       )}
+    </header>
 
-      {clients.length > 0 && (
-        <Panel
-          icon={Users}
-          tone="teal"
-          title="Officers at the laboratory"
-          description={`${clients.length} ${clients.length === 1 ? 'officer' : 'officers'} to receive or register`}
-          flush
-        >
-          <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-            {clients.map((visit) => {
-              const registered = intakes.find((i) => i.receptionVisitId === visit.id);
-              const atReception = visit.status === 'Awaiting Laboratory Reception';
-              return (
-                <li key={visit.id} className="flex flex-wrap items-center gap-3 px-4 py-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-[13px] font-medium text-slate-900 dark:text-white">{visit.officerName}</div>
-                    <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">
-                      {visit.badgeNumber && <>Badge <span className="font-mono">{visit.badgeNumber}</span> · </>}
-                      {visit.station || '—'} · <span className="font-mono">{visit.visitNumber}</span> · in at {visit.timeIn}
-                    </div>
+    {error && (
+      <div role="alert" className="rounded-xl border border-rose-300 px-4 py-3 text-sm text-rose-700 dark:border-rose-900 dark:text-rose-300">
+        Narcotics exhibits could not be refreshed: {error}
+      </div>
+    )}
+
+    {clients.length > 0 && (
+      <section aria-labelledby="narcotics-waiting-officers" className="rounded-xl border border-slate-200 dark:border-slate-800">
+        <h2 id="narcotics-waiting-officers" className="border-b border-slate-200 px-4 py-2.5 text-[13px] font-semibold text-slate-900 dark:border-slate-800 dark:text-white">
+          Officers waiting to hand in exhibits <span className="font-normal tabular-nums text-slate-400">{clients.length}</span>
+        </h2>
+        <ul className="divide-y divide-slate-200/70 dark:divide-slate-800/70">
+          {clients.map((visit) => {
+            const registered = intakes.find((i) => i.receptionVisitId === visit.id);
+            const atReception = visit.status === 'Awaiting Laboratory Reception';
+            return (
+              <li key={visit.id} className="flex flex-wrap items-center gap-3 px-4 py-3 transition-colors hover:bg-slate-500/[0.04]">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13px] font-medium text-slate-900 dark:text-white">{visit.officerName}</div>
+                  <div className="truncate text-[12px] text-slate-500 dark:text-slate-400">
+                    {visit.badgeNumber && <>Badge <span className="font-mono">{visit.badgeNumber}</span> · </>}
+                    {visit.station || '—'} · <span className="font-mono">{visit.visitNumber}</span> · in at {visit.timeIn}
                   </div>
-                  <StatusPill tone={atReception ? 'sky' : 'teal'}>{atReception ? 'Waiting at reception' : 'In the laboratory'}</StatusPill>
-                  {registered ? (
-                    <span className="text-[11px] text-slate-500 dark:text-slate-400">
-                      Registered · <span className="font-mono">{registered.labReference}</span>
-                    </span>
-                  ) : atReception ? (
-                    canReceiveClients && onAcceptClient ? (
-                      <Button size="xs" variant="primaryTeal" icon={CheckCircle2} onClick={() => onAcceptClient(visit.id)}>
-                        Accept at laboratory
-                      </Button>
-                    ) : (
-                      <span className="text-[11px] text-slate-500 dark:text-slate-400">Waiting to be accepted</span>
-                    )
+                </div>
+                <StatusText tone={atReception ? 'sky' : 'teal'}>{atReception ? 'Waiting at reception' : 'In the laboratory'}</StatusText>
+                {registered ? (
+                  <span className="text-[12px] text-slate-500 dark:text-slate-400">
+                    Registered · <span className="font-mono">{registered.labReference}</span>
+                  </span>
+                ) : atReception ? (
+                  canReceiveClients && onAcceptClient ? (
+                    <OutlineButton size="xs" tone="accent" icon={CheckCircle2} onClick={() => onAcceptClient(visit.id)}>Accept at laboratory</OutlineButton>
                   ) : (
-                    onRegisterExhibit && (
-                      <Button size="xs" variant="primaryTeal" icon={Plus} onClick={() => onRegisterExhibit(visit)}>
-                        Register exhibit
-                      </Button>
-                    )
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        </Panel>
-      )}
+                    <span className="text-[12px] text-slate-500 dark:text-slate-400">Waiting to be accepted</span>
+                  )
+                ) : (
+                  onRegisterExhibit && (
+                    <OutlineButton size="xs" tone="accent" icon={Plus} onClick={() => onRegisterExhibit(visit)}>Register exhibit</OutlineButton>
+                  )
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+    )}
 
-      <NarcoticsRegisterPanel
-        intakes={intakes}
-        isLoading={isLoading}
-        currentUser={currentUser}
-        officers={officers}
-        onAssign={onAssign}
-        onOpenCaseFile={onOpenCaseFile}
-        onEdit={onEdit}
-        onDelete={onDelete}
-        initialRegisterView={initialRegisterView}
-        onRegisterViewChange={onRegisterViewChange}
-      />
-    </DashboardPage>
-  );
-};
+    <NarcoticsRegisterPanel
+      intakes={intakes}
+      isLoading={isLoading}
+      currentUser={currentUser}
+      officers={officers}
+      onAssign={onAssign}
+      onOpenCaseFile={onOpenCaseFile}
+      onEdit={onEdit}
+      onDelete={onDelete}
+      initialRegisterView={initialRegisterView}
+      onRegisterViewChange={onRegisterViewChange}
+    />
+  </DashboardPage>
+);

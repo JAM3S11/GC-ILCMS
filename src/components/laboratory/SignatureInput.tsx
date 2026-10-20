@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Eraser, PenLine, Upload, X } from 'lucide-react';
+import { Eraser, PenLine, Signature, Upload, X } from 'lucide-react';
+import { apiRequest } from '../../lib/api';
 import { Button, SegmentedControl } from '../common/Dashboard';
 
 const MAX_IMAGE_BYTES = 300 * 1024;
@@ -21,19 +22,62 @@ export const readImageFile = (file: File): Promise<string> =>
     reader.readAsDataURL(file);
   });
 
+/* The signed-in officer's saved signature (Settings → My signature), fetched once per session. */
+let savedSignatureRequest: Promise<string | null> | null = null;
+const savedSignatureListeners = new Set<(value: string | null) => void>();
+
+const loadSavedSignature = () => {
+  savedSignatureRequest ??= apiRequest<{ signature: string | null }>('/api/account/signature')
+    .then((result) => result.signature)
+    .catch(() => {
+      savedSignatureRequest = null;
+      return null;
+    });
+  return savedSignatureRequest;
+};
+
+/** Call after saving or clearing the signature in Settings so open forms pick it up. */
+export const setSavedSignature = (value: string | null) => {
+  savedSignatureRequest = Promise.resolve(value);
+  savedSignatureListeners.forEach((listener) => listener(value));
+};
+
+/** Forget the cached signature, e.g. when another officer signs in on this browser. */
+export const resetSavedSignature = () => {
+  savedSignatureRequest = null;
+};
+
+export const useSavedSignature = (enabled = true) => {
+  const [signature, setSignature] = useState<string | null>(null);
+  useEffect(() => {
+    if (!enabled) return undefined;
+    let active = true;
+    void loadSavedSignature().then((value) => active && setSignature(value));
+    savedSignatureListeners.add(setSignature);
+    return () => {
+      active = false;
+      savedSignatureListeners.delete(setSignature);
+    };
+  }, [enabled]);
+  return signature;
+};
+
 interface SignatureInputProps {
   label: string;
   value: string | null | undefined;
   onChange: (dataUrl: string | null) => void;
   disabled?: boolean;
+  /** The field is the signed-in officer's own signature: offer their saved one in one click. */
+  mine?: boolean;
 }
 
 /**
  * A signature captured by drawing on a pad (mouse, pen or finger) or by
  * uploading an image. The value is a PNG/JPEG data URL, or null when empty.
  */
-export const SignatureInput: React.FC<SignatureInputProps> = ({ label, value, onChange, disabled = false }) => {
+export const SignatureInput: React.FC<SignatureInputProps> = ({ label, value, onChange, disabled = false, mine = false }) => {
   const [mode, setMode] = useState<'draw' | 'upload'>('draw');
+  const saved = useSavedSignature(mine && !disabled);
   const [error, setError] = useState('');
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawing = useRef(false);
@@ -123,6 +167,11 @@ export const SignatureInput: React.FC<SignatureInputProps> = ({ label, value, on
         <p className="rounded-lg border border-dashed border-slate-300 px-3 py-3 text-xs text-slate-500 dark:border-slate-700 dark:text-slate-400">Not signed.</p>
       ) : mode === 'draw' ? (
         <div className="space-y-1">
+          {saved && (
+            <Button size="sm" variant="primaryTeal" icon={Signature} onClick={() => onChange(saved)} className="w-full justify-center">
+              Use my saved signature
+            </Button>
+          )}
           <canvas
             ref={canvasRef}
             aria-label={`${label} pad — draw your signature`}
