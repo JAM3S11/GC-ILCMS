@@ -5039,6 +5039,291 @@ app.post('/api/account/department-change-requests/:id/withdraw', requireSession,
   }
 }));
 
+/* ---------------------------------------------------------------------------
+ * Profile details (name, title, sign-in email). The super-admin edits their own
+ * directly; every other officer asks the super-admin, who approves or rejects
+ * the change, the same way department moves work.
+ * --------------------------------------------------------------------------- */
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const emailTakenError = (error) =>
+  ['users_email_key', 'users_email_lower_idx', 'nominal_roll_email_idx'].includes(error.constraint);
+
+// Titles (roles) an officer may ask for without changing department: a laboratory role stays in
+// its laboratory, an office role in General Administration. Moving across needs the super-admin.
+const requestableRoles = (department) =>
+  [...validRoles].filter((role) => departmentsForRole(role).has(department));
+
+app.patch('/api/account/profile', authLimiter, requireSession, requireSuperAdmin, asyncHandler(async (req, res, next) => {
+  const { fullName, email, currentPassword } = req.body ?? {};
+  if (typeof fullName !== 'string' || fullName.trim().length < 2 || fullName.trim().length > 150 ||
+      typeof email !== 'string' || email.trim().length > 254 || !EMAIL_PATTERN.test(email.trim())) {
+    return res.status(400).json({ error: 'Enter your full name (2 to 150 characters) and a valid work email.' });
+  }
+  const nextName = fullName.trim();
+  const nextEmail = normalizeEmail(email);
+  const emailChanged = nextEmail !== normalizeEmail(req.user.email);
+  if (nextName === req.user.full_name && !emailChanged) {
+    return res.json({ user: publicUser(req.user), message: 'Nothing has changed.' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // The sign-in email is the account's identity, so changing it needs the current password.
+    if (emailChanged) {
+      const { rows } = await client.query('SELECT password_hash FROM users WHERE id = $1 FOR UPDATE', [req.user.id]);
+      if (typeof currentPassword !== 'string' || !await verifyPassword(currentPassword, rows[0]?.password_hash)) {
+        await client.query('ROLLBACK');
+        return res.status(403).json({ error: 'Your current password is needed to change your sign-in email, and the one entered is not correct.' });
+      }
+    }
+    const { rows } = await client.query(
+      `UPDATE users SET full_name = $2, email = $3, updated_at = NOW() WHERE id = $1
+       RETURNING id, full_name, email, role, department`,
+      [req.user.id, nextName, nextEmail],
+    );
+    await client.query('UPDATE nominal_roll SET full_name = $2, email = $3, updated_at = NOW() WHERE user_id = $1', [req.user.id, nextName, nextEmail]);
+    await audit(client, req.user.id, req.user.email, 'PROFILE_UPDATED', 'user', req.user.id, {
+      from: { fullName: req.user.full_name, email: req.user.email },
+      to: { fullName: nextName, email: nextEmail },
+    });
+    await client.query('COMMIT');
+    res.json({ user: publicUser(rows[0]), message: 'Your profile was updated.' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    if (emailTakenError(error)) return res.status(409).json({ error: 'That email is already used by another account or nominal roll entry.' });
+    next(error);
+  } finally {
+    client.release();
+  }
+}));
+
+const PROFILE_REQUEST_COLUMNS = `
+  r.id, r.current_full_name AS "currentFullName", r.current_email AS "currentEmail",
+  r.current_user_role AS "currentRole", r.requested_full_name AS "requestedFullName",
+  r.requested_email AS "requestedEmail", r.requested_role AS "requestedRole",
+  r.reason, r.status, r.created_at AS "createdAt", r.decision_at AS "decisionAt"`;
+
+const describeProfileChange = (request) => [
+  request.requested_full_name && `name to "${request.requested_full_name}"`,
+  request.requested_role && `title to ${request.requested_role.replaceAll('_', ' ')}`,
+  request.requested_email && `email to ${request.requested_email}`,
+].filter(Boolean).join(', ');
+
+app.post('/api/account/profile-change-requests', requireSession, asyncHandler(async (req, res, next) => {
+  if (req.user.role === 'SUPER_ADMIN') return res.status(400).json({ error: 'Super-admins edit their profile directly.' });
+  const { fullName, email, role, reason } = req.body ?? {};
+  if ([fullName, email, role].some((value) => value !== undefined && typeof value !== 'string') ||
+      (reason !== undefined && (typeof reason !== 'string' || reason.trim().length > 500))) {
+    return res.status(400).json({ error: 'Check the details and keep the reason to at most 500 characters.' });
+  }
+  const name = fullName?.trim() ?? '';
+  const mail = email ? normalizeEmail(email) : '';
+  const requested = {
+    fullName: name && name !== req.user.full_name ? name : null,
+    email: mail && mail !== normalizeEmail(req.user.email) ? mail : null,
+    role: role && role !== req.user.role ? role : null,
+  };
+  if (requested.fullName && (requested.fullName.length < 2 || requested.fullName.length > 150)) {
+    return res.status(400).json({ error: 'Enter a full name of 2 to 150 characters.' });
+  }
+  if (requested.email && (requested.email.length > 254 || !EMAIL_PATTERN.test(requested.email))) {
+    return res.status(400).json({ error: 'Enter a valid work email.' });
+  }
+  if (requested.role && !requestableRoles(req.user.department).includes(requested.role)) {
+    return res.status(400).json({ error: 'Choose a title that fits your current department.' });
+  }
+  if (!requested.fullName && !requested.email && !requested.role) {
+    return res.status(400).json({ error: 'Change at least one detail before sending the request.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `INSERT INTO profile_change_requests AS r
+         (user_id, current_full_name, current_email, current_user_role, requested_full_name, requested_email, requested_role, reason)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING ${PROFILE_REQUEST_COLUMNS}`,
+      [req.user.id, req.user.full_name, req.user.email, req.user.role, requested.fullName, requested.email, requested.role, reason?.trim() || null],
+    );
+    const request = rows[0];
+    await audit(client, req.user.id, req.user.email, 'PROFILE_CHANGE_REQUESTED', 'profile_change_request', request.id, { requested });
+    await createAdminNotification(client, {
+      title: 'Profile change requested',
+      message: `${req.user.full_name} (${req.user.email}) asked to change their ${describeProfileChange({
+        requested_full_name: requested.fullName, requested_email: requested.email, requested_role: requested.role,
+      })}.`,
+      type: 'warning',
+      linkAction: 'ADMIN_PROFILE_REQUESTS',
+      recordType: 'profile_change_request',
+      recordId: request.id,
+    });
+    await client.query('COMMIT');
+    res.status(201).json({ request });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    if (error.code === '23505') return res.status(409).json({ error: 'You already have a pending profile change request.' });
+    next(error);
+  } finally {
+    client.release();
+  }
+}));
+
+// The caller's own profile change requests, newest first, plus the titles they may ask for.
+app.get('/api/account/profile-change-requests', requireSession, asyncHandler(async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT ${PROFILE_REQUEST_COLUMNS}, d.full_name AS "decidedBy"
+       FROM profile_change_requests r
+       LEFT JOIN users d ON d.id = r.decision_by
+       WHERE r.user_id = $1
+       ORDER BY r.created_at DESC LIMIT 10`,
+      [req.user.id],
+    );
+    res.json({ requests: rows, requestableRoles: requestableRoles(req.user.department) });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+app.post('/api/account/profile-change-requests/:id/withdraw', requireSession, asyncHandler(async (req, res, next) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `UPDATE profile_change_requests
+       SET status = 'WITHDRAWN', decision_by = $2, decision_at = NOW()
+       WHERE id = $1 AND user_id = $2 AND status = 'PENDING'
+       RETURNING id`,
+      [req.params.id, req.user.id],
+    );
+    if (!rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'This request is no longer pending. It may already have been decided.' });
+    }
+    await audit(client, req.user.id, req.user.email, 'PROFILE_CHANGE_WITHDRAWN', 'profile_change_request', rows[0].id);
+    await createAdminNotification(client, {
+      title: 'Profile change request withdrawn',
+      message: `${req.user.full_name} (${req.user.email}) withdrew their profile change request. No action is needed.`,
+      type: 'info',
+      linkAction: 'ADMIN_PROFILE_REQUESTS',
+      recordType: 'profile_change_request',
+      recordId: rows[0].id,
+    });
+    await client.query('COMMIT');
+    res.json({ message: 'Your profile change request was withdrawn.' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    next(error);
+  } finally {
+    client.release();
+  }
+}));
+
+app.get('/api/admin/profile-change-requests', requireSession, requireSuperAdmin, asyncHandler(async (_req, res, next) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT ${PROFILE_REQUEST_COLUMNS}, r.user_id AS "userId", u.department
+       FROM profile_change_requests r
+       JOIN users u ON u.id = r.user_id
+       WHERE r.status = 'PENDING'
+       ORDER BY r.created_at DESC LIMIT 200`,
+    );
+    res.json({ requests: rows });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+app.post('/api/admin/profile-change-requests/:id/:decision', requireSession, requireSuperAdmin, asyncHandler(async (req, res, next) => {
+  const decision = req.params.decision;
+  if (!['approve', 'reject'].includes(decision)) return res.status(404).json({ error: 'Profile request action not found.' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `SELECT r.*, u.full_name AS live_full_name, u.email AS live_email, u.role AS live_role, u.department AS live_department
+       FROM profile_change_requests r
+       JOIN users u ON u.id = r.user_id
+       WHERE r.id = $1 AND r.status = 'PENDING'
+       FOR UPDATE OF r, u`,
+      [req.params.id],
+    );
+    if (!rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Pending profile change request not found.' });
+    }
+    const request = rows[0];
+    const change = describeProfileChange(request);
+    if (decision === 'approve') {
+      // Re-checked against the account as it is now: it may have changed since the request was sent.
+      if (request.requested_role && !requestableRoles(request.live_department).includes(request.requested_role)) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: `${request.requested_role.replaceAll('_', ' ')} no longer fits this officer's department. Change the role from User accounts instead.` });
+      }
+      if (request.requested_role === 'HEAD_OF_DEPARTMENT') {
+        const { rows: existingHead } = await findDepartmentHead(client, request.live_department, request.user_id);
+        if (existingHead.length) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ error: departmentHeadError(request.live_department, existingHead[0]) });
+        }
+      }
+      const nextName = request.requested_full_name ?? request.live_full_name;
+      const nextEmail = request.requested_email ?? request.live_email;
+      const nextRole = request.requested_role ?? request.live_role;
+      await client.query(
+        'UPDATE users SET full_name = $2, email = $3, role = $4, updated_at = NOW() WHERE id = $1',
+        [request.user_id, nextName, nextEmail, nextRole],
+      );
+      await client.query(
+        'UPDATE nominal_roll SET full_name = $2, email = $3, role = $4, updated_at = NOW() WHERE user_id = $1',
+        [request.user_id, nextName, nextEmail, nextRole],
+      );
+    }
+    await client.query(
+      'UPDATE profile_change_requests SET status = $2, decision_by = $3, decision_at = NOW() WHERE id = $1',
+      [request.id, decision === 'approve' ? 'APPROVED' : 'REJECTED', req.user.id],
+    );
+    await audit(client, req.user.id, req.user.email, decision === 'approve' ? 'PROFILE_CHANGE_APPROVED' : 'PROFILE_CHANGE_REJECTED',
+      'profile_change_request', request.id, {
+        userId: request.user_id,
+        from: { fullName: request.live_full_name, email: request.live_email, role: request.live_role },
+        requested: { fullName: request.requested_full_name, email: request.requested_email, role: request.requested_role },
+      });
+    await createAdminNotification(client, {
+      title: `Profile change ${decision === 'approve' ? 'approved' : 'rejected'}`,
+      message: `${request.live_full_name} (${request.live_email})'s request to change their ${change} was ${decision === 'approve' ? 'approved' : 'rejected'}.`,
+      type: decision === 'approve' ? 'success' : 'info',
+      linkAction: 'ADMIN_USERS',
+      recordType: 'profile_change_request',
+      recordId: request.id,
+    });
+    await createReceptionActivityNotification(client, {
+      recipientUserId: request.user_id,
+      title: decision === 'approve' ? 'Profile change approved' : 'Profile change not approved',
+      message: decision === 'approve'
+        ? `Your request to change your ${change} was approved.${request.requested_email ? ` Sign in with ${request.requested_email} from now on.` : ''}`
+        : `Your request to change your ${change} was not approved. Your details stay as they are.`,
+      type: decision === 'approve' ? 'success' : 'info',
+      linkAction: 'ACCOUNT_SETTINGS',
+      relatedRecordType: 'profile_change_request',
+      relatedRecordId: request.id,
+    });
+    await client.query('COMMIT');
+    res.json({ message: `Profile change request ${decision === 'approve' ? 'approved' : 'rejected'}.` });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    if (emailTakenError(error)) return res.status(409).json({ error: 'That email is already used by another account or nominal roll entry, so the change cannot be approved.' });
+    if (error.constraint === 'users_one_head_per_department_idx') {
+      return res.status(409).json({ error: 'That department already has a Head of Department. Change that account first.' });
+    }
+    next(error);
+  } finally {
+    client.release();
+  }
+}));
+
 app.get('/api/admin/department-change-requests', requireSession, requireSuperAdmin, asyncHandler(async (_req, res, next) => {
   try {
     const { rows } = await pool.query(
@@ -5459,6 +5744,7 @@ app.get('/api/admin/overview', requireSession, requireSuperAdmin, asyncHandler(a
          (SELECT COUNT(*)::int FROM nominal_roll WHERE employment_status = 'SERVING' AND user_id IS NULL) AS roll_without_account,
          (SELECT COUNT(*)::int FROM access_requests WHERE status = 'PENDING') AS pending_access_requests,
          (SELECT COUNT(*)::int FROM department_change_requests WHERE status = 'PENDING') AS pending_department_requests,
+         (SELECT COUNT(*)::int FROM profile_change_requests WHERE status = 'PENDING') AS pending_profile_requests,
          (SELECT COUNT(*)::int FROM users WHERE status = 'ACTIVE') AS active_users,
          (SELECT COUNT(*)::int FROM users WHERE status = 'PENDING_INVITE') AS invited_users,
          (SELECT COUNT(*)::int FROM audit_log) AS audit_events`,
@@ -5504,7 +5790,12 @@ const ROLL_SELECT = `
   SELECT r.id, r.staff_number AS "staffNumber", r.full_name AS "fullName", r.email,
          r.role, r.department, r.employment_status AS "employmentStatus",
          r.user_id AS "userId", u.status AS "accountStatus",
-         r.created_at AS "createdAt", r.updated_at AS "updatedAt"
+         r.created_at AS "createdAt", r.updated_at AS "updatedAt",
+         -- Members view: when the officer last signed in, and whether a session is open now.
+         (SELECT MAX(a.created_at) FROM audit_log a
+           WHERE a.actor_user_id = r.user_id AND a.action = 'USER_LOGIN') AS "lastSignInAt",
+         EXISTS (SELECT 1 FROM auth_sessions s
+           WHERE s.user_id = r.user_id AND s.expires_at > NOW()) AS "signedIn"
   FROM nominal_roll r LEFT JOIN users u ON u.id = r.user_id`;
 
 const rollConflictError = (error) => {
@@ -5558,6 +5849,55 @@ app.get('/api/admin/nominal-roll', requireSession, requireSuperAdmin, asyncHandl
   try {
     const { rows } = await pool.query(`${ROLL_SELECT} ORDER BY r.employment_status DESC, r.full_name LIMIT 2000`);
     res.json({ entries: rows });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+// One member's profile page: the roll entry with its account, the exhibits assigned to them in
+// every laboratory, and their latest actions from the audit log.
+app.get('/api/admin/members/:id/profile', requireSession, requireSuperAdmin, asyncHandler(async (req, res, next) => {
+  try {
+    const { rows } = await pool.query(`${ROLL_SELECT} WHERE r.id = $1`, [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Member not found.' });
+    const member = rows[0];
+    if (!member.userId) return res.json({ member, work: [], activity: [], activityTotal: 0 });
+
+    const [{ rows: work }, { rows: activity }, { rows: totals }] = await Promise.all([
+      pool.query(
+        `SELECT 'Water' AS laboratory, w.id::text AS id, w.lab_reference AS reference,
+                w.source_type || ' · ' || w.test_type AS title, w.status,
+                to_char(w.date_received, 'YYYY-MM-DD') AS "receivedDate",
+                w.assigned_at AS "assignedAt", w.completed_at AS "completedAt",
+                (w.status = 'Under Analysis' AND w.findings_recorded_at IS NOT NULL) AS "inReview"
+         FROM water_exhibit_intakes w
+         WHERE w.analysis_officer_id = $1 AND w.deleted_at IS NULL
+         UNION ALL
+         SELECT 'Narcotics', n.id::text, n.lab_reference,
+                n.exhibit_type || ' · ' || n.number_of_items || CASE WHEN n.number_of_items = 1 THEN ' item' ELSE ' items' END,
+                n.status, to_char(n.date_received, 'YYYY-MM-DD'),
+                n.assigned_at, n.completed_at,
+                (n.status = 'Under Analysis' AND n.findings_recorded_at IS NOT NULL)
+         FROM narcotics_exhibit_intakes n
+         WHERE n.analysis_officer_id = $1 AND n.deleted_at IS NULL
+         UNION ALL
+         SELECT 'Food & Drugs', f.id, f.id, f.sample_type || ' sample', f.status,
+                to_char(f.intake_date, 'YYYY-MM-DD'), f.assigned_at, f.reported_at, false
+         FROM food_drug_intakes f
+         WHERE f.analyst_id = $1 AND f.deleted_at IS NULL
+         ORDER BY "receivedDate" DESC
+         LIMIT 500`,
+        [member.userId],
+      ),
+      pool.query(
+        `SELECT id, action, record_type AS "recordType", record_id AS "recordId", details, created_at AS "createdAt"
+         FROM audit_log WHERE actor_user_id = $1
+         ORDER BY created_at DESC LIMIT 10`,
+        [member.userId],
+      ),
+      pool.query('SELECT COUNT(*)::int AS count FROM audit_log WHERE actor_user_id = $1', [member.userId]),
+    ]);
+    res.json({ member, work, activity, activityTotal: totals[0].count });
   } catch (error) {
     next(error);
   }

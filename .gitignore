@@ -3,6 +3,7 @@ build/
 dist/
 .opencode/
 .kilo/
+docs/
 coverage/
 .DS_Store
 *.log

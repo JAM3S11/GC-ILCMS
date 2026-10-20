@@ -4,7 +4,7 @@ import { Building2, Clock, LogOut, Settings } from 'lucide-react';
 import { User } from '../../types';
 import { departmentLabel } from '../../lib/departments';
 import { roleLabel } from '../admin/roles';
-import { Avatar } from './Dashboard';
+import { UserAvatar } from './Dashboard';
 
 /* ---------------------------------------------------------------------------
  * ProfileMenu: the account button in the top bar. Tapping it opens a card
@@ -50,7 +50,7 @@ export const ProfileMenu: React.FC<ProfileMenuProps> = ({ currentUser, onOpenSet
       aria-label={`Account: ${currentUser.name}`}
       className="flex h-9 cursor-pointer items-center gap-2 rounded-lg px-1 text-slate-700 transition-colors hover:bg-slate-100 focus:outline-none data-[focus]:ring-2 data-[focus]:ring-amber-500/40 data-[open]:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800 dark:data-[open]:bg-slate-800"
     >
-      <Avatar name={currentUser.name} size="sm" tone="amber" />
+      <UserAvatar name={currentUser.name} size="sm" />
     </PopoverButton>
 
     <PopoverPanel
@@ -61,7 +61,7 @@ export const ProfileMenu: React.FC<ProfileMenuProps> = ({ currentUser, onOpenSet
       {({ close }) => (
         <>
           <div className="flex items-start gap-3 px-2 pb-3 pt-2">
-            <Avatar name={currentUser.name} size="lg" tone="amber" />
+            <UserAvatar name={currentUser.name} size="lg" />
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-semibold text-slate-900 dark:text-white">{currentUser.name}</div>
               <div className="truncate text-xs text-slate-500 dark:text-slate-400" title={currentUser.email}>{currentUser.email}</div>

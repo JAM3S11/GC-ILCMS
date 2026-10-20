@@ -403,6 +403,23 @@ export const Avatar: React.FC<{ name: string; tone?: Tone; size?: 'sm' | 'md' | 
   );
 };
 
+/** The signed-in user's own avatar, filled with the colour they chose in Settings → Profile. */
+export const UserAvatar: React.FC<{ name: string; size?: 'sm' | 'md' | 'lg' | 'xl'; className?: string }> = ({ name, size = 'md', className = '' }) => {
+  const initials = name
+    .split(' ')
+    .map((p) => p[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join('')
+    .toUpperCase();
+  const sizing = size === 'sm' ? 'h-7 w-7 text-[10px]' : size === 'lg' ? 'h-11 w-11 text-sm' : size === 'xl' ? 'h-16 w-16 text-xl' : 'h-9 w-9 text-xs';
+  return (
+    <span className={`flex shrink-0 items-center justify-center rounded-full bg-[var(--gc-avatar)] font-semibold text-white transition-colors ${sizing} ${className}`}>
+      {initials}
+    </span>
+  );
+};
+
 interface SegmentedOption<T extends string> {
   value: T;
   label: string;
@@ -530,7 +547,8 @@ export const MeterRow: React.FC<{ label: string; value: number; total: number; t
 /* ------------------------------- Tables --------------------------------- */
 
 export const tableClasses = {
-  table: 'w-full text-left text-[13px]',
+  // `gc-list` lets Settings → Appearance → Task display tighten the rows.
+  table: 'gc-list w-full text-left text-[13px]',
   thead: 'bg-slate-50 dark:bg-slate-950/50',
   th: 'whitespace-nowrap px-4 py-2.5 text-[11px] font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400',
   tbody: 'divide-y divide-slate-100 dark:divide-slate-800',

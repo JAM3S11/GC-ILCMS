@@ -39,7 +39,8 @@ export const useViewRoute = (activeView: string, navigate: (view: string) => voi
   }, [navigate]);
 
   useEffect(() => {
-    const target = activeView === 'landing' ? '/' : `${PREFIX}${encodeURIComponent(activeView)}`;
+    // Segments stay readable (/app/members/<id>); each one is still encoded.
+    const target = activeView === 'landing' ? '/' : `${PREFIX}${activeView.split('/').map(encodeURIComponent).join('/')}`;
     if (fromHistory.current) {
       fromHistory.current = false;
       return;

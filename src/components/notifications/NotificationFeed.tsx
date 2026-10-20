@@ -57,6 +57,7 @@ export const TYPE_META: Record<AppNotification['type'], { icon: React.ComponentT
 export const actionLabel = (n: AppNotification): string | null => {
   switch (n.linkAction) {
     case 'ADMIN_DEPARTMENT_REQUESTS': return 'Review request';
+    case 'ADMIN_PROFILE_REQUESTS': return 'Review request';
     case 'ADMIN_USERS': return 'Open accounts';
     case 'RECEPTION_LAB_BAY': return 'Open handover';
     case 'RECEPTION_REGISTER': return 'Open register';

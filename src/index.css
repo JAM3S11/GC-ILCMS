@@ -128,6 +128,94 @@ html.dark {
 }
 
 /* ---------------------------------------------------------------------------
+   ACCENT CHOICES (Settings → Appearance)
+   `data-accent` on <html> swaps the whole ramp, so every `amber-*` utility
+   follows. The 400–500 steps stay light, like the turquoise, so the dark text
+   used on accent buttons keeps its contrast. These come after `html.dark`
+   (same specificity) so they win in both themes.
+   --------------------------------------------------------------------------- */
+html[data-accent="blue"] {
+  --gc-amber-50: #eff6ff; --gc-amber-100: #dbeafe; --gc-amber-200: #bfdbfe; --gc-amber-300: #93c5fd;
+  --gc-amber-400: #93c5fd; --gc-amber-500: #93c5fd; --gc-amber-600: #60a5fa; --gc-amber-700: #1d4ed8;
+  --gc-amber-800: #1e40af; --gc-amber-900: #1e3a8a; --gc-accent-rgb: 147 197 253;
+}
+html[data-accent="indigo"] {
+  --gc-amber-50: #eef2ff; --gc-amber-100: #e0e7ff; --gc-amber-200: #c7d2fe; --gc-amber-300: #a5b4fc;
+  --gc-amber-400: #a5b4fc; --gc-amber-500: #a5b4fc; --gc-amber-600: #818cf8; --gc-amber-700: #4338ca;
+  --gc-amber-800: #3730a3; --gc-amber-900: #312e81; --gc-accent-rgb: 165 180 252;
+}
+html[data-accent="violet"] {
+  --gc-amber-50: #f5f3ff; --gc-amber-100: #ede9fe; --gc-amber-200: #ddd6fe; --gc-amber-300: #c4b5fd;
+  --gc-amber-400: #c4b5fd; --gc-amber-500: #c4b5fd; --gc-amber-600: #a78bfa; --gc-amber-700: #6d28d9;
+  --gc-amber-800: #5b21b6; --gc-amber-900: #4c1d95; --gc-accent-rgb: 196 181 253;
+}
+html[data-accent="rose"] {
+  --gc-amber-50: #fdf2f8; --gc-amber-100: #fce7f3; --gc-amber-200: #fbcfe8; --gc-amber-300: #f9a8d4;
+  --gc-amber-400: #f9a8d4; --gc-amber-500: #f9a8d4; --gc-amber-600: #f472b6; --gc-amber-700: #be185d;
+  --gc-amber-800: #9d174d; --gc-amber-900: #831843; --gc-accent-rgb: 249 168 212;
+}
+html[data-accent="graphite"] {
+  --gc-amber-50: #f8fafc; --gc-amber-100: #f1f5f9; --gc-amber-200: #e2e8f0; --gc-amber-300: #cbd5e1;
+  --gc-amber-400: #cbd5e1; --gc-amber-500: #cbd5e1; --gc-amber-600: #94a3b8; --gc-amber-700: #334155;
+  --gc-amber-800: #1e293b; --gc-amber-900: #0f172a; --gc-accent-rgb: 203 213 225;
+}
+
+/* Your own avatar (sidebar footer, profile menu, Settings → Profile). Chosen in Settings → Profile. */
+:root { --gc-avatar: #1e293b; }
+html.dark { --gc-avatar: #334155; }
+html[data-avatar="teal"] { --gc-avatar: #0f766e; }
+html[data-avatar="blue"] { --gc-avatar: #2563eb; }
+html[data-avatar="violet"] { --gc-avatar: #7c3aed; }
+html[data-avatar="rose"] { --gc-avatar: #e11d48; }
+html[data-avatar="amber"] { --gc-avatar: #b45309; }
+html[data-avatar="emerald"] { --gc-avatar: #047857; }
+
+/* Compact task display: tighter rows in on-screen list tables (registers, worklists, audit trail,
+   staff lists). Those tables carry `gc-list`; printed certificates, memos and forms do not. */
+html[data-density="compact"] .gc-list :where(th) {
+  padding-top: 0.375rem !important;
+  padding-bottom: 0.375rem !important;
+}
+html[data-density="compact"] .gc-list :where(td) {
+  padding-top: 0.4375rem !important;
+  padding-bottom: 0.4375rem !important;
+}
+
+/* Compact sidebar density: tighter menu rows, sub-rows, group captions and group spacing.
+   The large header/footer buttons (data-size="lg") keep their size. */
+html[data-sidebar-density="compact"] [data-sidebar="menu-button"]:not([data-size="lg"]) {
+  height: 1.625rem !important;
+}
+html[data-sidebar-density="compact"] [data-sidebar="menu-sub-button"] {
+  height: 1.5rem !important;
+}
+html[data-sidebar-density="compact"] [data-sidebar="menu"] {
+  gap: 0 !important;
+}
+html[data-sidebar-density="compact"] [data-sidebar="group"] {
+  padding-top: 0.25rem !important;
+  padding-bottom: 0.25rem !important;
+}
+html[data-sidebar-density="compact"] [data-sidebar="group-label"] {
+  height: 1.5rem !important;
+}
+html[data-sidebar-density="compact"] [data-sidebar="menu-sub"] {
+  gap: 0 !important;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+/* "Reduce motion" chosen in Settings, whatever the operating system says. Spinners keep turning. */
+html[data-motion="reduce"] { scroll-behavior: auto; }
+html[data-motion="reduce"] *:not(.animate-spin),
+html[data-motion="reduce"] *::before,
+html[data-motion="reduce"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
+/* ---------------------------------------------------------------------------
    BASE SURFACES
    The app was authored dark-first. These base rules provide the light-mode
    canvas + default text colour, and are overridden when `.dark` is present.

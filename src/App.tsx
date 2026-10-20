@@ -30,7 +30,7 @@ import { IntakeHandoverDialog } from './components/laboratory/IntakeHandoverDial
 import { Header } from './components/common/Header';
 import { DashboardLayout } from './components/layout/DashboardLayout';
 import { AppSidebar } from './components/layout/AppSidebar';
-import { CASE_REGISTER_NAV_PREFIX, LAB_REGISTER_NAV_PREFIX, defaultLabRegisterView } from './components/layout/appNav';
+import { CASE_REGISTER_NAV_PREFIX, LAB_REGISTER_NAV_PREFIX, SuperAdminTab, defaultLabRegisterView, toSuperAdminTab } from './components/layout/appNav';
 import { GovBanner } from './components/layout/GovBanner';
 import { PrototypeToolbar } from './components/common/PrototypeToolbar';
 import { GlobalSearchModal } from './components/common/GlobalSearchModal';
@@ -68,6 +68,8 @@ import { NotificationDrawer } from './components/notifications/NotificationDrawe
 import { AuditTrailView } from './components/audit/AuditTrailView';
 import { SettingsView, readUserSettings } from './components/settings/SettingsView';
 import { useTheme } from './theme/ThemeProvider';
+import { MotionConfig } from 'motion/react';
+import { applyAppearance, clearAppearance, useMotionPreference } from './lib/appearance';
 import { ApiError, apiRequest } from './lib/api';
 import { useViewRoute, viewFromLocation } from './lib/useViewRoute';
 import { SuperAdminPage } from './components/admin/SuperAdminPage';
@@ -147,7 +149,10 @@ export default function App() {
   const [receptionActivityNotificationError, setReceptionActivityNotificationError] = useState('');
   const [adminNotifications, setAdminNotifications] = useState<AppNotification[]>([]);
   const [adminNotificationError, setAdminNotificationError] = useState('');
-  const [superAdminTab, setSuperAdminTab] = useState<'nominal-roll' | 'department-requests' | 'users' | 'audit'>('users');
+  const [superAdminTab, setSuperAdminTab] = useState<SuperAdminTab>('members');
+  // A member's profile page is the view 'members/<roll id>' (/app/members/<id>); the name is for the top bar.
+  const [memberProfileName, setMemberProfileName] = useState('');
+  const memberProfileId = activeView.startsWith('members/') ? activeView.slice('members/'.length) : null;
   const [auditLogs, setAuditLogs] = useState<AuditEvent[]>(INITIAL_AUDIT_LOGS);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -317,12 +322,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!currentUser) return;
-    if (currentUser.role === 'SUPER_ADMIN') return;
+    // Accent, density and motion are per user: nobody signed in (or the Super Admin) gets the defaults.
+    if (!currentUser || currentUser.role === 'SUPER_ADMIN') {
+      clearAppearance();
+      return;
+    }
     const settings = readUserSettings(currentUser.id);
     setMode(settings.themeMode);
-    setSidebarCollapsed(settings.compactSidebar);
+    applyAppearance(settings);
   }, [currentUser?.id, setMode]);
+
+  const motionPreference = useMotionPreference();
 
   // Global keyboard shortcuts (Ctrl+K or Cmd+K)
   useEffect(() => {
@@ -705,14 +715,23 @@ export default function App() {
     }
 
     const isSuperAdmin = currentUser.role === 'SUPER_ADMIN';
-    // Admin sidebar entries ('super-admin:users', ...) open a console section.
+    // Admin sidebar entries ('super-admin:members', ...) open a console section.
     if (view.startsWith('super-admin:')) {
       if (!isSuperAdmin) {
         showToast('Super-admin access is restricted.');
         return;
       }
-      setSuperAdminTab(view.slice('super-admin:'.length) as typeof superAdminTab);
+      setSuperAdminTab(toSuperAdminTab(view.slice('super-admin:'.length)));
       setActiveView('super-admin');
+      return;
+    }
+    if (view.startsWith('members/')) {
+      if (!isSuperAdmin) {
+        showToast('Super-admin access is restricted.');
+        return;
+      }
+      setMemberProfileName('');
+      setActiveView(view);
       return;
     }
     if (view === 'super-admin' && !isSuperAdmin) {
@@ -964,12 +983,8 @@ export default function App() {
         return;
       }
       if (currentUser?.role === 'SUPER_ADMIN') {
-        const nextTab = notification.linkAction === 'ADMIN_DEPARTMENT_REQUESTS'
-          ? 'department-requests'
-          : notification.linkAction === 'ADMIN_ROLL'
-            ? 'nominal-roll'
-            : 'users';
-        setSuperAdminTab(nextTab);
+        const reviewQueue = notification.linkAction === 'ADMIN_DEPARTMENT_REQUESTS' || notification.linkAction === 'ADMIN_PROFILE_REQUESTS';
+        setSuperAdminTab(reviewQueue ? 'requests' : 'members');
         setActiveView('super-admin');
       } else if (notification.linkAction === 'RECEPTION_LAB_BAY') {
         setActiveView('lab-bay');
@@ -1652,6 +1667,8 @@ export default function App() {
   const unreadCount = visibleNotifications.filter((n) => !n.read).length;
 
   return (
+    // "Reduce motion" in Settings switches off the motion library's animations app-wide.
+    <MotionConfig reducedMotion={motionPreference === 'reduce' ? 'always' : 'user'}>
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col selection:bg-amber-500 selection:text-slate-950 font-sans dark:bg-slate-950 dark:text-slate-100">
       {/* Toast popup */}
       {toastMessage && (
@@ -1703,6 +1720,11 @@ export default function App() {
               onOpenSearch={() => setSearchOpen(true)}
               onOpenSettings={() => handleNavigateView('settings')}
               onSignOut={handleSignOut}
+              breadcrumb={memberProfileId ? {
+                section: 'Members',
+                page: memberProfileName || 'Member profile',
+                onSection: () => handleNavigateView('super-admin:members'),
+              } : undefined}
             />
           }
         >
@@ -2175,8 +2197,16 @@ export default function App() {
 
             {activeView === 'references' && <ReferenceDatabaseView />}
 
-            {activeView === 'super-admin' && currentUser.role === 'SUPER_ADMIN' && (
-              <SuperAdminPage currentUserId={currentUser.id} initialTab={superAdminTab} hideTabs />
+            {(activeView === 'super-admin' || memberProfileId) && currentUser.role === 'SUPER_ADMIN' && (
+              <SuperAdminPage
+                currentUserId={currentUser.id}
+                initialTab={superAdminTab}
+                profileId={memberProfileId}
+                onOpenProfile={(id) => handleNavigateView(`members/${id}`)}
+                onCloseProfile={() => handleNavigateView('super-admin:members')}
+                onProfileName={setMemberProfileName}
+                onNavigate={handleNavigateView}
+              />
             )}
 
             {activeView === 'executive' && (
@@ -2189,13 +2219,13 @@ export default function App() {
             {activeView === 'settings' && (
               <SettingsView
                 currentUser={currentUser}
-                onCompactSidebarChange={(compact) => setSidebarCollapsed(compact)}
                 onSignOut={handleSignOut}
                 onSessionEnded={(message) => {
                   setCurrentUser(null);
                   setActiveView('landing');
                   showToast(message);
                 }}
+                onProfileUpdated={(user) => setCurrentUser(user)}
               />
             )}
 
@@ -2280,5 +2310,6 @@ export default function App() {
         onNavigate={handleNavigateView}
       />
     </div>
+    </MotionConfig>
   );
 }

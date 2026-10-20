@@ -110,7 +110,14 @@ export const APP_NAV_GROUPS: { title: string; items: NavItem[] }[] = [
 
 export const SETTINGS_NAV_ITEM: NavItem = { id: 'settings', label: 'Settings', icon: Settings };
 
-export type SuperAdminTab = 'nominal-roll' | 'department-requests' | 'users' | 'audit';
+/** Members (people on the nominal roll and their accounts), the review queue, and the audit log. */
+export type SuperAdminTab = 'members' | 'requests' | 'audit';
+
+/** The console tab for a section id, including the older ones (users, nominal-roll, …) still used by links. */
+export const toSuperAdminTab = (section: string): SuperAdminTab =>
+  section === 'audit' ? 'audit'
+    : ['requests', 'department-requests', 'profile-requests'].includes(section) ? 'requests'
+      : 'members';
 
 /** Prefix of the sidebar ids that open a Super Admin console tab. */
 export const SUPER_ADMIN_NAV_PREFIX = 'super-admin:';
@@ -195,8 +202,7 @@ export const SUPER_ADMIN_NAV_GROUPS: { title: string; items: NavItem[] }[] = [
   {
     title: 'Administration',
     items: [
-      { id: `${SUPER_ADMIN_NAV_PREFIX}nominal-roll`, label: 'Nominal roll', icon: ClipboardList },
-      { id: `${SUPER_ADMIN_NAV_PREFIX}users`, label: 'User accounts', icon: Users },
+      { id: `${SUPER_ADMIN_NAV_PREFIX}members`, label: 'Members', icon: Users },
       { id: `${SUPER_ADMIN_NAV_PREFIX}audit`, label: 'Audit log', icon: ScrollText },
     ],
   },

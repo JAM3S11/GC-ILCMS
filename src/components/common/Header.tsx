@@ -23,6 +23,8 @@ interface HeaderProps {
   onOpenSearch?: () => void;
   onOpenSettings: () => void;
   onSignOut: () => void;
+  /** Overrides the breadcrumb for pages named after a record, e.g. Members / Jane Doe. */
+  breadcrumb?: { section: string; page: string; onSection?: () => void };
 }
 
 const iconButton =
@@ -36,8 +38,11 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSearch,
   onOpenSettings,
   onSignOut,
+  breadcrumb,
 }) => {
-  const [section, page] = viewBreadcrumb(currentUser, activeView);
+  const [defaultSection, defaultPage] = viewBreadcrumb(currentUser, activeView);
+  const section = breadcrumb?.section ?? defaultSection;
+  const page = breadcrumb?.page ?? defaultPage;
 
   return (
     // 46px with a hairline border instead of a shadow.
@@ -51,7 +56,11 @@ export const Header: React.FC<HeaderProps> = ({
       <div className="h-5 w-px shrink-0 bg-slate-200 dark:bg-slate-800" aria-hidden="true" />
 
       <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-[13px]">
-        <span className="hidden truncate text-slate-500 sm:inline dark:text-slate-400">{section}</span>
+        {breadcrumb?.onSection ? (
+          <button type="button" onClick={breadcrumb.onSection} className="hidden cursor-pointer truncate text-slate-500 hover:text-slate-900 hover:underline sm:inline dark:text-slate-400 dark:hover:text-white">{section}</button>
+        ) : (
+          <span className="hidden truncate text-slate-500 sm:inline dark:text-slate-400">{section}</span>
+        )}
         <ChevronRight className="hidden h-3.5 w-3.5 shrink-0 text-slate-400 sm:block" aria-hidden="true" />
         <span aria-current="page" className="truncate font-semibold text-slate-900 dark:text-white">{page}</span>
       </nav>

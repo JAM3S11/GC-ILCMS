@@ -60,7 +60,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   onSignOut,
   unreadNotificationsCount,
   myExhibitsCount = 0,
-  superAdminTab = 'users',
+  superAdminTab = 'members',
   superAdminCounts = {},
   caseRegister = 'water',
   caseRegisterCounts = {},
@@ -106,8 +106,10 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
 
   // The Super Admin console, the case registry and the Exhibit Laboratory
   // register are each one view with tabs; highlight the open tab's item.
-  const activeId = activeView === 'super-admin'
-    ? `${SUPER_ADMIN_NAV_PREFIX}${superAdminTab}`
+  const activeId = activeView.startsWith('members/')
+    ? `${SUPER_ADMIN_NAV_PREFIX}members`
+    : activeView === 'super-admin'
+    ? `${SUPER_ADMIN_NAV_PREFIX}${superAdminTab === 'audit' ? 'audit' : 'members'}`
     : activeView === 'case-file' && isSuperAdmin
       ? `${CASE_REGISTER_NAV_PREFIX}${caseRegister}`
       : activeView === 'laboratory' && labViews.length > 0 && labRegisterView
@@ -175,7 +177,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         <div className="flex items-center gap-2.5 rounded-lg p-1 group-data-[collapsible=icon]:flex-col">
           <div
             title={`${currentUser.name} · ${roleLabel}`}
-            className="flex size-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-[11px] font-bold text-white ring-2 ring-amber-500/60 dark:bg-slate-700"
+            className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--gc-avatar)] text-[11px] font-bold text-white ring-2 ring-amber-500/60 transition-colors"
           >
             {initials}
           </div>

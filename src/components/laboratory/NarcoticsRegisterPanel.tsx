@@ -165,7 +165,7 @@ export const NarcoticsRegisterPanel: React.FC<NarcoticsRegisterPanelProps> = (pr
         />
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[960px] border-separate border-spacing-0 text-left text-[13px]">
+          <table className="gc-list w-full min-w-[960px] border-separate border-spacing-0 text-left text-[13px]">
             <caption className="sr-only">Narcotics exhibit register</caption>
             <thead>
               <tr>

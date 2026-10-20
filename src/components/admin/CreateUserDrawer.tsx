@@ -3,16 +3,7 @@ import { AlertTriangle, CheckCircle2, Mail, ScrollText, ShieldCheck, UserPlus, X
 import { LaboratoryDepartment, UserRole } from '../../types';
 import { Avatar, Button, StatusPill } from '../common/Dashboard';
 import { Select } from '../common/Select';
-import {
-  Drawer,
-  DrawerClose,
-  DrawerContent,
-  DrawerDescription,
-  DrawerFooter,
-  DrawerHeader,
-  DrawerTitle,
-} from '@/components/ui/drawer';
-import { useIsMobile } from '@/hooks/use-mobile';
+import { PANEL_TEXT, PANEL_TEXT_2, SidePanel } from '../common/SidePanel';
 import { departmentForRole, departmentLabel, departmentsForRole, isLabScopedRole } from '../../lib/departments';
 import { ROLE_GROUPS, ROLE_INFO, roleLabel } from './roles';
 
@@ -69,9 +60,9 @@ const inputClass =
   'h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 transition-colors placeholder:text-slate-400 focus:border-amber-500 focus:outline-none focus:ring-4 focus:ring-amber-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white';
 
 /**
- * "Create staff account" as a side drawer (bottom sheet on phones): officer
+ * "Add officer" in the app's side panel (full screen on phones): officer
  * details, role and posting, then a preview of the row exactly as it will
- * appear in User accounts, so the administrator knows what to look for.
+ * appear in Members, so the administrator knows what to look for.
  */
 export const CreateUserDrawer: React.FC<CreateUserDrawerProps> = ({
   open,
@@ -85,7 +76,6 @@ export const CreateUserDrawer: React.FC<CreateUserDrawerProps> = ({
   editing = null,
   prefill = null,
 }) => {
-  const isMobile = useIsMobile();
   const [staffNumber, setStaffNumber] = useState('');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
@@ -137,42 +127,36 @@ export const CreateUserDrawer: React.FC<CreateUserDrawerProps> = ({
   );
 
   return (
-    <Drawer open={open} onOpenChange={onOpenChange} direction={isMobile ? 'bottom' : 'right'}>
-      <DrawerContent
-        className={
-          isMobile
-            ? 'max-h-[92dvh] bg-white dark:bg-slate-900'
-            : 'bg-white data-[vaul-drawer-direction=right]:w-full data-[vaul-drawer-direction=right]:sm:max-w-lg dark:border-slate-800 dark:bg-slate-900'
-        }
-      >
-        <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col">
-          <DrawerHeader className="border-b border-slate-200 px-5 py-4 text-left dark:border-slate-800">
-            <div className="flex items-start gap-3">
+    <SidePanel
+      open={open}
+      onClose={() => onOpenChange(false)}
+      section="Nominal roll"
+      recordId={editing ? editing.staffNumber : 'New officer'}
+      titleId="roll-entry-title"
+      onSubmit={submit}
+      footer={
+        <div className="flex items-center justify-end gap-2">
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button type="submit" variant="primary" icon={sendsInvite ? Mail : UserPlus} disabled={!ready || working}>
+            {working ? 'Saving…' : editing ? 'Save changes' : sendsInvite ? 'Add & send invite' : 'Add to roll'}
+          </Button>
+        </div>
+      }
+    >
+          <div className="space-y-6 px-4 py-6 sm:px-6">
+            <div className="flex items-center gap-3">
               <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/10 text-amber-700 ring-1 ring-inset ring-amber-500/20 dark:text-amber-400">
                 <UserPlus className="h-5 w-5" />
               </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">Nominal roll</p>
-                <DrawerTitle className="text-base text-slate-900 dark:text-white">{editing ? 'Edit roll entry' : 'Add officer to the roll'}</DrawerTitle>
-                <DrawerDescription className="text-xs text-slate-500 dark:text-slate-400">
+              <div className="min-w-0">
+                <h2 id="roll-entry-title" className={`text-[22px] font-semibold leading-tight ${PANEL_TEXT}`}>{editing ? 'Edit roll entry' : 'Add officer to the roll'}</h2>
+                <p className={`text-[13px] ${PANEL_TEXT_2}`}>
                   {editing
                     ? 'Staff accounts are only issued to officers on the nominal roll.'
-                    : 'Only officers on the roll can hold an account. Issue it now, or later from the roll.'}
-                </DrawerDescription>
+                    : 'Only officers on the roll can hold an account. Issue it now, or later from Members.'}
+                </p>
               </div>
-              <DrawerClose asChild>
-                <button
-                  type="button"
-                  aria-label="Close"
-                  className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </DrawerClose>
             </div>
-          </DrawerHeader>
-
-          <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-5 py-5">
             <FormSection number={1} title="Officer details">
               <Field
                 label="Staff number"
@@ -194,7 +178,7 @@ export const CreateUserDrawer: React.FC<CreateUserDrawerProps> = ({
             </FormSection>
 
             <FormSection number={2} title="Role & posting">
-              <Field label="Role" hint={locked ? 'Change the role from User accounts; the roll follows it.' : ROLE_INFO[role].duty}>
+              <Field label="Role" hint={locked ? "Change the role from the member's profile; the roll follows it." : ROLE_INFO[role].duty}>
                 <Select value={role} onChange={chooseRole} disabled={locked} options={roleOptions} />
               </Field>
               <Field
@@ -226,7 +210,7 @@ export const CreateUserDrawer: React.FC<CreateUserDrawerProps> = ({
             )}
 
             {sendsInvite && (
-            <FormSection number={4} title="How it will appear in User accounts">
+            <FormSection number={4} title="How it will appear in Members">
               <div className="flex items-center gap-3 rounded-xl border border-amber-300 bg-amber-50/70 p-3 dark:border-amber-500/40 dark:bg-amber-500/10">
                 <Avatar name={fullName.trim() || 'New officer'} tone="amber" />
                 <div className="min-w-0 flex-1">
@@ -241,8 +225,8 @@ export const CreateUserDrawer: React.FC<CreateUserDrawerProps> = ({
               </div>
               <ul className="space-y-2 text-xs text-slate-600 dark:text-slate-300">
                 <WhatHappens icon={ShieldCheck}>The account is created as <strong>Invitation pending</strong>. It cannot sign in until the officer activates it.</WhatHappens>
-                <WhatHappens icon={Mail}>An activation email goes to the work address. If it expires, use <strong>Resend</strong> on the account row.</WhatHappens>
-                <WhatHappens icon={CheckCircle2}>The new account is pinned to the top of the register and highlighted.</WhatHappens>
+                <WhatHappens icon={Mail}>An activation email goes to the work address. If it expires, use <strong>Resend invitation</strong> on the member.</WhatHappens>
+                <WhatHappens icon={CheckCircle2}>The new member is pinned to the top of Members and highlighted.</WhatHappens>
                 <WhatHappens icon={ScrollText}>The creation is recorded in the audit log under your name.</WhatHappens>
               </ul>
             </FormSection>
@@ -255,17 +239,7 @@ export const CreateUserDrawer: React.FC<CreateUserDrawerProps> = ({
             )}
           </div>
 
-          <DrawerFooter className="flex-row items-center justify-end gap-2 border-t border-slate-200 px-5 py-3 dark:border-slate-800">
-            <DrawerClose asChild>
-              <Button variant="ghost">Cancel</Button>
-            </DrawerClose>
-            <Button type="submit" variant="primary" icon={sendsInvite ? Mail : UserPlus} disabled={!ready || working}>
-              {working ? 'Saving…' : editing ? 'Save changes' : sendsInvite ? 'Add & send invite' : 'Add to roll'}
-            </Button>
-          </DrawerFooter>
-        </form>
-      </DrawerContent>
-    </Drawer>
+    </SidePanel>
   );
 };
 

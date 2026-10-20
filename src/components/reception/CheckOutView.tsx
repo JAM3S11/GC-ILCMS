@@ -1,19 +1,21 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCheck, Clock, Download, FlaskConical, LogOut, MoonStar, Search, X } from 'lucide-react';
+import { AlertTriangle, CalendarDays, CheckCheck, Clock, Download, FlaskConical, IdCard, LogOut, MoonStar, Package, Search, UserRound, X } from 'lucide-react';
 import { LaboratoryDepartment, OfficerVisitor } from '../../types';
 import { DESTINATION_LAB_ORDER, departmentLabel } from '../../lib/departments';
 import { Avatar, Button, DashboardHeader, DashboardPage, DetailItem, EmptyState, StatusPill, Tone, TONE } from '../common/Dashboard';
 import { Select } from '../common/Select';
 import {
-  Drawer,
-  DrawerClose,
-  DrawerContent,
-  DrawerDescription,
-  DrawerFooter,
-  DrawerHeader,
-  DrawerTitle,
-} from '@/components/ui/drawer';
-import { useIsMobile } from '@/hooks/use-mobile';
+  PANEL_LINE,
+  PANEL_TEXT,
+  PANEL_TEXT_2,
+  PANEL_TEXT_3,
+  PanelBanner,
+  PanelHeaderButton,
+  PanelProperties,
+  PanelProperty,
+  PanelSectionHeading,
+  SidePanel,
+} from '../common/SidePanel';
 import { VISITOR_STATUS } from './visitorStatus';
 import {
   OFFICE_CLOSE_MINUTES,
@@ -30,7 +32,7 @@ import {
 /* ---------------------------------------------------------------------------
  * Check-out desk: everyone still on the premises in one table, with who can
  * leave now, who is still with a laboratory, and who has stayed past closing
- * or overnight. Opening a row slides in a drawer to confirm the handover and
+ * or overnight. Opening a row slides in the side panel to confirm the handover and
  * record the time out. A second tab lists those already signed out.
  * --------------------------------------------------------------------------- */
 
@@ -459,7 +461,6 @@ const CheckOutDrawer: React.FC<{
   onClose: () => void;
   onCheckOut: (visitorId: string) => Promise<void>;
 }> = ({ entry, now, canCheckOut, onClose, onCheckOut }) => {
-  const isMobile = useIsMobile();
   const [confirmed, setConfirmed] = useState<Set<string>>(new Set());
   const [working, setWorking] = useState(false);
   const visitorId = entry?.visitor.id;
@@ -491,117 +492,110 @@ const CheckOutDrawer: React.FC<{
     }
   };
 
+  const muted = (value?: string | null) => value || <span className={PANEL_TEXT_3}>—</span>;
+  const details = v && entry && (
+    <PanelProperties>
+      <PanelProperty icon={CalendarDays} label="Arrived">{v.date ? formatDay(v.date, 'short') : '—'} · {v.timeIn}</PanelProperty>
+      <PanelProperty icon={Clock} label={departed ? 'Left' : 'Time on site'}>
+        {departed ? muted(v.timeOut) : entry.overnight ? 'Since an earlier day' : entry.minutes !== null ? formatDuration(entry.minutes) : muted(null)}
+      </PanelProperty>
+      <PanelProperty icon={FlaskConical} label="Laboratory">{departmentLabel(v.laboratory)}</PanelProperty>
+      <PanelProperty icon={IdCard} label="Service badge">{muted(v.badgeNumber)}</PanelProperty>
+      <PanelProperty icon={Package} label="Exhibits brought">{muted(v.exhibitsPresented)}</PanelProperty>
+      <PanelProperty icon={UserRound} label="Registered by">{muted(v.receptionistName)}</PanelProperty>
+    </PanelProperties>
+  );
+
   return (
-    <Drawer open={!!entry} onOpenChange={(open) => !open && onClose()} direction={isMobile ? 'bottom' : 'right'}>
-      <DrawerContent
-        className={
-          isMobile
-            ? 'max-h-[92dvh] bg-white dark:bg-slate-900'
-            : 'bg-white data-[vaul-drawer-direction=right]:w-full data-[vaul-drawer-direction=right]:sm:max-w-lg dark:border-slate-800 dark:bg-slate-900'
-        }
-      >
-        {entry && v && status && (
-          <>
-            <DrawerHeader className="border-b border-slate-200 px-5 py-4 text-left dark:border-slate-800">
-              <div className="flex items-start gap-3">
-                <Avatar name={v.officerName} size="lg" tone={status.tone} />
-                <div className="min-w-0 flex-1">
-                  <p className="text-[11px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">{departed ? 'Departure record' : 'Check out'}</p>
-                  <DrawerTitle className="truncate text-base text-slate-900 dark:text-white">{v.officerName}</DrawerTitle>
-                  <DrawerDescription className="text-xs text-slate-500 dark:text-slate-400">
-                    <span className="font-mono">{v.visitNumber}</span> · {v.station || 'No station'}
-                  </DrawerDescription>
-                  <div className="mt-2"><StatusPill tone={status.tone}>{status.label}</StatusPill></div>
-                </div>
-                <DrawerClose asChild>
-                  <button type="button" aria-label="Close" className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white">
-                    <X className="h-4 w-4" />
-                  </button>
-                </DrawerClose>
-              </div>
-            </DrawerHeader>
-
-            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5">
-              {(entry.overnight || entry.pastClosing) && (
-                <div role="alert" className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
-                  <AlertTriangle className="mt-px h-4 w-4 shrink-0" />
-                  {entry.overnight
-                    ? 'This visitor was never signed out on the day they arrived. Confirm they have left the premises, then check them out.'
-                    : `The office closed at ${formatClock(OFFICE_CLOSE_MINUTES)}. Confirm whether the visitor is still on the premises.`}
-                </div>
-              )}
-
-              <dl className="grid grid-cols-2 gap-4 rounded-xl border border-slate-200 p-4 dark:border-slate-800">
-                <DetailItem label="Arrived">{v.date ? formatDay(v.date, 'short') : '—'} · {v.timeIn}</DetailItem>
-                <DetailItem label={departed ? 'Left' : 'Time on site'}>
-                  {departed ? v.timeOut || '—' : entry.overnight ? 'Since an earlier day' : entry.minutes !== null ? formatDuration(entry.minutes) : '—'}
-                </DetailItem>
-                <DetailItem label="Laboratory">{departmentLabel(v.laboratory)}</DetailItem>
-                <DetailItem label="Service badge">{v.badgeNumber || '—'}</DetailItem>
-                <DetailItem label="Exhibits brought">{v.exhibitsPresented || '—'}</DetailItem>
-                <DetailItem label="Registered by">{v.receptionistName || '—'}</DetailItem>
-              </dl>
-
-              {departed ? (
-                <p className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
-                  <CheckCheck className="h-4 w-4 text-emerald-500" /> Signed out at {v.timeOut || '—'}{entry.minutes !== null && <> after {formatDuration(entry.minutes)} on site</>}.
+    <SidePanel
+      open={!!entry}
+      onClose={onClose}
+      section={departed ? 'Departure record' : 'Check out'}
+      recordId={v?.visitNumber}
+      titleId="checkout-title"
+      scrollKey={visitorId}
+      aside={details}
+      asideLabel="Visit"
+      actions={canComplete && allConfirmed ? <PanelHeaderButton icon={LogOut} label={working ? 'Checking out…' : 'Complete check-out'} onClick={() => void complete()} disabled={working} /> : undefined}
+      footer={entry && (
+        <div className="flex items-center justify-between gap-2">
+          <p className={`text-[11px] ${PANEL_TEXT_2}`}>
+            {departed ? '' : !canCheckOut ? 'Only reception staff can check visitors out.' : !entry.ready ? '' : allConfirmed ? 'Everything is confirmed.' : `${confirmed.size} of ${CHECKOUT_CONFIRMATIONS.length} confirmed`}
+          </p>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" onClick={onClose}>Close</Button>
+            {canComplete && (
+              <Button variant="primary" icon={LogOut} disabled={!allConfirmed || working} onClick={() => void complete()}>
+                {working ? 'Checking out…' : 'Complete check-out'}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+    >
+      {({ expanded }) => entry && v && status && (
+        <div className="space-y-8 px-4 py-6 sm:px-6">
+          <div className="space-y-5">
+            {(entry.overnight || entry.pastClosing) && (
+              <PanelBanner tone="danger" icon={AlertTriangle}>
+                {entry.overnight
+                  ? 'This visitor was never signed out on the day they arrived. Confirm they have left the premises, then check them out.'
+                  : `The office closed at ${formatClock(OFFICE_CLOSE_MINUTES)}. Confirm whether the visitor is still on the premises.`}
+              </PanelBanner>
+            )}
+            <div className="flex items-center gap-3">
+              <Avatar name={v.officerName} size="lg" tone={status.tone} />
+              <div className="min-w-0">
+                <h2 id="checkout-title" className={`truncate text-[22px] font-semibold leading-tight ${PANEL_TEXT}`}>{v.officerName}</h2>
+                <p className={`flex flex-wrap items-center gap-2 text-[13px] ${PANEL_TEXT_2}`}>
+                  {v.station || 'No station'}
+                  <StatusPill tone={status.tone}>{status.label}</StatusPill>
                 </p>
-              ) : entry.ready ? (
-                <fieldset>
-                  <legend className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Confirm the handover</legend>
-                  <ul className="mt-3 space-y-2">
-                    {CHECKOUT_CONFIRMATIONS.map((item) => (
-                      <li key={item}>
-                        <label className={`flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-[13px] ${
-                          confirmed.has(item)
-                            ? 'border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-100'
-                            : 'border-slate-200 text-slate-700 dark:border-slate-700 dark:text-slate-200'
-                        } ${canCheckOut ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`}>
-                          <input
-                            type="checkbox"
-                            disabled={!canCheckOut}
-                            checked={confirmed.has(item)}
-                            onChange={() => toggle(item)}
-                            className="h-4 w-4 rounded border-slate-300 text-amber-500 focus:ring-amber-500"
-                          />
-                          {item}
-                        </label>
-                      </li>
-                    ))}
-                  </ul>
-                  <p className="mt-3 flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
-                    <Clock className="h-3.5 w-3.5" /> Time out will be recorded as about {formatClock(now)}.
-                  </p>
-                </fieldset>
-              ) : (
-                <div className="flex items-start gap-2 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2.5 text-xs text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-100">
-                  <FlaskConical className="mt-px h-4 w-4 shrink-0" />
-                  <span>
-                    Not ready to leave yet: {v.status === 'Awaiting Laboratory Reception' ? 'the laboratory has not received this visitor.' : 'the laboratory has not marked the service complete.'}{' '}
-                    Check-out opens once {departmentLabel(v.laboratory)} finishes.
-                  </span>
-                </div>
-              )}
-            </div>
-
-            <DrawerFooter className="flex-row items-center justify-between gap-2 border-t border-slate-200 px-5 py-3 dark:border-slate-800">
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                {departed ? '' : !canCheckOut ? 'Only reception staff can check visitors out.' : !entry.ready ? '' : allConfirmed ? 'Everything is confirmed.' : `${confirmed.size} of ${CHECKOUT_CONFIRMATIONS.length} confirmed`}
-              </p>
-              <div className="flex items-center gap-2">
-                <DrawerClose asChild>
-                  <Button variant="ghost">Close</Button>
-                </DrawerClose>
-                {canComplete && (
-                  <Button variant="primary" icon={LogOut} disabled={!allConfirmed || working} onClick={() => void complete()}>
-                    {working ? 'Checking out…' : 'Complete check-out'}
-                  </Button>
-                )}
               </div>
-            </DrawerFooter>
-          </>
-        )}
-      </DrawerContent>
-    </Drawer>
+            </div>
+          </div>
+
+          {!expanded && details}
+
+          {departed ? (
+            <p className={`flex items-center gap-2 text-[13px] ${PANEL_TEXT_2}`}>
+              <CheckCheck className="h-4 w-4 text-emerald-500" /> Signed out at {v.timeOut || '—'}{entry.minutes !== null && <> after {formatDuration(entry.minutes)} on site</>}.
+            </p>
+          ) : entry.ready ? (
+            <section aria-labelledby="checkout-handover">
+              <PanelSectionHeading id="checkout-handover" title="Confirm the handover" count={`${confirmed.size}/${CHECKOUT_CONFIRMATIONS.length}`} />
+              <ul className="space-y-2">
+                {CHECKOUT_CONFIRMATIONS.map((item) => (
+                  <li key={item}>
+                    <label className={`flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-[13px] ${
+                      confirmed.has(item)
+                        ? 'border-emerald-300 bg-emerald-50 text-emerald-900 dark:border-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-100'
+                        : `${PANEL_LINE} ${PANEL_TEXT} hover:bg-slate-50 dark:hover:bg-[#242424]`
+                    } ${canCheckOut ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`}>
+                      <input
+                        type="checkbox"
+                        disabled={!canCheckOut}
+                        checked={confirmed.has(item)}
+                        onChange={() => toggle(item)}
+                        className="h-4 w-4 rounded border-slate-300 text-amber-500 focus:ring-amber-500"
+                      />
+                      {item}
+                    </label>
+                  </li>
+                ))}
+              </ul>
+              <p className={`mt-3 flex items-center gap-1.5 text-xs ${PANEL_TEXT_2}`}>
+                <Clock className="h-3.5 w-3.5" /> Time out will be recorded as about {formatClock(now)}.
+              </p>
+            </section>
+          ) : (
+            <PanelBanner tone="info" icon={FlaskConical}>
+              Not ready to leave yet: {v.status === 'Awaiting Laboratory Reception' ? 'the laboratory has not received this visitor.' : 'the laboratory has not marked the service complete.'}{' '}
+              Check-out opens once {departmentLabel(v.laboratory)} finishes.
+            </PanelBanner>
+          )}
+        </div>
+      )}
+    </SidePanel>
   );
 };
