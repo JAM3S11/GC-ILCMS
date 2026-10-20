@@ -20,13 +20,24 @@ import { Select } from '../common/Select';
 import { LaboratoryDepartment, User } from '../../types';
 import { ALL_DEPARTMENTS, DEPARTMENT_LABELS } from '../../lib/departments';
 import { apiRequest } from '../../lib/api';
+import { MobileAuthFlow } from './MobileAuthFlow';
+import {
+  AuthCopy,
+  AuthMode,
+  EASE_OUT,
+  FormError,
+  SLIDE_MS,
+  GUILLOCHE_PATTERN,
+  PANEL_BACKGROUND,
+  SERIF_STACK,
+  TAB_SPRING,
+  primaryBtnClass,
+} from './landingShared';
 
-const EASE_OUT: Transition['ease'] = [0.22, 0.61, 0.36, 1];
-const TAB_SPRING: Transition = { type: 'spring', stiffness: 520, damping: 34 };
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MIN_PASSWORD = 12;
 
-type AuthMode = 'signin' | 'request' | 'activate' | 'forgot' | 'reset';
-
-const AUTH_COPY: Record<AuthMode, { title: string; subtitle: string; switchPrompt: string; switchCta?: string; switchTo?: AuthMode }> = {
+const AUTH_COPY: Record<AuthMode, AuthCopy> = {
   signin: {
     title: 'Sign in to GC-ILCMS',
     subtitle: 'Welcome back. Sign in with your work email.',
@@ -65,15 +76,6 @@ const AUTH_COPY: Record<AuthMode, { title: string; subtitle: string; switchPromp
   },
 };
 
-const FormError: React.FC<{ message: string }> = ({ message }) => (
-  <p role="alert" className="flex items-center gap-1.5 text-[length:calc(12px*var(--lp-scale))] text-rose-600">
-    <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-    {message}
-  </p>
-);
-
-const SLIDE_MS = 5000;
-const INTRO_SECONDS = 5;
 
 const LIFECYCLE_STEPS: { key: string; icon: React.ReactNode; title: string; body: string }[] = [
   {
@@ -115,23 +117,8 @@ const TRUST_LINE: { label: string; icon: React.ReactNode }[] = [
   { label: '3.2d mean SLA', icon: <Activity className="h-3.5 w-3.5" /> },
 ];
 
-const SERIF_STACK = "'Montserrat', system-ui, -apple-system, 'Segoe UI', sans-serif";
-
-const PANEL_BACKGROUND =
-  'radial-gradient(ellipse at 50% 0%, rgba(255,255,255,0.08) 0%, transparent 55%),' +
-  ' linear-gradient(165deg, #0b3a42 0%, #0d4a52 55%, #0f5860 100%)';
-
-const GUILLOCHE_PATTERN =
-  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='40'%3E" +
-  "%3Cpath d='M0 20 Q15 2 30 20 T60 20 T90 20 T120 20' fill='none' stroke='white' stroke-opacity='0.06'/%3E" +
-  "%3Cpath d='M0 20 Q15 38 30 20 T60 20 T90 20 T120 20' fill='none' stroke='white' stroke-opacity='0.06'/%3E" +
-  '%3C/svg%3E")';
-
 const inputClass =
   'h-11 w-full rounded-[9px] border border-[#d8d8df] bg-white px-[14px] text-[length:calc(16px*var(--lp-scale))] text-[#111] sm:h-9 sm:text-[length:calc(13px*var(--lp-scale))] outline-none transition-colors placeholder:text-[#9b9ba5] focus:border-[#0f766e] focus:shadow-[0_0_0_2px_rgba(15,118,110,0.18)]';
-
-const primaryBtnClass =
-  'h-11 w-full cursor-pointer rounded-[8px] bg-[#5eead4] text-[length:calc(15px*var(--lp-scale))] font-bold sm:h-[38px] sm:text-[length:calc(13px*var(--lp-scale))] text-[#0b3a42] transition-colors hover:bg-[#2dd4bf] active:scale-[0.99]';
 
 interface LandingPageProps {
   onLogin: (user: User) => void;
@@ -262,6 +249,8 @@ const ZOOM_THRESHOLD = 1.1;
 const CENTRED_ZOOM = 1.25;
 /** The overview text is a little smaller than the rest of the page. */
 const OVERVIEW_TEXT_FACTOR = 0.88;
+/** Phones at least this tall show the overview summary at full text size. */
+const TALL_PHONE_HEIGHT = 760;
 /**
  * From 110% (until the 125% centred layout) the overview text is held close to how big it looks at
  * 100%: its size is divided by the zoom, then this share of the 100% look is kept (1 = exactly the same).
@@ -292,14 +281,21 @@ const readTextScale = () => {
 const readCentred = () =>
   typeof window !== 'undefined' && !isTouchScreen() && (browserZoom() >= CENTRED_ZOOM || window.innerWidth < 1024);
 
+/** Phones and portrait tablets get the app-style Welcome → Sign in / Request access flow. */
+const readCompact = () => typeof window !== 'undefined' && !readCentred() && window.innerWidth < 1024;
+
 const useLandingLayout = () => {
   const [scale, setScale] = useState(readTextScale);
   const [centred, setCentred] = useState(readCentred);
+  const [compact, setCompact] = useState(readCompact);
+  const [height, setHeight] = useState(() => (typeof window === 'undefined' ? DESIGN_HEIGHT : window.innerHeight));
   const [zoom, setZoom] = useState(() => (typeof window === 'undefined' ? 1 : browserZoom()));
   useEffect(() => {
     const update = () => {
       setScale(readTextScale());
       setCentred(readCentred());
+      setCompact(readCompact());
+      setHeight(window.innerHeight);
       setZoom(browserZoom());
     };
     window.addEventListener('resize', update);
@@ -315,12 +311,12 @@ const useLandingLayout = () => {
       root.style.fontSize = previous;
     };
   }, [scale]);
-  return { scale, centred, zoom };
+  return { scale, centred, compact, height, zoom };
 };
 
 export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
   const shouldReduceMotion = useReducedMotion();
-  const { scale: textScale, centred, zoom } = useLandingLayout();
+  const { scale: textScale, centred, compact, height: viewportHeight, zoom } = useLandingLayout();
   // Read the token once at mount. Re-deriving it on every render races the
   // effect below that strips the query string from the address bar, which drops
   // the token mid-flow and leaves the form unusable.
@@ -368,25 +364,24 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
   const [showResetPass, setShowResetPass] = useState(false);
   const [activationSecondsLeft, setActivationSecondsLeft] = useState(() =>
     invitationExpiresAt ? Math.max(0, Math.ceil((invitationExpiresAt - Date.now()) / 1000)) : 0);
-  // Mobile only: the carousel plays first, then the sign-in modal opens.
-  // A zoomed desktop window shows the sign-in card straight away, centred; phones play the intro first.
-  const [showMobileAuth, setShowMobileAuth] = useState(() => !isTouchScreen());
-  const [introSecondsLeft, setIntroSecondsLeft] = useState(INTRO_SECONDS);
+  const [rememberMe, setRememberMe] = useState(true);
+  const [requestAgreed, setRequestAgreed] = useState(false);
+  // Inline field errors show once a field has been left, or after a submit attempt.
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [submitTried, setSubmitTried] = useState<Partial<Record<AuthMode, boolean>>>({});
+  const touch = (field: string) => () => setTouched((prev) => (prev[field] ? prev : { ...prev, [field]: true }));
+  const showFieldError = (mode: AuthMode, field: string) => !!(touched[field] || submitTried[mode]);
 
-  useEffect(() => {
-    if (showMobileAuth || introSecondsLeft <= 0) return;
-    const timeout = window.setTimeout(() => {
-      if (introSecondsLeft <= 1) setShowMobileAuth(true);
-      setIntroSecondsLeft((s) => s - 1);
-    }, 1000);
-    return () => window.clearTimeout(timeout);
-  }, [showMobileAuth, introSecondsLeft]);
-
-  // Back to the overview; the sign-in modal returns after another intro.
-  const showMobileOverview = () => {
-    setShowMobileAuth(false);
-    setIntroSecondsLeft(INTRO_SECONDS);
+  const requestErrors = {
+    staffNumber: requestStaffNumber.trim() ? '' : 'Enter your staff number.',
+    name: requestName.trim().length >= 2 ? '' : 'Enter your full name.',
+    email: !requestEmail.trim() ? 'Enter your work email.' : EMAIL_PATTERN.test(requestEmail.trim()) ? '' : 'Enter a valid email address.',
   };
+  const resetErrors = {
+    password: resetPassword.length >= MIN_PASSWORD ? '' : `Use at least ${MIN_PASSWORD} characters.`,
+    confirm: resetConfirm && resetConfirm === resetPassword ? '' : 'The two passwords do not match.',
+  };
+  const activationPasswordError = activationPassword.length >= MIN_PASSWORD ? '' : `Use at least ${MIN_PASSWORD} characters.`;
 
   const autoAdvance = !shouldReduceMotion && !carouselPaused;
 
@@ -437,7 +432,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
     try {
       const result = await apiRequest<{ user: User }>('/api/auth/login', {
         method: 'POST',
-        body: JSON.stringify({ email: loginEmail, password: loginPass }),
+        body: JSON.stringify({ email: loginEmail, password: loginPass, remember: rememberMe }),
       });
       onLogin(result.user);
     } catch (cause) {
@@ -450,6 +445,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
   const handleActivate = async (e: React.FormEvent) => {
     e.preventDefault();
     setActivationError(null);
+    setSubmitTried((prev) => ({ ...prev, activate: true }));
+    if (activationPasswordError) return;
     setSubmitting(true);
     try {
       await apiRequest('/api/auth/activate', {
@@ -468,6 +465,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
   const handleAccessRequest = async (e: React.FormEvent) => {
     e.preventDefault();
     setRequestError(null);
+    setSubmitTried((prev) => ({ ...prev, request: true }));
+    if (Object.values(requestErrors).some(Boolean) || !requestAgreed) return;
     setSubmitting(true);
     try {
       const result = await apiRequest<{ message: string }>('/api/auth/access-request', {
@@ -509,10 +508,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setResetError(null);
-    if (resetPassword !== resetConfirm) {
-      setResetError('The two passwords do not match.');
-      return;
-    }
+    setSubmitTried((prev) => ({ ...prev, reset: true }));
+    if (resetErrors.password || resetErrors.confirm) return;
     setSubmitting(true);
     try {
       await apiRequest('/api/auth/reset-password', {
@@ -724,6 +721,376 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
             </motion.ul>
   );
 
+  // The forms for every auth mode. The desktop card and the phone screens both show them.
+  const authForms = (
+      <AnimatePresence mode="popLayout" initial={false}>
+        <motion.div
+          key={authMode}
+          layout
+          initial={shouldReduceMotion ? false : { opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -10 }}
+          transition={{ duration: shouldReduceMotion ? 0 : 0.24, ease: EASE_OUT }}
+        >
+          {authMode === 'signin' && (
+            <div className="space-y-6">
+              <form onSubmit={handleSignIn} className="space-y-[18px]">
+                <div className="space-y-2">
+                  <label htmlFor="loginEmail" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Work email</label>
+                  <input
+                    id="loginEmail"
+                    type="email"
+                    inputMode="email"
+                    autoComplete="username"
+                    value={loginEmail}
+                    onChange={(e) => setLoginEmail(e.target.value)}
+                    placeholder="name@chemist.go.ke"
+                    required
+                    className={inputClass}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label htmlFor="signinPass" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Password</label>
+                  <div className="relative">
+                    <input
+                      id="signinPass"
+                      type={showSigninPass ? 'text' : 'password'}
+                      autoComplete="current-password"
+                      value={loginPass}
+                      onChange={(e) => setLoginPass(e.target.value)}
+                      placeholder="Enter your password"
+                      required
+                      className={`${inputClass} pr-11`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowSigninPass((prev) => !prev)}
+                      aria-label={showSigninPass ? 'Hide password' : 'Show password'}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8b8b98] hover:text-[#0f766e] cursor-pointer"
+                    >
+                      {showSigninPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+                  <label className="inline-flex cursor-pointer items-center gap-2 text-[length:calc(12px*var(--lp-scale))] font-medium text-[#44444f]">
+                    <input
+                      type="checkbox"
+                      checked={rememberMe}
+                      onChange={(e) => setRememberMe(e.target.checked)}
+                      className="h-4 w-4 cursor-pointer rounded accent-[#0f766e]"
+                    />
+                    Remember me
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => { setForgotEmail(loginEmail); setAuthMode('forgot'); }}
+                    className="cursor-pointer text-[length:calc(12px*var(--lp-scale))] font-semibold text-[#0f766e] underline-offset-2 hover:underline"
+                  >
+                    Forgot your password?
+                  </button>
+                </div>
+
+                {loginError && <FormError message={loginError} />}
+
+                <button type="submit" disabled={submitting} className={`${primaryBtnClass} inline-flex items-center justify-center gap-2 disabled:cursor-wait disabled:opacity-80`}>
+                  {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {submitting ? 'Signing in…' : 'Sign in'}
+                </button>
+              </form>
+
+            </div>
+          )}
+
+          {authMode === 'request' && (
+            requestMessage ? (
+              <div className="space-y-5">
+                <div className="rounded-2xl bg-emerald-50 p-4 text-center">
+                  <Check className="mx-auto mb-2 h-8 w-8 text-emerald-500" />
+                  <p className="text-sm font-semibold text-slate-700">Request sent</p>
+                  <p className="mt-1 text-xs text-slate-600">{requestMessage}</p>
+                </div>
+                <button type="button" onClick={() => switchMode('signin')} className={primaryBtnClass}>Back to sign in</button>
+              </div>
+            ) : (
+              <form onSubmit={handleAccessRequest} noValidate className="space-y-[18px]">
+                <div className="space-y-2">
+                  <label htmlFor="requestStaffNumber" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Staff number</label>
+                  <input
+                    id="requestStaffNumber"
+                    type="text"
+                    value={requestStaffNumber}
+                    onChange={(e) => setRequestStaffNumber(e.target.value)}
+                    onBlur={touch('requestStaffNumber')}
+                    aria-invalid={showFieldError('request', 'requestStaffNumber') && !!requestErrors.staffNumber}
+                    placeholder="Personal / PF number"
+                    maxLength={40}
+                    required
+                    className={inputClass}
+                  />
+                  {showFieldError('request', 'requestStaffNumber') && requestErrors.staffNumber && <FormError message={requestErrors.staffNumber} />}
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="requestName" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Full name</label>
+                  <input
+                    id="requestName"
+                    type="text"
+                    autoComplete="name"
+                    value={requestName}
+                    onChange={(e) => setRequestName(e.target.value)}
+                    onBlur={touch('requestName')}
+                    aria-invalid={showFieldError('request', 'requestName') && !!requestErrors.name}
+                    placeholder="As on the staff establishment list"
+                    minLength={2}
+                    maxLength={150}
+                    required
+                    className={inputClass}
+                  />
+                  {showFieldError('request', 'requestName') && requestErrors.name && <FormError message={requestErrors.name} />}
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="requestEmail" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Work email</label>
+                  <input
+                    id="requestEmail"
+                    type="email"
+                    inputMode="email"
+                    autoComplete="email"
+                    value={requestEmail}
+                    onChange={(e) => setRequestEmail(e.target.value)}
+                    onBlur={touch('requestEmail')}
+                    aria-invalid={showFieldError('request', 'requestEmail') && !!requestErrors.email}
+                    placeholder="name@chemist.go.ke"
+                    required
+                    className={inputClass}
+                  />
+                  {showFieldError('request', 'requestEmail') && requestErrors.email && <FormError message={requestErrors.email} />}
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="requestDepartment" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Department</label>
+                  <Select<LaboratoryDepartment>
+                    id="requestDepartment"
+                    value={requestDepartment}
+                    onChange={setRequestDepartment}
+                    buttonClassName={`${inputClass} !py-0 !pl-[14px]`}
+                    options={ALL_DEPARTMENTS.map((dept) => ({ value: dept, label: DEPARTMENT_LABELS[dept] }))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label htmlFor="requestNote" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Note <span className="font-normal text-slate-400">(optional)</span></label>
+                  <textarea
+                    id="requestNote"
+                    value={requestNote}
+                    onChange={(e) => setRequestNote(e.target.value)}
+                    placeholder="e.g. your designation or reporting date"
+                    maxLength={500}
+                    rows={2}
+                    className={`${inputClass} !h-auto py-2.5`}
+                  />
+                </div>
+
+                <label className="flex cursor-pointer items-start gap-2.5 text-[length:calc(12px*var(--lp-scale))] leading-snug text-[#44444f]">
+                  <input
+                    type="checkbox"
+                    checked={requestAgreed}
+                    onChange={(e) => setRequestAgreed(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer rounded accent-[#0f766e]"
+                  />
+                  <span>
+                    I agree to the{' '}
+                    <button
+                      type="button"
+                      onClick={() => setShowTerms(true)}
+                      className="cursor-pointer font-semibold text-[#0f766e] underline underline-offset-2"
+                    >
+                      Terms &amp; Privacy
+                    </button>
+                  </span>
+                </label>
+
+                {requestError && <FormError message={requestError} />}
+
+                <button type="submit" disabled={submitting || !requestAgreed} className={`${primaryBtnClass} inline-flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60`}>
+                  {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {submitting ? 'Sending…' : 'Send to administrator'}
+                </button>
+              </form>
+            )
+          )}
+
+          {authMode === 'forgot' && (
+            <div className="space-y-6">
+              <form onSubmit={handleForgotPassword} className="space-y-[18px]">
+                <div className="space-y-2">
+                  <label htmlFor="forgotEmail" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Work email</label>
+                  <input
+                    id="forgotEmail"
+                    type="email"
+                    inputMode="email"
+                    autoComplete="username"
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                    placeholder="name@chemist.go.ke"
+                    required
+                    className={inputClass}
+                  />
+                </div>
+
+                {forgotError && <FormError message={forgotError} />}
+
+                {forgotMessage ? (
+                  <div className="rounded-2xl bg-emerald-50 p-4 text-center">
+                    <Check className="mx-auto mb-2 h-8 w-8 text-emerald-500" />
+                    <p className="text-sm font-semibold text-slate-700">Check your inbox</p>
+                    <p className="mt-1 text-xs text-slate-600">{forgotMessage}</p>
+                  </div>
+                ) : (
+                  <button type="submit" disabled={submitting} className={`${primaryBtnClass} inline-flex items-center justify-center gap-2 disabled:cursor-wait disabled:opacity-80`}>
+                    {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                    {submitting ? 'Sending…' : 'Send reset link'}
+                  </button>
+                )}
+              </form>
+            </div>
+          )}
+
+          {authMode === 'reset' && (
+            <div className="space-y-6">
+              {!resetToken ? (
+                <>
+                  <FormError message="This reset link is missing its token. Request a new link from the sign-in page." />
+                  <button
+                    type="button"
+                    onClick={() => setAuthMode('forgot')}
+                    className={`${primaryBtnClass} inline-flex w-full items-center justify-center gap-2`}
+                  >
+                    Request a new link
+                  </button>
+                </>
+              ) : resetComplete ? (
+                <div className="rounded-2xl bg-emerald-50 p-4 text-center">
+                  <Check className="mx-auto mb-2 h-8 w-8 text-emerald-500" />
+                  <p className="text-sm font-semibold text-slate-700">Password updated</p>
+                  <p className="mt-1 text-xs text-slate-600">Sign in with your new password. Any other active sessions were signed out.</p>
+                  <button
+                    type="button"
+                    onClick={() => setAuthMode('signin')}
+                    className="mt-3 cursor-pointer text-[length:calc(12px*var(--lp-scale))] font-semibold text-[#0f766e] underline-offset-2 hover:underline"
+                  >
+                    Go to sign in
+                  </button>
+                </div>
+              ) : (
+                <form onSubmit={handleResetPassword} noValidate className="space-y-[18px]">
+                  <div className="space-y-2">
+                    <label htmlFor="resetPassword" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">New password</label>
+                    <div className="relative">
+                      <input
+                        id="resetPassword"
+                        type={showResetPass ? 'text' : 'password'}
+                        autoComplete="new-password"
+                        value={resetPassword}
+                        onChange={(e) => setResetPassword(e.target.value)}
+                        onBlur={touch('resetPassword')}
+                        aria-invalid={showFieldError('reset', 'resetPassword') && !!resetErrors.password}
+                        placeholder="At least 12 characters"
+                        minLength={MIN_PASSWORD}
+                        required
+                        className={`${inputClass} pr-11`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowResetPass((prev) => !prev)}
+                        aria-label={showResetPass ? 'Hide password' : 'Show password'}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8b8b98] hover:text-[#0f766e] cursor-pointer"
+                      >
+                        {showResetPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                    {showFieldError('reset', 'resetPassword') && resetErrors.password
+                      ? <FormError message={resetErrors.password} />
+                      : <p className="text-[length:calc(11px*var(--lp-scale))] text-slate-500">Use at least {MIN_PASSWORD} characters.</p>}
+                  </div>
+
+                  <div className="space-y-2">
+                    <label htmlFor="resetConfirm" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Confirm new password</label>
+                    <input
+                      id="resetConfirm"
+                      type={showResetPass ? 'text' : 'password'}
+                      autoComplete="new-password"
+                      value={resetConfirm}
+                      onChange={(e) => setResetConfirm(e.target.value)}
+                      onBlur={touch('resetConfirm')}
+                      aria-invalid={showFieldError('reset', 'resetConfirm') && !!resetErrors.confirm}
+                      placeholder="Repeat the new password"
+                      minLength={MIN_PASSWORD}
+                      required
+                      className={inputClass}
+                    />
+                    {showFieldError('reset', 'resetConfirm') && resetErrors.confirm && <FormError message={resetErrors.confirm} />}
+                  </div>
+
+                  {resetError && <FormError message={resetError} />}
+
+                  <button type="submit" disabled={submitting} className={`${primaryBtnClass} inline-flex items-center justify-center gap-2 disabled:cursor-wait disabled:opacity-80`}>
+                    {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                    {submitting ? 'Updating…' : 'Update password'}
+                  </button>
+                </form>
+              )}
+            </div>
+          )}
+
+          {authMode === 'activate' && (
+            activationComplete ? (
+              <div className="space-y-5">
+                <div className="rounded-2xl bg-emerald-50 p-4 text-center">
+                  <Check className="mx-auto mb-2 h-8 w-8 text-emerald-500" />
+                  <p className="text-sm font-semibold text-slate-800">Account activated</p>
+                  <p className="mt-1 text-xs text-slate-600">You can now sign in using your work email.</p>
+                </div>
+                <button type="button" onClick={() => switchMode('signin')} className={primaryBtnClass}>Continue to sign in</button>
+              </div>
+            ) : (
+              <form onSubmit={handleActivate} noValidate className="space-y-[18px]">
+                <div className="space-y-2">
+                  <label htmlFor="activatePassword" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Create password</label>
+                  <input
+                    id="activatePassword"
+                    type="password"
+                    autoComplete="new-password"
+                    minLength={MIN_PASSWORD}
+                    maxLength={256}
+                    value={activationPassword}
+                    onChange={(e) => setActivationPassword(e.target.value)}
+                    onBlur={touch('activatePassword')}
+                    aria-invalid={showFieldError('activate', 'activatePassword') && !!activationPasswordError}
+                    placeholder="At least 12 characters"
+                    required
+                    className={inputClass}
+                  />
+                  {showFieldError('activate', 'activatePassword') && activationPasswordError && <FormError message={activationPasswordError} />}
+                </div>
+                {!invitationToken && <FormError message="The invitation link is missing its token." />}
+                {invitationToken && invitationExpiresAt > 0 && (
+                  <p role="timer" className={`text-xs font-semibold ${activationSecondsLeft ? 'text-amber-700' : 'text-rose-600'}`}>
+                    {activationSecondsLeft
+                      ? `Invitation expires in ${String(Math.floor(activationSecondsLeft / 60)).padStart(2, '0')}:${String(activationSecondsLeft % 60).padStart(2, '0')}`
+                      : 'Invitation expired. Ask the administrator to resend it.'}
+                  </p>
+                )}
+                {activationError && <FormError message={activationError} />}
+                <button disabled={submitting || !invitationToken || (invitationExpiresAt > 0 && !activationSecondsLeft)} className={`${primaryBtnClass} disabled:opacity-60`}>
+                  {submitting ? 'Activating…' : 'Activate account'}
+                </button>
+              </form>
+            )
+          )}
+        </motion.div>
+      </AnimatePresence>
+  );
+
   const formCard = (
         <motion.div
           layoutId="lp-form-card"
@@ -732,14 +1099,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
           className={`relative flex w-full max-w-[560px] max-h-[calc(100dvh-2rem)] flex-col ${authMode === 'request' ? 'overflow-y-auto' : 'overflow-y-hidden'} rounded-3xl bg-slate-50 shadow-[0_20px_50px_-20px_rgba(2,6,23,0.5)] sm:max-h-[calc(100dvh-3rem)] ${centred ? '' : 'lg:max-h-none lg:max-w-none lg:h-full lg:shadow-none'}`}
         >
           <div className="flex flex-wrap items-center justify-between gap-3 px-4 pt-5 sm:px-8 sm:pt-6">
-            <button
-              type="button"
-              onClick={showMobileOverview}
-              className={`${centred ? 'hidden' : 'inline-flex'} h-8 cursor-pointer items-center gap-1 rounded-[8px] pr-2 text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#0d4a52] transition-colors hover:text-[#0f766e] lg:hidden`}
-            >
-              <ChevronLeft className="h-4 w-4" />
-              Overview
-            </button>
             <p className="ml-auto text-[length:calc(12px*var(--lp-scale))] text-[#6b6b78]">
               {copy.switchPrompt}
               {copy.switchTo && (
@@ -775,320 +1134,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
               <p className="mt-2 text-[length:calc(13px*var(--lp-scale))] text-[#6b6b78]">{copy.subtitle}</p>
 
               <div className="relative mt-7">
-                <AnimatePresence mode="popLayout" initial={false}>
-                  <motion.div
-                    key={authMode}
-                    layout
-                    initial={shouldReduceMotion ? false : { opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={shouldReduceMotion ? { opacity: 0 } : { opacity: 0, y: -10 }}
-                    transition={{ duration: shouldReduceMotion ? 0 : 0.24, ease: EASE_OUT }}
-                  >
-                    {authMode === 'signin' && (
-                      <div className="space-y-6">
-                        <form onSubmit={handleSignIn} className="space-y-[18px]">
-                          <div className="space-y-2">
-                            <label htmlFor="loginEmail" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Work email</label>
-                            <input
-                              id="loginEmail"
-                              type="email"
-                              autoComplete="email"
-                              value={loginEmail}
-                              onChange={(e) => setLoginEmail(e.target.value)}
-                              placeholder="name@chemist.go.ke"
-                              required
-                              className={inputClass}
-                            />
-                          </div>
-
-                          <div className="space-y-2">
-                            <label htmlFor="signinPass" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Password</label>
-                            <div className="relative">
-                              <input
-                                id="signinPass"
-                                type={showSigninPass ? 'text' : 'password'}
-                                autoComplete="current-password"
-                                value={loginPass}
-                                onChange={(e) => setLoginPass(e.target.value)}
-                                placeholder="Enter your password"
-                                required
-                                className={`${inputClass} pr-11`}
-                              />
-                              <button
-                                type="button"
-                                onClick={() => setShowSigninPass((prev) => !prev)}
-                                aria-label={showSigninPass ? 'Hide password' : 'Show password'}
-                                className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8b8b98] hover:text-[#0f766e] cursor-pointer"
-                              >
-                                {showSigninPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                              </button>
-                            </div>
-                          </div>
-
-                          {loginError && <FormError message={loginError} />}
-
-                          <button type="submit" disabled={submitting} className={`${primaryBtnClass} inline-flex items-center justify-center gap-2 disabled:cursor-wait disabled:opacity-80`}>
-                            {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                            {submitting ? 'Signing in…' : 'Sign in'}
-                          </button>
-
-                          <button
-                            type="button"
-                            onClick={() => { setForgotEmail(loginEmail); setAuthMode('forgot'); }}
-                            className="cursor-pointer text-[length:calc(12px*var(--lp-scale))] font-semibold text-[#0f766e] underline-offset-2 hover:underline"
-                          >
-                            Forgot your password?
-                          </button>
-                        </form>
-
-                      </div>
-                    )}
-
-                    {authMode === 'request' && (
-                      requestMessage ? (
-                        <div className="space-y-5">
-                          <div className="rounded-2xl bg-emerald-50 p-4 text-center">
-                            <Check className="mx-auto mb-2 h-8 w-8 text-emerald-500" />
-                            <p className="text-sm font-semibold text-slate-700">Request sent</p>
-                            <p className="mt-1 text-xs text-slate-600">{requestMessage}</p>
-                          </div>
-                          <button type="button" onClick={() => switchMode('signin')} className={primaryBtnClass}>Back to sign in</button>
-                        </div>
-                      ) : (
-                        <form onSubmit={handleAccessRequest} className="space-y-[18px]">
-                          <div className="space-y-2">
-                            <label htmlFor="requestStaffNumber" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Staff number</label>
-                            <input
-                              id="requestStaffNumber"
-                              type="text"
-                              value={requestStaffNumber}
-                              onChange={(e) => setRequestStaffNumber(e.target.value)}
-                              placeholder="Personal / PF number"
-                              maxLength={40}
-                              required
-                              className={inputClass}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <label htmlFor="requestName" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Full name</label>
-                            <input
-                              id="requestName"
-                              type="text"
-                              autoComplete="name"
-                              value={requestName}
-                              onChange={(e) => setRequestName(e.target.value)}
-                              placeholder="As on the staff establishment list"
-                              minLength={2}
-                              maxLength={150}
-                              required
-                              className={inputClass}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <label htmlFor="requestEmail" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Work email</label>
-                            <input
-                              id="requestEmail"
-                              type="email"
-                              autoComplete="email"
-                              value={requestEmail}
-                              onChange={(e) => setRequestEmail(e.target.value)}
-                              placeholder="name@chemist.go.ke"
-                              required
-                              className={inputClass}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <label htmlFor="requestDepartment" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Department</label>
-                            <Select<LaboratoryDepartment>
-                              id="requestDepartment"
-                              value={requestDepartment}
-                              onChange={setRequestDepartment}
-                              buttonClassName={`${inputClass} !py-0 !pl-[14px]`}
-                              options={ALL_DEPARTMENTS.map((dept) => ({ value: dept, label: DEPARTMENT_LABELS[dept] }))}
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <label htmlFor="requestNote" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Note <span className="font-normal text-slate-400">(optional)</span></label>
-                            <textarea
-                              id="requestNote"
-                              value={requestNote}
-                              onChange={(e) => setRequestNote(e.target.value)}
-                              placeholder="e.g. your designation or reporting date"
-                              maxLength={500}
-                              rows={2}
-                              className={`${inputClass} !h-auto py-2.5`}
-                            />
-                          </div>
-
-                          {requestError && <FormError message={requestError} />}
-
-                          <button type="submit" disabled={submitting} className={`${primaryBtnClass} inline-flex items-center justify-center gap-2 disabled:cursor-wait disabled:opacity-80`}>
-                            {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                            {submitting ? 'Sending…' : 'Send to administrator'}
-                          </button>
-                        </form>
-                      )
-                    )}
-
-                    {authMode === 'forgot' && (
-                      <div className="space-y-6">
-                        <form onSubmit={handleForgotPassword} className="space-y-[18px]">
-                          <div className="space-y-2">
-                            <label htmlFor="forgotEmail" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Work email</label>
-                            <input
-                              id="forgotEmail"
-                              type="email"
-                              autoComplete="email"
-                              value={forgotEmail}
-                              onChange={(e) => setForgotEmail(e.target.value)}
-                              placeholder="name@chemist.go.ke"
-                              required
-                              className={inputClass}
-                            />
-                          </div>
-
-                          {forgotError && <FormError message={forgotError} />}
-
-                          {forgotMessage ? (
-                            <div className="rounded-2xl bg-emerald-50 p-4 text-center">
-                              <Check className="mx-auto mb-2 h-8 w-8 text-emerald-500" />
-                              <p className="text-sm font-semibold text-slate-700">Check your inbox</p>
-                              <p className="mt-1 text-xs text-slate-600">{forgotMessage}</p>
-                            </div>
-                          ) : (
-                            <button type="submit" disabled={submitting} className={`${primaryBtnClass} inline-flex items-center justify-center gap-2 disabled:cursor-wait disabled:opacity-80`}>
-                              {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                              {submitting ? 'Sending…' : 'Send reset link'}
-                            </button>
-                          )}
-                        </form>
-                      </div>
-                    )}
-
-                    {authMode === 'reset' && (
-                      <div className="space-y-6">
-                        {!resetToken ? (
-                          <>
-                            <FormError message="This reset link is missing its token. Request a new link from the sign-in page." />
-                            <button
-                              type="button"
-                              onClick={() => setAuthMode('forgot')}
-                              className={`${primaryBtnClass} inline-flex w-full items-center justify-center gap-2`}
-                            >
-                              Request a new link
-                            </button>
-                          </>
-                        ) : resetComplete ? (
-                          <div className="rounded-2xl bg-emerald-50 p-4 text-center">
-                            <Check className="mx-auto mb-2 h-8 w-8 text-emerald-500" />
-                            <p className="text-sm font-semibold text-slate-700">Password updated</p>
-                            <p className="mt-1 text-xs text-slate-600">Sign in with your new password. Any other active sessions were signed out.</p>
-                            <button
-                              type="button"
-                              onClick={() => setAuthMode('signin')}
-                              className="mt-3 cursor-pointer text-[length:calc(12px*var(--lp-scale))] font-semibold text-[#0f766e] underline-offset-2 hover:underline"
-                            >
-                              Go to sign in
-                            </button>
-                          </div>
-                        ) : (
-                          <form onSubmit={handleResetPassword} className="space-y-[18px]">
-                            <div className="space-y-2">
-                              <label htmlFor="resetPassword" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">New password</label>
-                              <div className="relative">
-                                <input
-                                  id="resetPassword"
-                                  type={showResetPass ? 'text' : 'password'}
-                                  autoComplete="new-password"
-                                  value={resetPassword}
-                                  onChange={(e) => setResetPassword(e.target.value)}
-                                  placeholder="At least 12 characters"
-                                  minLength={12}
-                                  required
-                                  className={`${inputClass} pr-11`}
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => setShowResetPass((prev) => !prev)}
-                                  aria-label={showResetPass ? 'Hide password' : 'Show password'}
-                                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8b8b98] hover:text-[#0f766e] cursor-pointer"
-                                >
-                                  {showResetPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                                </button>
-                              </div>
-                              <p className="text-[length:calc(11px*var(--lp-scale))] text-slate-500">Use at least 12 characters.</p>
-                            </div>
-
-                            <div className="space-y-2">
-                              <label htmlFor="resetConfirm" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Confirm new password</label>
-                              <input
-                                id="resetConfirm"
-                                type={showResetPass ? 'text' : 'password'}
-                                autoComplete="new-password"
-                                value={resetConfirm}
-                                onChange={(e) => setResetConfirm(e.target.value)}
-                                placeholder="Repeat the new password"
-                                minLength={12}
-                                required
-                                className={inputClass}
-                              />
-                            </div>
-
-                            {resetError && <FormError message={resetError} />}
-
-                            <button type="submit" disabled={submitting} className={`${primaryBtnClass} inline-flex items-center justify-center gap-2 disabled:cursor-wait disabled:opacity-80`}>
-                              {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                              {submitting ? 'Updating…' : 'Update password'}
-                            </button>
-                          </form>
-                        )}
-                      </div>
-                    )}
-
-                    {authMode === 'activate' && (
-                      activationComplete ? (
-                        <div className="space-y-5">
-                          <div className="rounded-2xl bg-emerald-50 p-4 text-center">
-                            <Check className="mx-auto mb-2 h-8 w-8 text-emerald-500" />
-                            <p className="text-sm font-semibold text-slate-800">Account activated</p>
-                            <p className="mt-1 text-xs text-slate-600">You can now sign in using your work email.</p>
-                          </div>
-                          <button type="button" onClick={() => switchMode('signin')} className={primaryBtnClass}>Continue to sign in</button>
-                        </div>
-                      ) : (
-                        <form onSubmit={handleActivate} className="space-y-[18px]">
-                          <div className="space-y-2">
-                            <label htmlFor="activatePassword" className="block text-[length:calc(13px*var(--lp-scale))] font-semibold text-[#111] sm:text-[length:calc(12px*var(--lp-scale))]">Create password</label>
-                            <input
-                              id="activatePassword"
-                              type="password"
-                              autoComplete="new-password"
-                              minLength={12}
-                              maxLength={256}
-                              value={activationPassword}
-                              onChange={(e) => setActivationPassword(e.target.value)}
-                              placeholder="At least 12 characters"
-                              required
-                              className={inputClass}
-                            />
-                          </div>
-                          {!invitationToken && <FormError message="The invitation link is missing its token." />}
-                          {invitationToken && invitationExpiresAt > 0 && (
-                            <p role="timer" className={`text-xs font-semibold ${activationSecondsLeft ? 'text-amber-700' : 'text-rose-600'}`}>
-                              {activationSecondsLeft
-                                ? `Invitation expires in ${String(Math.floor(activationSecondsLeft / 60)).padStart(2, '0')}:${String(activationSecondsLeft % 60).padStart(2, '0')}`
-                                : 'Invitation expired. Ask the administrator to resend it.'}
-                            </p>
-                          )}
-                          {activationError && <FormError message={activationError} />}
-                          <button disabled={submitting || !invitationToken || (invitationExpiresAt > 0 && !activationSecondsLeft)} className={`${primaryBtnClass} disabled:opacity-60`}>
-                            {submitting ? 'Activating…' : 'Activate account'}
-                          </button>
-                        </form>
-                      )
-                    )}
-                  </motion.div>
-                </AnimatePresence>
+                {authForms}
               </div>
               </motion.div>
             </div>
@@ -1108,9 +1154,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
   // The overview text sits a little smaller than the form. From 110% zoom (side-by-side layout) it is
   // sized so it looks almost the same as at 100%, instead of shrinking with the window.
   const overviewAt100 = DESIGN_TEXT_SCALE * OVERVIEW_TEXT_FACTOR;
-  const overviewCss = !centred && zoom >= ZOOM_THRESHOLD
-    ? (overviewAt100 / zoom) * ZOOMED_OVERVIEW_LOOK
-    : textScale * OVERVIEW_TEXT_FACTOR;
+  // Phones skip the zoom correction: pinch-zoom (or an embedding frame) skews the outer/inner width ratio.
+  // On phones the summary is shown in full above the sign-in bar: taller screens get full-size text,
+  // shorter ones (iPhone SE class) keep the slightly smaller size so nothing is pushed off screen.
+  const overviewCss = compact
+    ? textScale * (viewportHeight >= TALL_PHONE_HEIGHT ? 1 : OVERVIEW_TEXT_FACTOR)
+    : !centred && zoom >= ZOOM_THRESHOLD
+      ? (overviewAt100 / zoom) * ZOOMED_OVERVIEW_LOOK
+      : textScale * OVERVIEW_TEXT_FACTOR;
   const overviewScale = {
     ['--lp-scale' as string]: Number(overviewCss.toFixed(3)),
     // The overview's widths grow by the same amount as its text, so its lines break as they do at 100%.
@@ -1118,6 +1169,29 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
     // Paddings, icons, step circles and gaps grow with the text too, so the carousel keeps its 100% shape.
     ['--spacing' as string]: 'calc(0.25rem * var(--lp-grow))',
   };
+
+  // Phones and portrait tablets get an app-style flow of their own: Welcome, then Sign in or Request access.
+  if (compact) {
+    return (
+      <>
+        <MobileAuthFlow
+          authMode={authMode}
+          copy={copy}
+          forms={authForms}
+          overview={
+            <motion.div variants={panelVariants} initial="hidden" animate="show" className="flex flex-col text-white" style={overviewScale}>
+              {brandStory}
+              <div className="mt-5">{trustLine}</div>
+            </motion.div>
+          }
+          textScale={textScale}
+          onModeChange={switchMode}
+          onOpenTerms={() => setShowTerms(true)}
+        />
+        <TermsDialog open={showTerms} onClose={() => setShowTerms(false)} />
+      </>
+    );
+  }
 
   return (
     <div
@@ -1182,7 +1256,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({ onLogin }) => {
         </div>
 
         {/* Form panel: floating card over the page background */}
-        <div className={`${showMobileAuth ? 'flex animate-fade-in' : 'hidden'} fixed inset-0 z-30 items-center justify-center overflow-hidden bg-[#0b3a42]/45 p-4 backdrop-blur-md sm:p-6 lg:static lg:z-auto lg:block lg:bg-transparent lg:backdrop-blur-none lg:h-[100dvh] lg:py-6 lg:pl-0 lg:pr-6`}>
+        <div className="h-[100dvh] py-6 pl-0 pr-6">
           {formCard}
         </div>
       </div>

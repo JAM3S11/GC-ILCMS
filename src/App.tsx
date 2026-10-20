@@ -23,6 +23,7 @@ import {
   INITIAL_AUDIT_LOGS,
 } from './data/initialData';
 import { LandingPage } from './components/landing/LandingPage';
+import { SplashScreen } from './components/landing/SplashScreen';
 import { FoodDrugIntakePage } from './components/laboratory/FoodDrugIntakePage';
 import { WaterIntakePage } from './components/laboratory/WaterIntakePage';
 import { IntakeHandoverDialog } from './components/laboratory/IntakeHandoverDialog';
@@ -1661,7 +1662,7 @@ export default function App() {
 
       {/* IF NOT AUTHENTICATED OR ON LANDING VIEW -> RENDER REFINED LANDING PAGE */}
       {checkingSession ? (
-        <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Checking sign-in session…</div>
+        <SplashScreen />
       ) : (!currentUser || activeView === 'landing') ? (
         <LandingPage onLogin={handleLogin} />
       ) : (

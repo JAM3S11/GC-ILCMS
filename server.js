@@ -4747,6 +4747,9 @@ app.post('/api/auth/access-request', authLimiter, asyncHandler(async (req, res, 
 
 app.post('/api/auth/login', authLimiter, asyncHandler(async (req, res, next) => {
   const { email, password } = req.body ?? {};
+  // "Remember me" unticked: a browser-session cookie, gone when the browser closes. The server-side
+  // session still expires after SESSION_HOURS either way.
+  const remember = req.body?.remember !== false;
   if (typeof email !== 'string' || typeof password !== 'string') {
     return res.status(400).json({ error: 'Enter your work email and password.' });
   }
@@ -4783,7 +4786,7 @@ app.post('/api/auth/login', authLimiter, asyncHandler(async (req, res, next) => 
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
       path: '/',
-      maxAge: SESSION_HOURS * 60 * 60 * 1000,
+      ...(remember ? { maxAge: SESSION_HOURS * 60 * 60 * 1000 } : {}),
     });
     res.json({ user: publicUser(user) });
   } catch (error) {
