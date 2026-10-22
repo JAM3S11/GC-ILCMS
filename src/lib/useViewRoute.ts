@@ -46,6 +46,9 @@ export const useViewRoute = (activeView: string, navigate: (view: string) => voi
       return;
     }
     if (window.location.pathname === target) return;
+    // Landing owns its own paths (/reset-password, /activate) and clears them
+    // itself once the flow finishes; only a stale workspace URL is reset to /.
+    if (activeView === 'landing' && !window.location.pathname.startsWith(PREFIX)) return;
     // Landing and the first workspace view replace; later moves add history.
     const replace = activeView === 'landing' || !window.location.pathname.startsWith(PREFIX);
     window.history[replace ? 'replaceState' : 'pushState'](null, '', target);
