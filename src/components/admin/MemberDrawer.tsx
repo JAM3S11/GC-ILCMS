@@ -132,13 +132,16 @@ export const MemberDrawer: React.FC<{
   }, [toast]);
 
   const isSelf = !!entry && entry.userId === currentUserId;
+  // The owner account is fixed for everyone else: no role, status or reset changes from another admin.
+  const protectedOther = !!entry?.accountProtected && !isSelf;
+  const locked = isSelf || protectedOther;
   const busy = !!entry && workingId === entry.id;
   const status: MemberStatus = entry ? memberStatus(entry) : 'NO_ACCOUNT';
   const pendingDepartment = entry?.userId ? departmentRequests.filter((request) => request.userId === entry.userId) : [];
   const pendingProfile = entry?.userId ? profileRequests.filter((request) => request.userId === entry.userId) : [];
   const pendingCount = pendingDepartment.length + pendingProfile.length;
   const roleChanged = !!entry && (roleDraft !== entry.role || departmentDraft !== entry.department);
-  const canEditRole = !!entry?.userId && !isSelf;
+  const canEditRole = !!entry?.userId && !locked;
 
   const copyEmail = async () => {
     if (!entry) return;
@@ -165,7 +168,7 @@ export const MemberDrawer: React.FC<{
       : status === 'INVITED' ? { label: 'Resend invitation', icon: RefreshCw, run: () => actions.onResendInvite(entry) }
         : status === 'DISABLED' && !isSelf ? { label: 'Enable account', icon: UserCheck, run: () => actions.onToggleAccount(entry) }
           : status === 'LEFT' && !isSelf ? { label: 'Reinstate', icon: UserCheck, run: () => actions.onSetService(entry, 'SERVING') }
-            : status === 'ACTIVE' ? { label: 'Send password reset', icon: KeyRound, run: () => actions.onResetPassword(entry) }
+            : status === 'ACTIVE' && !protectedOther ? { label: 'Send password reset', icon: KeyRound, run: () => actions.onResetPassword(entry) }
               : null;
 
   const properties = entry && (
@@ -200,6 +203,11 @@ export const MemberDrawer: React.FC<{
 
   const banners = entry && (
     <div className="space-y-2 empty:hidden">
+      {protectedOther && (
+        <PanelBanner tone="info" icon={ShieldCheck}>
+          Protected owner account. Its role, department and status cannot be changed, and it cannot be deleted or reset.
+        </PanelBanner>
+      )}
       {status === 'DISABLED' && (
         <PanelBanner tone="danger" icon={AlertTriangle} action={!isSelf ? <PanelInlineLink onClick={() => actions.onToggleAccount(entry)}>Enable</PanelInlineLink> : undefined}>
           This account is disabled and cannot sign in.
@@ -296,14 +304,14 @@ export const MemberDrawer: React.FC<{
             <Pencil className="h-4 w-4 opacity-60" /> Edit roll details
           </button>
         </MenuItem>
-        {status === 'ACTIVE' && (
+        {status === 'ACTIVE' && !protectedOther && (
           <MenuItem>
             <button type="button" className={panelMenuItemClass} onClick={() => actions.onResetPassword(entry)}>
               <KeyRound className="h-4 w-4 opacity-60" /> Send password reset
             </button>
           </MenuItem>
         )}
-        {!isSelf && entry.userId && (status === 'ACTIVE' || status === 'DISABLED') && (
+        {!locked && entry.userId && (status === 'ACTIVE' || status === 'DISABLED') && (
           <MenuItem>
             <button type="button" className={panelMenuItemClass} onClick={() => actions.onToggleAccount(entry)}>
               {status === 'DISABLED'
@@ -312,7 +320,7 @@ export const MemberDrawer: React.FC<{
             </button>
           </MenuItem>
         )}
-        {!isSelf && (
+        {!locked && (
           <MenuItem>
             <button type="button" className={panelMenuItemClass} onClick={() => actions.onSetService(entry, entry.employmentStatus === 'SERVING' ? 'LEFT' : 'SERVING')}>
               {entry.employmentStatus === 'SERVING'
@@ -321,7 +329,7 @@ export const MemberDrawer: React.FC<{
             </button>
           </MenuItem>
         )}
-        {!isSelf && (
+        {!locked && (
           <>
             <PanelMenuSeparator />
             <MenuItem>

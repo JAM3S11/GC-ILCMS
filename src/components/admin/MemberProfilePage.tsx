@@ -262,6 +262,8 @@ export const MemberProfilePage: React.FC<{
     ...(isLabScopedRole(member.role) && (['Water', 'Narcotics', 'Food & Drugs'] as string[]).includes(member.department) ? [member.department as Laboratory] : []),
   ])];
   const showBadge = member.role === 'SUPER_ADMIN' || member.role === 'HEAD_OF_DEPARTMENT';
+  // The owner account is fixed for every other admin: only its roll details stay editable here.
+  const locked = !!member.accountProtected && !isSelf;
 
   // Overdue first, then the soonest due; completed work newest first.
   const shown = (filter === 'completed' ? completed : filter === 'overdue' ? overdue : open)
@@ -280,8 +282,8 @@ export const MemberProfilePage: React.FC<{
   };
 
   // The member's main account action, in the design's "primary" place.
-  const primary =
-    status === 'NO_ACCOUNT' ? { label: 'Issue account', icon: Mail, run: () => actions.onIssue(member) }
+  const primary = locked ? null
+    : status === 'NO_ACCOUNT' ? { label: 'Issue account', icon: Mail, run: () => actions.onIssue(member) }
       : status === 'INVITED' ? { label: 'Resend invitation', icon: RefreshCw, run: () => actions.onResendInvite(member) }
         : status === 'DISABLED' ? { label: 'Enable account', icon: UserCheck, run: () => actions.onToggleAccount(member) }
           : status === 'LEFT' ? { label: 'Reinstate', icon: UserCheck, run: () => actions.onSetService(member, 'SERVING') }
@@ -323,6 +325,14 @@ export const MemberProfilePage: React.FC<{
                   {member.role === 'SUPER_ADMIN' ? 'Super admin' : 'Head'}
                 </span>
               )}
+              {member.accountProtected && (
+                <span
+                  title="Its role, department and status cannot be changed, and it cannot be deleted or reset by another administrator."
+                  className={`rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium dark:bg-[#2A2A2A] ${PANEL_TEXT_2}`}
+                >
+                  Protected owner
+                </span>
+              )}
               {status !== 'ACTIVE' && (
                 <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${status === 'DISABLED' || status === 'LEFT' ? 'bg-rose-50 text-rose-700 dark:bg-[#3A2622] dark:text-[#F2725A]' : 'bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-[#F0B44C]'}`}>
                   {STATUS[status].label}
@@ -347,14 +357,14 @@ export const MemberProfilePage: React.FC<{
           ) : (
             <>
               <Button icon={Copy} onClick={() => void copyEmail()}>Copy email</Button>
-              <Button variant="primary" icon={primary.icon} disabled={busy} onClick={primary.run} className="max-md:flex-1">{primary.label}</Button>
+              {primary && <Button variant="primary" icon={primary.icon} disabled={busy} onClick={primary.run} className="max-md:flex-1">{primary.label}</Button>}
               <PanelMoreMenu>
                 <MenuItem>
                   <button type="button" className={panelMenuItemClass} onClick={() => onOpenPanel(member)}>
                     <Eye className="h-4 w-4 opacity-60" /> Open side panel
                   </button>
                 </MenuItem>
-                {member.userId && (
+                {member.userId && !locked && (
                   <MenuItem>
                     <button type="button" className={panelMenuItemClass} onClick={() => onOpenPanel(member)}>
                       <ShieldCheck className="h-4 w-4 opacity-60" /> Change role
@@ -366,7 +376,7 @@ export const MemberProfilePage: React.FC<{
                     <Pencil className="h-4 w-4 opacity-60" /> Edit roll details
                   </button>
                 </MenuItem>
-                {member.userId && (status === 'ACTIVE' || status === 'DISABLED') && (
+                {!locked && member.userId && (status === 'ACTIVE' || status === 'DISABLED') && (
                   <MenuItem>
                     <button type="button" className={panelMenuItemClass} onClick={() => actions.onToggleAccount(member)}>
                       {status === 'DISABLED'
@@ -375,19 +385,23 @@ export const MemberProfilePage: React.FC<{
                     </button>
                   </MenuItem>
                 )}
-                <MenuItem>
-                  <button type="button" className={panelMenuItemClass} onClick={() => actions.onSetService(member, member.employmentStatus === 'SERVING' ? 'LEFT' : 'SERVING')}>
-                    {member.employmentStatus === 'SERVING'
-                      ? <><UserRoundX className="h-4 w-4 opacity-60" /> Mark as left service</>
-                      : <><UserCheck className="h-4 w-4 opacity-60" /> Reinstate</>}
-                  </button>
-                </MenuItem>
-                <PanelMenuSeparator />
-                <MenuItem>
-                  <button type="button" className={panelDangerItemClass} onClick={() => actions.onDelete(member)}>
-                    <Trash2 className="h-4 w-4" /> {member.userId ? 'Delete user' : 'Remove from roll'}
-                  </button>
-                </MenuItem>
+                {!locked && (
+                  <>
+                    <MenuItem>
+                      <button type="button" className={panelMenuItemClass} onClick={() => actions.onSetService(member, member.employmentStatus === 'SERVING' ? 'LEFT' : 'SERVING')}>
+                        {member.employmentStatus === 'SERVING'
+                          ? <><UserRoundX className="h-4 w-4 opacity-60" /> Mark as left service</>
+                          : <><UserCheck className="h-4 w-4 opacity-60" /> Reinstate</>}
+                      </button>
+                    </MenuItem>
+                    <PanelMenuSeparator />
+                    <MenuItem>
+                      <button type="button" className={panelDangerItemClass} onClick={() => actions.onDelete(member)}>
+                        <Trash2 className="h-4 w-4" /> {member.userId ? 'Delete user' : 'Remove from roll'}
+                      </button>
+                    </MenuItem>
+                  </>
+                )}
               </PanelMoreMenu>
             </>
           )}

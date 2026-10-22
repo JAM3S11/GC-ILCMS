@@ -324,6 +324,10 @@ const requireSuperAdmin = (req, res, next) => {
   if (req.user?.role !== 'SUPER_ADMIN') return res.status(403).json({ error: 'Super-admin access is required.' });
   next();
 };
+// users.is_protected marks the owner account (migration 043). Its triggers are the backstop;
+// the admin endpoints check the flag first so the refusal reads as a message, not a 500.
+const PROTECTED_ACCOUNT_ERROR =
+  'This is the protected owner account. Its role, department and status cannot be changed, and it cannot be deleted or reset by another administrator.';
 const asyncHandler = (handler) => (req, res, next) =>
   Promise.resolve(handler(req, res, next)).catch(next);
 
@@ -5813,7 +5817,7 @@ app.get('/api/admin/users', requireSession, requireSuperAdmin, asyncHandler(asyn
   try {
     const { rows } = await pool.query(
       `SELECT id, full_name AS "fullName", email, role,
-              department, status, created_at AS "createdAt"
+              department, status, is_protected AS "isProtected", created_at AS "createdAt"
        FROM users ORDER BY created_at DESC LIMIT 500`,
     );
     res.json({ users: rows });
@@ -5844,6 +5848,7 @@ const ROLL_SELECT = `
   SELECT r.id, r.staff_number AS "staffNumber", r.full_name AS "fullName", r.email,
          r.role, r.department, r.employment_status AS "employmentStatus",
          r.user_id AS "userId", u.status AS "accountStatus",
+         COALESCE(u.is_protected, FALSE) AS "accountProtected",
          r.created_at AS "createdAt", r.updated_at AS "updatedAt",
          -- Members view: when the officer last signed in, and whether a session is open now.
          (SELECT MAX(a.created_at) FROM audit_log a
@@ -6049,7 +6054,7 @@ app.patch('/api/admin/nominal-roll/:id/status', requireSession, requireSuperAdmi
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(7901234)');
     const { rows } = await client.query(
-      `SELECT r.*, u.role AS account_role, u.status AS account_status
+      `SELECT r.*, u.role AS account_role, u.status AS account_status, u.is_protected AS account_protected
        FROM nominal_roll r LEFT JOIN users u ON u.id = r.user_id
        WHERE r.id = $1 FOR UPDATE OF r`,
       [req.params.id],
@@ -6059,6 +6064,10 @@ app.patch('/api/admin/nominal-roll/:id/status', requireSession, requireSuperAdmi
       return res.status(404).json({ error: 'Nominal roll entry not found.' });
     }
     const entry = rows[0];
+    if (employmentStatus === 'LEFT' && entry.account_protected) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: PROTECTED_ACCOUNT_ERROR });
+    }
     if (employmentStatus === 'LEFT' && entry.user_id) {
       if (entry.user_id === req.user.id) {
         await client.query('ROLLBACK');
@@ -6265,12 +6274,16 @@ app.post('/api/admin/users/:id/reset-password', requireSession, requireSuperAdmi
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
-      `SELECT id, full_name, email FROM users WHERE id = $1 AND status = 'ACTIVE' FOR UPDATE`,
+      `SELECT id, full_name, email, is_protected FROM users WHERE id = $1 AND status = 'ACTIVE' FOR UPDATE`,
       [req.params.id],
     );
     if (!rows.length) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Only active accounts can be reset. Activate the account first.' });
+    }
+    if (rows[0].is_protected && rows[0].id !== req.user.id) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: PROTECTED_ACCOUNT_ERROR });
     }
     user = rows[0];
     reset = await createPasswordReset(client, user, req.user.id);
@@ -6307,10 +6320,14 @@ app.patch('/api/admin/users/:id/status', requireSession, requireSuperAdmin, asyn
   try {
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(7901234)');
-    const { rows } = await client.query('SELECT id, full_name, email, role FROM users WHERE id = $1 FOR UPDATE', [req.params.id]);
+    const { rows } = await client.query('SELECT id, full_name, email, role, is_protected FROM users WHERE id = $1 FOR UPDATE', [req.params.id]);
     if (!rows.length) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Staff account not found.' });
+    }
+    if (rows[0].is_protected && status === 'DISABLED') {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: PROTECTED_ACCOUNT_ERROR });
     }
     if (rows[0].role === 'SUPER_ADMIN' && status === 'DISABLED') {
       const { rows: activeAdmins } = await client.query(
@@ -6369,10 +6386,14 @@ app.patch('/api/admin/users/:id/role', requireSession, requireSuperAdmin, asyncH
     // Serialised against the other super-admin guards so two concurrent
     // demotions cannot both see themselves as the last one standing.
     await client.query('SELECT pg_advisory_xact_lock(7901234)');
-    const { rows } = await client.query('SELECT id, email, role, department FROM users WHERE id = $1 FOR UPDATE', [req.params.id]);
+    const { rows } = await client.query('SELECT id, email, role, department, is_protected FROM users WHERE id = $1 FOR UPDATE', [req.params.id]);
     if (!rows.length) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Staff account not found.' });
+    }
+    if (rows[0].is_protected) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: PROTECTED_ACCOUNT_ERROR });
     }
     const previous = rows[0].role;
     // A lab-scoped role can be moved between laboratories without the role
@@ -6435,7 +6456,7 @@ app.delete('/api/admin/users/:id', requireSession, requireSuperAdmin, asyncHandl
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(7901234)');
     const { rows } = await client.query(
-      'SELECT id, email, role, status FROM users WHERE id = $1 FOR UPDATE',
+      'SELECT id, email, role, status, is_protected FROM users WHERE id = $1 FOR UPDATE',
       [req.params.id],
     );
     if (!rows.length) {
@@ -6443,6 +6464,10 @@ app.delete('/api/admin/users/:id', requireSession, requireSuperAdmin, asyncHandl
       return res.status(404).json({ error: 'Staff account not found.' });
     }
     const target = rows[0];
+    if (target.is_protected) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: PROTECTED_ACCOUNT_ERROR });
+    }
     if (target.role === 'SUPER_ADMIN' && target.status === 'ACTIVE') {
       const { rows: remaining } = await client.query(
         `SELECT COUNT(*)::int AS count FROM users

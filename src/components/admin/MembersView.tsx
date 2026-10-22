@@ -46,6 +46,8 @@ export type RollEntry = {
   createdAt: string;
   lastSignInAt?: string | null;
   signedIn?: boolean;
+  /** The owner account: no other administrator can change, disable, delete or reset it. */
+  accountProtected?: boolean;
 };
 
 export type AccessRequest = {
@@ -160,6 +162,8 @@ const dangerItemClass = `${menuItemBase} text-rose-600 data-[focus]:bg-rose-50 d
 const MemberMenu: React.FC<{ entry: RollEntry; isSelf: boolean; busy: boolean; actions: MemberActions; order: string[] }> = ({ entry, isSelf, busy, actions, order }) => {
   const status = memberStatus(entry);
   const serving = entry.employmentStatus === 'SERVING';
+  const protectedOther = !!entry.accountProtected && !isSelf;
+  const locked = isSelf || protectedOther;
   return (
     <Menu>
       <MenuButton
@@ -203,14 +207,14 @@ const MemberMenu: React.FC<{ entry: RollEntry; isSelf: boolean; busy: boolean; a
             </button>
           </MenuItem>
         )}
-        {status === 'ACTIVE' && (
+        {status === 'ACTIVE' && !protectedOther && (
           <MenuItem>
             <button type="button" className={menuItemClass} onClick={() => actions.onResetPassword(entry)}>
               <KeyRound className="h-4 w-4 text-slate-400" /> Send password reset
             </button>
           </MenuItem>
         )}
-        {!isSelf && entry.userId && (status === 'ACTIVE' || status === 'DISABLED') && (
+        {!locked && entry.userId && (status === 'ACTIVE' || status === 'DISABLED') && (
           <MenuItem>
             <button type="button" className={menuItemClass} onClick={() => actions.onToggleAccount(entry)}>
               {status === 'DISABLED'
@@ -219,7 +223,7 @@ const MemberMenu: React.FC<{ entry: RollEntry; isSelf: boolean; busy: boolean; a
             </button>
           </MenuItem>
         )}
-        {!isSelf && (
+        {!locked && (
           <MenuItem>
             <button type="button" className={menuItemClass} onClick={() => actions.onSetService(entry, serving ? 'LEFT' : 'SERVING')}>
               {serving
@@ -228,7 +232,7 @@ const MemberMenu: React.FC<{ entry: RollEntry; isSelf: boolean; busy: boolean; a
             </button>
           </MenuItem>
         )}
-        {!isSelf && (
+        {!locked && (
           <>
             <MenuSeparator className="my-1 h-px bg-slate-100 dark:bg-slate-800" />
             <MenuItem>
