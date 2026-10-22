@@ -164,6 +164,16 @@ const buildBlocks = (data: GovernmentAnalystReportData): Block[] => [
     node: (
       <p className="pt-[5mm]">
         As witness my hand this <span className={dotted}>&nbsp;<PrintedDate date={data.approvalDate} dayOf />&nbsp;</span>.
+        {/* The Head's signature ends the line, rising into the space above it so the page never reflows. */}
+        {data.checkerSignature && (
+          <span className="relative inline-block w-0 align-baseline">
+            <img
+              src={data.checkerSignature}
+              alt=""
+              className="absolute bottom-[-2mm] left-[4mm] h-[12mm] max-w-[45mm] object-contain object-left-bottom"
+            />
+          </span>
+        )}
       </p>
     ),
   },

@@ -2388,7 +2388,7 @@ const analystReportSource = async (db, intakeId, approver) => {
   const { rows } = await db.query(
     `SELECT d.sample_k_no, COALESCE(TO_CHAR(d.date_received, 'YYYY-MM-DD'), '') AS date_received, d.submitted_by,
             d.envelope_marked, d.police_station, d.cr_number, d.accused, d.containing, d.results, d.gck_no,
-            d.analyst_signature, d.status,
+            d.analyst_signature, d.checker_signature, d.status,
             analyst.full_name AS analyst_name, analyst.qualification AS analyst_qualification, analyst.initials AS analyst_initials,
             receiver.full_name AS receiver_name, receiver.qualification AS receiver_qualification, receiver.initials AS receiver_initials
      FROM narcotics_draft_reports d
@@ -2421,6 +2421,8 @@ const analystReportSource = async (db, intakeId, approver) => {
     results: row.results ?? {},
     gckNo: row.gck_no,
     analystSignature: row.analyst_signature,
+    // The Head's "Checked By" signature from the draft, printed on the witness line.
+    checkerSignature: row.checker_signature,
     analyst: analystReportOfficer(row, 'analyst'),
     receiver: analystReportOfficer(row, 'receiver'),
     approver: { fullName: head.full_name ?? '', qualification: head.qualification ?? '', initials: head.initials ?? '' },
@@ -2429,9 +2431,13 @@ const analystReportSource = async (db, intakeId, approver) => {
 
 const selectAnalystReport = async (db, intakeId) => {
   const { rows } = await db.query(
+    // checkerSignature covers reports approved before the snapshot stored it; the draft is locked
+    // while the report exists, so its signature cannot have changed since.
     `SELECT r.findings, r.snapshot, approver.full_name AS "approvedBy",
-            TO_CHAR(r.approved_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "approvedDate"
+            TO_CHAR(r.approved_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "approvedDate",
+            d.checker_signature AS "checkerSignature"
      FROM narcotics_analyst_reports r JOIN users approver ON approver.id = r.approved_by
+     LEFT JOIN narcotics_draft_reports d ON d.intake_id = r.intake_id
      WHERE r.intake_id = $1`,
     [intakeId],
   );
