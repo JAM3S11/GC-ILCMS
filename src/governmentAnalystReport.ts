@@ -142,9 +142,9 @@ export const itemDescription = (source: Pick<GovernmentAnalystReportSource, 'env
   ].filter(Boolean).join(', ');
 };
 
-/** Receiving / analysing / approving officers' initials, the last in lower case: "ABC/VGM/gn". */
+/** Receiving / analysing / approving officers' initials, all in capitals: "ABC/VGM/GN". */
 export const referenceInitials = (source: Pick<GovernmentAnalystReportSource, 'receiver' | 'analyst' | 'approver'>) =>
-  [officerInitials(source.receiver), officerInitials(source.analyst), officerInitials(source.approver).toLowerCase()]
+  [officerInitials(source.receiver), officerInitials(source.analyst), officerInitials(source.approver)]
     .filter(Boolean)
     .join('/');
 
