@@ -20,7 +20,8 @@ import {
 } from 'lucide-react';
 import { Button, DashboardHeader, DashboardPage, StatusPill, UserAvatar } from '../common/Dashboard';
 import { useTheme, type ThemeMode } from '../../theme/ThemeProvider';
-import type { LaboratoryDepartment, User, UserRole } from '../../types';
+import type { LaboratoryDepartment, ReportCredentials, User, UserRole } from '../../types';
+import { ReportCredentialsForm } from '../common/ReportCredentialsForm';
 import { apiRequest } from '../../lib/api';
 import { Select } from '../common/Select';
 import { departmentLabel, departmentsForRole, isLabScopedRole } from '../../lib/departments';
@@ -447,6 +448,44 @@ const SavedSignatureGroup: React.FC = () => {
   );
 };
 
+/** Qualification, title and initials, as printed on the Report of Government Analyst. */
+const ReportCredentialsGroup: React.FC<{ fullName: string }> = ({ fullName }) => {
+  const [credentials, setCredentials] = useState<ReportCredentials | null>(null);
+  const [loadError, setLoadError] = useState('');
+  useEffect(() => {
+    apiRequest<{ credentials: ReportCredentials }>('/api/account/credentials')
+      .then((result) => setCredentials(result.credentials))
+      .catch((error: unknown) => setLoadError(error instanceof Error ? error.message : 'Could not load your report details.'));
+  }, []);
+  return (
+    <SettingsGroup id="profile-credentials" title="Report details">
+      <div className="max-w-xl space-y-3">
+        <p className="text-[13px] leading-relaxed text-slate-500 dark:text-slate-400">
+          How you are named on reports you sign, e.g. “I Vivian Gacheri Mpekethu, MSc., a Government Analyst…” and “GCK 3209/26 VGM”.
+          Reports already approved keep the details they were approved with.
+        </p>
+        {loadError ? (
+          <Notice tone="error">{loadError}</Notice>
+        ) : (
+          <ReportCredentialsForm
+            idPrefix="settings-credentials"
+            value={credentials}
+            fullName={fullName}
+            onSave={async (next) => {
+              const result = await apiRequest<{ credentials: ReportCredentials; message: string }>('/api/account/credentials', {
+                method: 'PUT',
+                body: JSON.stringify(next),
+              });
+              setCredentials(result.credentials);
+              return result.message;
+            }}
+          />
+        )}
+      </div>
+    </SettingsGroup>
+  );
+};
+
 /* --------------------------------- View --------------------------------- */
 
 interface SettingsViewProps {
@@ -838,6 +877,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, initial
               </SettingsGroup>
 
               {!isSuperAdmin && <SavedSignatureGroup />}
+
+              <ReportCredentialsGroup fullName={currentUser.name} />
 
               <SettingsGroup id="profile-details" title="Details">
                 {isSuperAdmin ? (

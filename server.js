@@ -1764,6 +1764,7 @@ const NARCOTICS_EVENT_LABELS = {
   APPROVED: 'Documents approved by the Head',
   FINDINGS_RECORDED: 'Findings recorded',
   ANALYSIS_COMPLETED: 'Analysis completed',
+  ANALYST_REPORT_APPROVED: 'Report of Government Analyst approved by the Head',
   MEMO_APPROVED: 'Memo approved by the Head',
   EDITED: 'Details edited',
   DELETED: 'Deleted',
@@ -2038,6 +2039,10 @@ app.post('/api/narcotics/intakes/:id/memo', requireSession, requireNarcoticsLab,
   const { rows: draft } = await client.query('SELECT status FROM narcotics_draft_reports WHERE intake_id = $1', [intake.id]);
   if (!draft.length || draft[0].status !== 'APPROVED') {
     return { error: 'Check and approve the Draft Report of Analysis (Cannabis) before approving the memo.' };
+  }
+  const { rows: analystReport } = await client.query('SELECT 1 FROM narcotics_analyst_reports WHERE intake_id = $1', [intake.id]);
+  if (!analystReport.length) {
+    return { error: 'Approve the Report of Government Analyst (under Memo) before approving the memo.' };
   }
   if (!intake.approved_at) {
     await client.query('UPDATE narcotics_exhibit_intakes SET approved_by = $2, approved_at = NOW() WHERE id = $1', [intake.id, req.user.id]);
@@ -2357,11 +2362,183 @@ app.post('/api/narcotics/intakes/:id/draft-report/unlock', requireSession, requi
      WHERE intake_id = $1`,
     [intake.id, req.user.id, reason],
   );
+  // The final report was built from the draft being reopened, so it is approved again from the new one.
+  await db.query('DELETE FROM narcotics_analyst_reports WHERE intake_id = $1', [intake.id]);
   await audit(db, req.user.id, req.user.email, 'NARCOTICS_DRAFT_REPORT_UNLOCKED', 'narcotics_exhibit_intake', intake.id, {
     labReference: intake.lab_reference,
     reason,
   });
   return null;
+}));
+
+/* ------------------ Narcotics Report of Government Analyst ------------------ */
+// The final report printed from the approved Draft Report of Analysis (Cannabis). Until the Head
+// approves it, the preview is built from the live draft and officers; approving stores the Findings
+// and a snapshot of those values, so the printed report never changes afterwards.
+// src/governmentAnalystReport.ts formats every printed line from this source.
+
+const analystReportOfficer = (row, prefix) => ({
+  fullName: row[`${prefix}_name`] ?? '',
+  qualification: row[`${prefix}_qualification`] ?? '',
+  initials: row[`${prefix}_initials`] ?? '',
+});
+
+/** The values the report is printed from, read live from the draft, the exhibit and the officers. */
+const analystReportSource = async (db, intakeId, approver) => {
+  const { rows } = await db.query(
+    `SELECT d.sample_k_no, COALESCE(TO_CHAR(d.date_received, 'YYYY-MM-DD'), '') AS date_received, d.submitted_by,
+            d.envelope_marked, d.police_station, d.cr_number, d.accused, d.containing, d.results, d.gck_no,
+            d.analyst_signature, d.status,
+            analyst.full_name AS analyst_name, analyst.qualification AS analyst_qualification, analyst.initials AS analyst_initials,
+            receiver.full_name AS receiver_name, receiver.qualification AS receiver_qualification, receiver.initials AS receiver_initials
+     FROM narcotics_draft_reports d
+     JOIN narcotics_exhibit_intakes n ON n.id = d.intake_id
+     LEFT JOIN users analyst ON analyst.id = d.analysed_by
+     LEFT JOIN users receiver ON receiver.id = n.receiving_officer_id
+     WHERE d.intake_id = $1`,
+    [intakeId],
+  );
+  const row = rows[0];
+  if (!row) return null;
+  // The Head approves; anyone else previewing sees the current Head of Narcotics in that place.
+  const { rows: approverRows } = isNarcoticsHead(approver)
+    ? await db.query('SELECT full_name, qualification, initials FROM users WHERE id = $1', [approver.id])
+    : await db.query(
+      `SELECT full_name, qualification, initials FROM users
+       WHERE role = 'HEAD_OF_DEPARTMENT' AND department = 'Narcotics' AND status = 'ACTIVE' LIMIT 1`,
+    );
+  const head = approverRows[0] ?? {};
+  return {
+    draftStatus: row.status,
+    sampleKNo: row.sample_k_no,
+    crNumber: row.cr_number,
+    dateReceived: row.date_received,
+    submittedBy: row.submitted_by,
+    envelopeMarked: row.envelope_marked,
+    policeStation: row.police_station,
+    accused: row.accused,
+    containing: row.containing,
+    results: row.results ?? {},
+    gckNo: row.gck_no,
+    analystSignature: row.analyst_signature,
+    analyst: analystReportOfficer(row, 'analyst'),
+    receiver: analystReportOfficer(row, 'receiver'),
+    approver: { fullName: head.full_name ?? '', qualification: head.qualification ?? '', initials: head.initials ?? '' },
+  };
+};
+
+const selectAnalystReport = async (db, intakeId) => {
+  const { rows } = await db.query(
+    `SELECT r.findings, r.snapshot, approver.full_name AS "approvedBy",
+            TO_CHAR(r.approved_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS "approvedDate"
+     FROM narcotics_analyst_reports r JOIN users approver ON approver.id = r.approved_by
+     WHERE r.intake_id = $1`,
+    [intakeId],
+  );
+  return rows[0] ?? null;
+};
+
+app.get('/api/narcotics/intakes/:id/analyst-report', requireSession, requireNarcoticsLab, asyncHandler(async (req, res, next) => {
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.id ?? '')) return res.status(404).json({ error: 'Narcotics exhibit not found.' });
+  try {
+    const { rows } = await pool.query('SELECT * FROM narcotics_exhibit_intakes WHERE id = $1 AND deleted_at IS NULL', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Narcotics exhibit not found.' });
+    const intake = rows[0];
+    if (intake.analysis_officer_id !== req.user.id && !isNarcoticsSupervisor(req.user)) {
+      return res.status(403).json({ error: 'Only the assigned Analysis Officer or a supervisor can open this report.' });
+    }
+    const report = await selectAnalystReport(pool, intake.id);
+    res.json({
+      report,
+      // The live values only matter until the report is approved.
+      source: report ? null : await analystReportSource(pool, intake.id, req.user),
+      canApprove: isNarcoticsHead(req.user) && !intake.memo_approved_at,
+    });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+// The Head of Narcotics approves the report (with the Findings as edited) once the draft is approved.
+app.post('/api/narcotics/intakes/:id/analyst-report/approve', requireSession, requireNarcoticsLab, cannabisReportChange(async (db, intake, draft, req) => {
+  if (!isNarcoticsHead(req.user)) return { status: 403, error: 'Only the Head of Narcotics can approve the Report of Government Analyst.' };
+  if (intake.memo_approved_at) return { status: 409, error: 'The memo has already been approved.' };
+  if (!draft || draft.status !== 'APPROVED') {
+    return { status: 409, error: 'Check and approve the Draft Report of Analysis (Cannabis) first.' };
+  }
+  const findings = typeof req.body?.findings === 'string' ? req.body.findings.trim() : '';
+  if (!findings || findings.length > 3000) return { status: 400, error: 'Write the findings and conclusions (up to 3000 characters).' };
+  const { rows: existing } = await db.query('SELECT 1 FROM narcotics_analyst_reports WHERE intake_id = $1', [intake.id]);
+  if (existing.length) return { status: 409, error: 'This report has already been approved.' };
+  const source = await analystReportSource(db, intake.id, req.user);
+  const { rows: today } = await db.query(`SELECT TO_CHAR(NOW() AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') AS day`);
+  const snapshot = { ...source, findings, approvalDate: today[0].day };
+  delete snapshot.draftStatus;
+  await db.query(
+    'INSERT INTO narcotics_analyst_reports (intake_id, findings, snapshot, approved_by) VALUES ($1, $2, $3, $4)',
+    [intake.id, findings, snapshot, req.user.id],
+  );
+  await appendNarcoticsIntakeEvent(db, intake.id, 'ANALYST_REPORT_APPROVED', req.user.id, intake.status, intake.status);
+  await audit(db, req.user.id, req.user.email, 'NARCOTICS_ANALYST_REPORT_APPROVED', 'narcotics_exhibit_intake', intake.id, {
+    labReference: intake.lab_reference,
+  });
+  return null;
+}));
+
+/* --------------- How an officer is named on reports they sign --------------- */
+const reportCredentials = (body) => {
+  const { qualification, title, initials } = body ?? {};
+  if (typeof qualification !== 'string' || qualification.trim().length > 60 ||
+      typeof title !== 'string' || title.trim().length > 80 ||
+      typeof initials !== 'string' || !/^[A-Za-z]{0,6}$/.test(initials.trim())) {
+    return null;
+  }
+  return { qualification: qualification.trim(), title: title.trim(), initials: initials.trim().toUpperCase() };
+};
+const CREDENTIALS_ERROR = 'Qualification up to 60 characters, title up to 80, and initials of up to 6 letters.';
+const credentialsOf = (row) => ({ qualification: row.qualification, title: row.title, initials: row.initials });
+
+app.get('/api/account/credentials', requireSession, asyncHandler(async (req, res, next) => {
+  try {
+    const { rows } = await pool.query('SELECT qualification, title, initials FROM users WHERE id = $1', [req.user.id]);
+    res.json({ credentials: credentialsOf(rows[0]) });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+app.put('/api/account/credentials', requireSession, asyncHandler(async (req, res, next) => {
+  const credentials = reportCredentials(req.body);
+  if (!credentials) return res.status(400).json({ error: CREDENTIALS_ERROR });
+  try {
+    const { rows } = await pool.query(
+      `UPDATE users SET qualification = $2, title = $3, initials = $4, updated_at = NOW() WHERE id = $1
+       RETURNING qualification, title, initials`,
+      [req.user.id, credentials.qualification, credentials.title, credentials.initials],
+    );
+    await audit(pool, req.user.id, req.user.email, 'REPORT_CREDENTIALS_UPDATED', 'user', req.user.id, credentials);
+    res.json({ credentials: credentialsOf(rows[0]), message: 'Saved. Reports you sign from now on use these details.' });
+  } catch (error) {
+    next(error);
+  }
+}));
+
+app.patch('/api/admin/users/:id/credentials', requireSession, requireSuperAdmin, asyncHandler(async (req, res, next) => {
+  if (!/^[0-9a-f-]{36}$/i.test(req.params.id ?? '')) return res.status(404).json({ error: 'Staff account not found.' });
+  const credentials = reportCredentials(req.body);
+  if (!credentials) return res.status(400).json({ error: CREDENTIALS_ERROR });
+  try {
+    const { rows } = await pool.query(
+      `UPDATE users SET qualification = $2, title = $3, initials = $4, updated_at = NOW() WHERE id = $1
+       RETURNING email, qualification, title, initials`,
+      [req.params.id, credentials.qualification, credentials.title, credentials.initials],
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Staff account not found.' });
+    await audit(pool, req.user.id, req.user.email, 'REPORT_CREDENTIALS_UPDATED', 'user', req.params.id, credentials);
+    res.json({ credentials: credentialsOf(rows[0]), message: `Report details saved for ${rows[0].email}.` });
+  } catch (error) {
+    next(error);
+  }
 }));
 
 // A registered intake can be corrected before analysis starts: by the officer who
@@ -5849,6 +6026,8 @@ const ROLL_SELECT = `
          r.role, r.department, r.employment_status AS "employmentStatus",
          r.user_id AS "userId", u.status AS "accountStatus",
          COALESCE(u.is_protected, FALSE) AS "accountProtected",
+         COALESCE(u.qualification, '') AS qualification, COALESCE(u.title, '') AS "reportTitle",
+         COALESCE(u.initials, '') AS initials,
          r.created_at AS "createdAt", r.updated_at AS "updatedAt",
          -- Members view: when the officer last signed in, and whether a session is open now.
          (SELECT MAX(a.created_at) FROM audit_log a

@@ -21,8 +21,10 @@ import {
   UserRoundX,
   X,
 } from 'lucide-react';
-import { LaboratoryDepartment, UserRole } from '../../types';
+import { LaboratoryDepartment, ReportCredentials, UserRole } from '../../types';
+import { apiRequest } from '../../lib/api';
 import { Avatar, Button } from '../common/Dashboard';
+import { ReportCredentialsForm } from '../common/ReportCredentialsForm';
 import { Select } from '../common/Select';
 import {
   PANEL_LINE,
@@ -116,6 +118,8 @@ export const MemberDrawer: React.FC<{
   const [roleDraft, setRoleDraft] = useState<UserRole>('ANALYST');
   const [departmentDraft, setDepartmentDraft] = useState<LaboratoryDepartment>(GENERAL_ADMINISTRATION);
   const [toast, setToast] = useState('');
+  // Report details saved from this panel, shown until the member list reloads.
+  const [savedCredentials, setSavedCredentials] = useState<Record<string, ReportCredentials>>({});
   const requestsRef = useRef<HTMLElement>(null);
   const roleRef = useRef<HTMLElement>(null);
 
@@ -376,6 +380,29 @@ export const MemberDrawer: React.FC<{
           {!expanded && properties}
           {requests}
           {roleEditor}
+          {entry.userId && (
+            <section aria-labelledby="member-credentials">
+              <PanelSectionHeading id="member-credentials" title="Report details" />
+              <ReportCredentialsForm
+                idPrefix={`member-credentials-${entry.id}`}
+                value={savedCredentials[entry.userId] ?? {
+                  qualification: entry.qualification ?? '',
+                  title: entry.reportTitle ?? '',
+                  initials: entry.initials ?? '',
+                }}
+                fullName={entry.fullName}
+                onSave={async (next) => {
+                  const userId = entry.userId as string;
+                  const result = await apiRequest<{ credentials: ReportCredentials; message: string }>(
+                    `/api/admin/users/${userId}/credentials`,
+                    { method: 'PATCH', body: JSON.stringify(next) },
+                  );
+                  setSavedCredentials((previous) => ({ ...previous, [userId]: result.credentials }));
+                  return result.message;
+                }}
+              />
+            </section>
+          )}
         </div>
       )}
     </SidePanel>

@@ -17,6 +17,7 @@ import { Button } from '../common/Dashboard';
 import { printOfficialDocument } from '../common/print/OfficialPrintDocument';
 import { CannabisDraftReportSection } from './CannabisDraftReportSection';
 import { CaseStep } from './CaseStep';
+import { GovernmentAnalystReportSection } from './GovernmentAnalystReportSection';
 import { CaseFileLayout, CaseFileSectionLink } from './CaseFileLayout';
 import { NextStep } from './CaseFlow';
 import { NarcoticsMemoPrint } from './NarcoticsMemoPrint';
@@ -64,7 +65,9 @@ export const NarcoticsCaseFile: React.FC<NarcoticsCaseFileProps> = ({ intake, cu
   const isSupervisor = isHead || currentUser.role === 'SENIOR_CHEMIST' || currentUser.role === 'SUPER_ADMIN';
   // Where the cannabis draft report stands; an unapproved report holds back the memo.
   const [draftReportStatus, setDraftReportStatus] = useState<NarcoticsDraftReport['status'] | null>(null);
-  const draftReportBlocksMemo = draftReportStatus !== 'APPROVED';
+  // The Report of Government Analyst (under Memo) is approved before the memo.
+  const [analystReportApproved, setAnalystReportApproved] = useState(false);
+  const draftReportBlocksMemo = draftReportStatus !== 'APPROVED' || !analystReportApproved;
 
   /* ------------------------------ Actions ------------------------------- */
   const [busy, setBusy] = useState('');
@@ -112,6 +115,7 @@ export const NarcoticsCaseFile: React.FC<NarcoticsCaseFileProps> = ({ intake, cu
   const memoBlockers = [
     !complete && 'The Draft Report of Analysis is submitted by the Analysis Officer.',
     !draftApproved && complete && 'The Head checks and approves the Draft Report of Analysis (under Findings).',
+    !memoApproved && !analystReportApproved && complete && 'The Head approves the Report of Government Analyst (under Memo).',
     !intake.documentsConfirmedAt && 'The department ticks "Documents checked" (under Documents and memo).',
   ].filter((item): item is string => !!item);
 
@@ -125,6 +129,8 @@ export const NarcoticsCaseFile: React.FC<NarcoticsCaseFileProps> = ({ intake, cu
         ? { text: `${analyst} to complete and submit the Draft Report of Analysis.`, action: { label: 'Go to findings', target: 'narcotics-findings' } }
         : draftReportStatus === 'SUBMITTED'
           ? { text: `${head} to check and approve the Draft Report of Analysis.`, action: { label: 'Go to findings', target: 'narcotics-findings' } }
+          : draftReportStatus === 'APPROVED' && !analystReportApproved
+            ? { text: `${head} to check and approve the Report of Government Analyst.`, action: { label: 'Go to report', target: 'narcotics-memo' } }
           : !intake.documentsConfirmedAt
             ? { text: 'The Narcotics department to check the intake documents and tick "Documents checked".', action: { label: 'Go to documents', target: 'narcotics-memo' } }
             : {
@@ -319,7 +325,8 @@ export const NarcoticsCaseFile: React.FC<NarcoticsCaseFileProps> = ({ intake, cu
               title={
                 !complete ? 'The draft report of analysis must be submitted first'
                   : !intake.documentsConfirmedAt ? 'The documents must be ticked as confirmed first'
-                  : draftReportBlocksMemo ? 'Check and approve the cannabis draft report first'
+                  : draftReportStatus !== 'APPROVED' ? 'Check and approve the cannabis draft report first'
+                  : draftReportBlocksMemo ? 'Approve the Report of Government Analyst first'
                   : undefined
               }
             >
@@ -343,6 +350,17 @@ export const NarcoticsCaseFile: React.FC<NarcoticsCaseFileProps> = ({ intake, cu
         status={memoApproved ? { label: 'Memo approved', tone: 'emerald' } : complete ? { label: 'Awaiting approval', tone: 'teal' } : { label: 'After analysis', tone: 'slate' }}
       >
         <div className="space-y-4 px-5 py-4">
+          {(isMine || isSupervisor) && intake.status !== 'Awaiting Assignment' && (
+            <GovernmentAnalystReportSection
+              intake={intake}
+              draftStatus={draftReportStatus}
+              onApprovedChange={setAnalystReportApproved}
+              onIntakeUpdated={(updated) => {
+                onIntakeUpdated(updated);
+                void loadEvents();
+              }}
+            />
+          )}
           <label className="flex cursor-pointer items-start gap-2.5 text-[13px] text-slate-700 dark:text-slate-200">
             <input
               type="checkbox"

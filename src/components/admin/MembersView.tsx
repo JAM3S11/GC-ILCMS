@@ -48,6 +48,10 @@ export type RollEntry = {
   signedIn?: boolean;
   /** The owner account: no other administrator can change, disable, delete or reset it. */
   accountProtected?: boolean;
+  /** How the officer is named on reports they sign (Report of Government Analyst). */
+  qualification?: string;
+  reportTitle?: string;
+  initials?: string;
 };
 
 export type AccessRequest = {

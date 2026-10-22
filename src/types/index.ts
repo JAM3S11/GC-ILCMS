@@ -38,6 +38,14 @@ export interface User {
   avatarUrl?: string;
 }
 
+/** How an officer is named on reports they sign, e.g. "MSc", "Government Analyst", "VGM". */
+export interface ReportCredentials {
+  qualification: string;
+  title: string;
+  /** Blank uses the initials of the officer's name. */
+  initials: string;
+}
+
 export type CaseStatus =
   | 'RECEIVED'
   | 'REGISTERED'
