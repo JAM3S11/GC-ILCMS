@@ -23,5 +23,8 @@ export const createPool = (connectionString) => {
       ? { rejectUnauthorized: false }
       : undefined;
   // A serverless instance serves one request at a time; the Supabase pooler multiplexes the rest.
-  return new pg.Pool({ connectionString, ssl, max: process.env.VERCEL ? 1 : 10 });
+  // Idle connections close after 5s on Vercel so a warm instance never sits on a pooler slot.
+  return new pg.Pool(process.env.VERCEL
+    ? { connectionString, ssl, max: 1, idleTimeoutMillis: 5000 }
+    : { connectionString, ssl, max: 10 });
 };
