@@ -19,8 +19,6 @@ interface AnalystReportResponse {
     snapshot: GovernmentAnalystReportSource & { approvalDate: string };
     approvedBy: string;
     approvedDate: string;
-    /** The draft's "Checked By" signature, for reports approved before the snapshot kept it. */
-    checkerSignature: string | null;
   } | null;
   source: (GovernmentAnalystReportSource & { draftStatus: 'DRAFT' | 'SUBMITTED' | 'APPROVED' }) | null;
   canApprove: boolean;
@@ -85,13 +83,7 @@ export const GovernmentAnalystReportSection: React.FC<GovernmentAnalystReportSec
 
   const report = data?.report ?? null;
   const preview = useMemo(() => {
-    if (report) {
-      return buildGovernmentAnalystReport(
-        { ...report.snapshot, checkerSignature: report.snapshot.checkerSignature ?? report.checkerSignature },
-        report.findings,
-        report.snapshot.approvalDate,
-      );
-    }
+    if (report) return buildGovernmentAnalystReport(report.snapshot, report.findings, report.snapshot.approvalDate);
     if (data?.source) return buildGovernmentAnalystReport(data.source, findings, nairobiToday());
     return null;
   }, [report, data?.source, findings]);

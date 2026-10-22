@@ -26,8 +26,6 @@ export interface GovernmentAnalystReportSource {
   results: Partial<CannabisResults>;
   gckNo: string;
   analystSignature?: string | null;
-  /** The Head's "Checked By" signature from the draft report, printed on the witness line. */
-  checkerSignature?: string | null;
   analyst: ReportOfficer;
   /** The officer who received the exhibit at the Narcotics desk. */
   receiver: ReportOfficer;
@@ -50,7 +48,6 @@ export interface GovernmentAnalystReportData {
   gckNo: string;
   signatoryName: string;
   analystSignature?: string | null;
-  checkerSignature?: string | null;
   refInitials: string;
 }
 
@@ -170,6 +167,5 @@ export const buildGovernmentAnalystReport = (
   gckNo: gckMark(source.gckNo, officerInitials(source.analyst)),
   signatoryName: signatoryName(source.analyst.fullName),
   analystSignature: source.analystSignature,
-  checkerSignature: source.checkerSignature,
   refInitials: referenceInitials(source),
 });
