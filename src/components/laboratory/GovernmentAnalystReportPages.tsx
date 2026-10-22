@@ -181,7 +181,6 @@ const buildBlocks = (data: GovernmentAnalystReportData): Block[] => [
     node: (
       <div className="flex justify-end pt-[3mm]">
         <div className="w-[58mm]">
-          <div className="h-[14mm]" />
           <p className="font-bold">{data.signatoryName}</p>
           <p className="font-bold italic underline">GOVERNMENT ANALYST</p>
         </div>
