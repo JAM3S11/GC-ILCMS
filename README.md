@@ -75,5 +75,3 @@ For a production deployment, set `NODE_ENV=production`, use TLS, a managed Postg
 ## Technology
 
 React, TypeScript, Vite, Express, and PostgreSQL; styled with Tailwind CSS and animated with Motion.
-
-Norminal role
