@@ -1,31 +1,9 @@
 import React from 'react';
 
-/** Form building blocks shared by the departmental intake pages. */
+/** Form building blocks shared by the departmental intake pages (sections: IntakeLayout). */
 
 export const inputCls =
   'w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 transition-colors focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white';
-
-export const Section: React.FC<{
-  icon: React.ComponentType<{ className?: string }>;
-  title: string;
-  description: string;
-  last?: boolean;
-  children: React.ReactNode;
-}> = ({ icon: Icon, title, description, last, children }) => (
-  <fieldset className={`grid grid-cols-1 gap-5 px-5 py-6 md:grid-cols-3 ${last ? '' : 'border-b border-slate-100 dark:border-slate-800'}`}>
-    <legend className="sr-only">{title}</legend>
-    <div className="flex items-start gap-3">
-      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400">
-        <Icon className="h-4 w-4" />
-      </span>
-      <div>
-        <div className="text-sm font-semibold text-slate-900 dark:text-white">{title}</div>
-        <p className="mt-0.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">{description}</p>
-      </div>
-    </div>
-    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:col-span-2">{children}</div>
-  </fieldset>
-);
 
 export const Field: React.FC<{
   label: string;

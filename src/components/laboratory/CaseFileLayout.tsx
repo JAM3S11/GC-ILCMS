@@ -136,7 +136,8 @@ const MoreMenu: React.FC<{ actions: CaseFileMenuAction[] }> = ({ actions }) => {
   );
 };
 
-const STATE_ICON: Record<CaseFileSectionLink['state'], { icon: LucideIcon; className: string; label: string }> = {
+/** Done / needs action / not reached, shared with the intake pages (IntakeLayout). */
+export const STATE_ICON: Record<CaseFileSectionLink['state'], { icon: LucideIcon; className: string; label: string }> = {
   done: { icon: CheckCircle2, className: 'text-emerald-600 dark:text-emerald-400', label: 'Done' },
   current: { icon: CircleDot, className: 'text-amber-500 dark:text-amber-400', label: 'Needs action' },
   pending: { icon: Circle, className: 'text-slate-300 dark:text-slate-600', label: 'Not reached yet' },
