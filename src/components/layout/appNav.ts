@@ -188,13 +188,12 @@ export const SUPER_ADMIN_NAV_GROUPS: { title: string; items: NavItem[] }[] = [
     title: 'Case Registry',
     items: [
       {
+        // Its children are the departments that have case files (caseFileDepartments.ts),
+        // filled in by AppSidebar, so a department appears with its first case file.
         id: 'case-file',
         label: 'Case files',
         icon: FolderOpen,
-        children: [
-          { id: `${CASE_REGISTER_NAV_PREFIX}water`, label: 'Water & Environment' },
-          { id: `${CASE_REGISTER_NAV_PREFIX}food`, label: 'Food & Drugs' },
-        ],
+        children: [],
       },
     ],
   },

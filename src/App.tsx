@@ -52,6 +52,7 @@ import { LaboratoryWorkspace } from './components/laboratory/LaboratoryWorkspace
 import { WaterLaboratoryView } from './components/laboratory/WaterLaboratoryView';
 import { ExhibitCaseFile } from './components/laboratory/ExhibitCaseFile';
 import { ExhibitCaseFileIndex, Laboratory as CaseFileLaboratory } from './components/laboratory/ExhibitCaseFileIndex';
+import { CASE_FILE_DEPARTMENTS, caseFileRegisters } from './components/laboratory/register/caseFileDepartments';
 import { WaterEditAccess, WaterIntakeEdit, WaterSenderEdit, canEditWaterIntake, waterEditAccess } from './lib/waterIntakeAccess';
 import { FoodDrugIntakeEdit } from './components/laboratory/FoodDrugIntakeEditModal';
 import { FoodDrugLaboratoryView } from './components/laboratory/FoodDrugLaboratoryView';
@@ -125,9 +126,11 @@ export default function App() {
   const [waterIntakes, setWaterIntakes] = useState<WaterIntake[]>([]);
   // The Food & Drugs sample whose case file is open, when activeView is 'food-drug-case-file'.
   const [activeFoodDrugIntakeId, setActiveFoodDrugIntakeId] = useState<string | null>(null);
-  // Super Admin case files page: which laboratory's list is shown, and the open Food & Drugs case file.
-  const [caseFileLaboratory, setCaseFileLaboratory] = useState<CaseFileLaboratory>('water');
+  // Super Admin case files page: which department's register is shown (null = the overview of every
+  // department), and the open Food & Drugs / Narcotics case file.
+  const [caseFileLaboratory, setCaseFileLaboratory] = useState<CaseFileLaboratory>(null);
   const [caseFileFoodDrugId, setCaseFileFoodDrugId] = useState<string | null>(null);
+  const [caseFileNarcoticsId, setCaseFileNarcoticsId] = useState<string | null>(null);
   // Exhibit Laboratory: the register tab picked from the sidebar (null = the department's default),
   // and a counter that re-opens the page on that tab even when it is already showing.
   const [labRegisterView, setLabRegisterView] = useState<string | null>(null);
@@ -578,6 +581,20 @@ export default function App() {
     return () => window.clearInterval(intervalId);
   }, [currentUser?.id, currentUser?.role, currentUser?.department, loadNarcoticsIntakes]);
 
+  // Super Admin case files: every department that has case files, from caseFileDepartments.ts.
+  // A department joins the sidebar, the overview and the registers with its first case file.
+  const caseRegisters = useMemo(
+    () =>
+      currentUser?.role === 'SUPER_ADMIN'
+        ? caseFileRegisters({ water: waterIntakes, food: foodDrugIntakes, narcotics: narcoticsIntakes }, (department, recordId) => {
+            if (department === 'water') setActiveWaterIntakeId(recordId);
+            else if (department === 'food') setCaseFileFoodDrugId(recordId);
+            else if (department === 'narcotics') setCaseFileNarcoticsId(recordId);
+          })
+        : [],
+    [currentUser?.role, waterIntakes, foodDrugIntakes, narcoticsIntakes],
+  );
+
   const loadReceptionVisits = useCallback(async (showLoading = true) => {
     if (!currentUser) {
       setVisitors([]);
@@ -798,17 +815,21 @@ export default function App() {
       setLabRegisterNonce((n) => n + 1);
     }
 
-    // A laboratory's case register ('case-file:food') opens Case File on that lab.
+    // A department's case register ('case-file:narcotics') opens Case files on that department;
+    // Case files itself opens the overview of every department.
     if (view.startsWith(CASE_REGISTER_NAV_PREFIX)) {
       const laboratory = view.slice(CASE_REGISTER_NAV_PREFIX.length);
-      if (laboratory === 'water' || laboratory === 'food') setCaseFileLaboratory(laboratory);
+      if (CASE_FILE_DEPARTMENTS.some((department) => department.id === laboratory)) setCaseFileLaboratory(laboratory);
       view = 'case-file';
+    } else if (view === 'case-file' && isSuperAdmin) {
+      setCaseFileLaboratory(null);
     }
 
-    // Opening Case File from the sidebar starts at the list, not the last exhibit.
+    // Opening Case files from the sidebar starts at the list, not the last exhibit.
     if (view === 'case-file' && isSuperAdmin) {
       setActiveWaterIntakeId(null);
       setCaseFileFoodDrugId(null);
+      setCaseFileNarcoticsId(null);
     }
 
     setActiveView(view);
@@ -1722,7 +1743,12 @@ export default function App() {
               myExhibitsCount={myExhibitsCount}
               superAdminTab={superAdminTab}
               caseRegister={caseFileLaboratory}
-              caseRegisterCounts={{ water: waterIntakes.length, food: foodDrugIntakes.length }}
+              caseRegisters={caseRegisters.map((register) => ({
+                id: register.department.id,
+                label: register.department.label,
+                open: register.open,
+                overdue: register.overdue,
+              }))}
               labRegisterView={resolvedLabRegisterView}
               labRegisterCounts={labRegisterCounts}
             />
@@ -2185,6 +2211,21 @@ export default function App() {
                     {foodDrugIntakesLoading ? 'Loading the sample…' : 'Sample not found.'}
                   </div>
                 );
+              })() : caseFileNarcoticsId ? (() => {
+                const intake = narcoticsIntakes.find((item) => item.id === caseFileNarcoticsId);
+                return intake ? (
+                  <NarcoticsCaseFile
+                    key={intake.id}
+                    intake={intake}
+                    currentUser={currentUser}
+                    onBack={() => setCaseFileNarcoticsId(null)}
+                    onIntakeUpdated={handleNarcoticsIntakeUpdated}
+                  />
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900">
+                    {narcoticsIntakesLoading ? 'Loading the exhibit…' : 'Exhibit not found.'}
+                  </div>
+                );
               })() : activeWaterIntake ? (
                 <ExhibitCaseFile
                   intake={activeWaterIntake}
@@ -2196,13 +2237,9 @@ export default function App() {
                 />
               ) : (
                 <ExhibitCaseFileIndex
-                  intakes={waterIntakes}
-                  isLoading={waterIntakesLoading}
-                  error={waterIntakesError}
-                  onOpenCaseFile={(intake) => setActiveWaterIntakeId(intake.id)}
-                  foodDrugIntakes={foodDrugIntakes}
-                  foodDrugLoading={foodDrugIntakesLoading}
-                  onOpenFoodDrugCaseFile={(intake) => setCaseFileFoodDrugId(intake.id)}
+                  registers={caseRegisters}
+                  isLoading={waterIntakesLoading || foodDrugIntakesLoading || narcoticsIntakesLoading}
+                  errors={{ water: waterIntakesError, narcotics: narcoticsIntakesError }}
                   laboratory={caseFileLaboratory}
                   onLaboratoryChange={setCaseFileLaboratory}
                 />

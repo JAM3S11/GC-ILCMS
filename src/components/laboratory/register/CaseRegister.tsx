@@ -1,15 +1,7 @@
-import React, { useMemo, useState } from 'react';
-import { AlertTriangle, ArrowDownWideNarrow, ArrowUpNarrowWide, ChevronRight, Download, FolderOpen, Inbox, Loader2, Printer, X } from 'lucide-react';
-import {
-  Button,
-  DashboardHeader,
-  DashboardPage,
-  EmptyState,
-  Panel,
-  SearchInput,
-  StatusPill,
-  tableClasses as tc,
-} from '../../common/Dashboard';
+import React, { useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, ArrowDownWideNarrow, ArrowLeft, ArrowUpNarrowWide, ChevronRight, Download, FolderOpen, Inbox, Loader2, Printer, X } from 'lucide-react';
+import { tableClasses as tc } from '../../common/Dashboard';
+import { OutlineButton, OutlineSearch, StatusText } from '../workspace/ui';
 import { RegisterSummary, SummaryFilter } from './RegisterSummary';
 import { RegisterPrint, printRegister } from './RegisterPrint';
 import {
@@ -27,43 +19,62 @@ import {
 } from './types';
 
 /* ---------------------------------------------------------------------------
- * CaseRegister — a laboratory's official case register: summary of where the
- * files stand, filters (status, officer, date received, search), the numbered
- * register itself, CSV export and an A4 printable copy. Laboratory-agnostic:
- * each lab passes its statuses, column names and rows.
+ * CaseRegister — a laboratory's official case register, in the same design
+ * language as the case file: a plain header, the department tabs, the
+ * department's process as one strip, filters, and the numbered register with
+ * CSV export and an A4 printable copy. Laboratory-agnostic: each department
+ * passes its stages, column names and rows (see caseFileDepartments.ts).
  * --------------------------------------------------------------------------- */
 
 const UNASSIGNED = '__unassigned__';
+
+export interface CaseRegisterTab {
+  id: string;
+  label: string;
+  open: number;
+  overdue: number;
+}
 
 interface CaseRegisterProps<S extends string> {
   /** Laboratory name, e.g. "Water & Environment". */
   laboratory: string;
   unit: 'exhibit' | 'sample';
-  /** Optional control in the page header (e.g. a laboratory switch). */
-  headerActions?: React.ReactNode;
   statuses: RegisterStatus<S>[];
   rows: RegisterRow<S>[];
   isLoading?: boolean;
   error?: string;
   columns: RegisterColumns;
   searchPlaceholder: string;
+  /** The departments with case files, shown as tabs above the register. */
+  tabs?: CaseRegisterTab[];
+  activeTab?: string;
+  onTabChange?: (id: string) => void;
+  /** Back to the case registry overview (Esc). */
+  onBack?: () => void;
 }
 
 const csvCell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
 
 const selectClass =
-  'h-8 rounded-lg border border-slate-200 bg-white pl-2.5 pr-7 text-xs text-slate-900 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white';
+  'h-9 rounded-lg border border-slate-300 bg-transparent pl-2.5 pr-7 text-[13px] text-slate-900 hover:border-slate-400 focus:border-teal-500 focus:outline-none focus:ring-2 focus:ring-teal-500/20 dark:border-slate-700 dark:text-white dark:[color-scheme:dark] dark:hover:border-slate-500';
+
+const isTyping = (target: EventTarget | null) =>
+  target instanceof HTMLElement &&
+  (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
 
 export function CaseRegister<S extends string>({
   laboratory,
   unit,
-  headerActions,
   statuses,
   rows,
   isLoading = false,
   error = '',
   columns,
   searchPlaceholder,
+  tabs = [],
+  activeTab,
+  onTabChange,
+  onBack,
 }: CaseRegisterProps<S>) {
   const [status, setStatus] = useState<SummaryFilter<S>>('all');
   const [officer, setOfficer] = useState('');
@@ -165,27 +176,93 @@ export function CaseRegister<S extends string>({
 
   const plural = (n: number) => `${n} ${unit}${n === 1 ? '' : 's'}`;
 
+  // Esc goes back to the overview, as in the case file.
+  useEffect(() => {
+    if (!onBack) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || isTyping(event.target)) return;
+      if (document.querySelector('[role="dialog"], [role="alertdialog"], [aria-modal="true"], [role="menu"], [role="listbox"]')) return;
+      onBack();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onBack]);
+
+  const openCount = aged.filter((row) => !isClosed(row.status)).length;
+  const overdueCount = aged.filter((row) => row.overdue).length;
+  const toneOf = (value: S) => statuses.find((s) => s.value === value)?.tone ?? 'slate';
+
   return (
-    <DashboardPage>
-      <DashboardHeader
-        breadcrumb={['Case Registry', laboratory]}
-        title={`${laboratory} case register`}
-        meta={<StatusPill tone="slate" dot={false}>{plural(rows.length)}</StatusPill>}
-        description={`The official register of every ${unit} received by the ${laboratory} laboratory. Select a file to open its full record, process history and findings.`}
-        actions={
-          <>
-            {headerActions}
-            <Button icon={Printer} onClick={printRegister} title="Print the register as shown, on A4 with the official letterhead">
-              Print register
-            </Button>
-          </>
-        }
-      />
+    <div className="mx-auto w-full max-w-[1500px] space-y-4 animate-fade-in">
+      <header className="space-y-3">
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            className="-ml-1.5 inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-transparent px-1.5 py-1 text-[13px] text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-900 print:hidden dark:text-slate-400 dark:hover:border-slate-700 dark:hover:text-white"
+            title="Back (Esc)"
+          >
+            <ArrowLeft className="h-4 w-4" /> Case files
+          </button>
+        )}
+        <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <h1 className="text-[22px] font-semibold leading-tight tracking-[-0.02em] text-slate-900 dark:text-white">{laboratory}</h1>
+              <StatusText tone={overdueCount ? 'rose' : openCount ? 'amber' : 'emerald'}>
+                {openCount} open{overdueCount ? ` · ${overdueCount} overdue` : ''}
+              </StatusText>
+            </div>
+            <p className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[13px] text-slate-500 dark:text-slate-400">
+              <span>Case register · {plural(rows.length)}</span>
+              {/* The department's process; on phones the strip below already shows it. */}
+              <span className="hidden flex-wrap items-center gap-x-1.5 sm:inline-flex">
+                <span className="text-slate-300 dark:text-slate-600" aria-hidden="true">·</span>
+                {statuses.map((stage, index) => (
+                  <React.Fragment key={stage.value}>
+                    {index > 0 && <ChevronRight className="h-3 w-3 text-slate-300 dark:text-slate-600" aria-hidden="true" />}
+                    <span>{stage.value}</span>
+                  </React.Fragment>
+                ))}
+              </span>
+            </p>
+          </div>
+          <OutlineButton size="md" icon={Printer} onClick={printRegister} title="Print the register as shown, on A4 with the official letterhead" className="print:hidden">
+            Print register
+          </OutlineButton>
+        </div>
+
+        {tabs.length > 1 && (
+          <nav aria-label="Departments" className="-mb-px flex gap-1 overflow-x-auto border-b border-slate-200 print:hidden dark:border-slate-800">
+            {tabs.map((tab) => {
+              const selected = tab.id === activeTab;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => onTabChange?.(tab.id)}
+                  aria-current={selected ? 'page' : undefined}
+                  className={`inline-flex shrink-0 cursor-pointer items-center gap-2 border-b-2 px-3 py-2 text-[13px] transition-colors ${
+                    selected
+                      ? 'border-teal-500 font-medium text-slate-900 dark:text-white'
+                      : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
+                  }`}
+                >
+                  {tab.label}
+                  <span className={`text-[11.5px] tabular-nums ${tab.overdue ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'}`} title={`${tab.open} open${tab.overdue ? `, ${tab.overdue} overdue` : ''}`}>
+                    {tab.open}
+                  </span>
+                </button>
+              );
+            })}
+          </nav>
+        )}
+      </header>
 
       {error && (
-        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900 dark:bg-rose-950/30 dark:text-rose-200">
-          {error}
-        </div>
+        <p role="alert" className="flex items-start gap-2 rounded-lg border border-rose-300/70 px-3.5 py-2 text-[13px] text-rose-700 dark:border-rose-500/30 dark:text-rose-300">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> {error}
+        </p>
       )}
 
       <RegisterSummary<S>
@@ -202,33 +279,30 @@ export function CaseRegister<S extends string>({
         }}
       />
 
-      <Panel
-        icon={FolderOpen}
-        tone="sky"
-        title={statusLabel === 'All statuses' ? 'Register entries' : statusLabel}
-        description={`Showing ${visible.length} of ${plural(rows.length)}`}
-        flush
-        actions={
-          <>
-            <SearchInput value={query} onChange={setQuery} placeholder={searchPlaceholder} />
-            <Button
-              size="sm"
-              icon={newestFirst ? ArrowDownWideNarrow : ArrowUpNarrowWide}
-              onClick={() => setNewestFirst((v) => !v)}
-              aria-label={`Sort by date received, ${newestFirst ? 'newest' : 'oldest'} first`}
-            >
-              {newestFirst ? 'Newest first' : 'Oldest first'}
-            </Button>
-            <Button size="sm" icon={Download} onClick={exportCsv} disabled={visible.length === 0} title="Download the entries shown as a spreadsheet (CSV)">
-              Export
-            </Button>
-          </>
-        }
-      >
-        {/* Filters */}
-        <div className="flex flex-wrap items-end gap-3 border-b border-slate-200 bg-slate-50/60 px-4 py-3 dark:border-slate-800 dark:bg-slate-950/30">
+      <section className="rounded-xl border border-slate-200 dark:border-slate-800" aria-label={`${laboratory} register entries`}>
+        {/* Toolbar: what is shown, search, sort, filters, export */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+          <div className="mr-auto min-w-0">
+            <h2 className="text-[14px] font-semibold text-slate-900 dark:text-white">{statusLabel === 'All statuses' ? 'Register entries' : statusLabel}</h2>
+            <p className="text-[12px] text-slate-500 dark:text-slate-400">Showing {visible.length} of {plural(rows.length)}</p>
+          </div>
+          <OutlineSearch value={query} onChange={setQuery} placeholder={searchPlaceholder} className="w-full sm:w-80" />
+          <OutlineButton
+            size="md"
+            icon={newestFirst ? ArrowDownWideNarrow : ArrowUpNarrowWide}
+            onClick={() => setNewestFirst((v) => !v)}
+            aria-label={`Sort by date received, ${newestFirst ? 'newest' : 'oldest'} first`}
+          >
+            {newestFirst ? 'Newest' : 'Oldest'}
+          </OutlineButton>
+          <OutlineButton size="md" icon={Download} onClick={exportCsv} disabled={visible.length === 0} title="Download the entries shown as a spreadsheet (CSV)">
+            Export
+          </OutlineButton>
+        </div>
+
+        <div className="flex flex-wrap items-end gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
           <label className="flex flex-col gap-1">
-            <span className="text-[11px] font-medium text-slate-600 dark:text-slate-300">{columns.officer}</span>
+            <span className="text-[11.5px] text-slate-500 dark:text-slate-400">{columns.officer}</span>
             <select value={officer} onChange={(e) => setOfficer(e.target.value)} className={selectClass}>
               <option value="">All officers</option>
               {officers.map((name) => (
@@ -239,7 +313,7 @@ export function CaseRegister<S extends string>({
           </label>
 
           <label className="flex flex-col gap-1">
-            <span className="text-[11px] font-medium text-slate-600 dark:text-slate-300">Date received</span>
+            <span className="text-[11.5px] text-slate-500 dark:text-slate-400">Date received</span>
             <select value={period} onChange={(e) => setPeriod(e.target.value as Period)} className={selectClass}>
               {(Object.keys(PERIOD_LABEL) as Period[]).map((key) => (
                 <option key={key} value={key}>{PERIOD_LABEL[key]}</option>
@@ -250,20 +324,20 @@ export function CaseRegister<S extends string>({
           {period === 'custom' && (
             <>
               <label className="flex flex-col gap-1">
-                <span className="text-[11px] font-medium text-slate-600 dark:text-slate-300">From</span>
+                <span className="text-[11.5px] text-slate-500 dark:text-slate-400">From</span>
                 <input type="date" value={customFrom} max={customTo || undefined} onChange={(e) => setCustomFrom(e.target.value)} className={`${selectClass} pr-2.5`} />
               </label>
               <label className="flex flex-col gap-1">
-                <span className="text-[11px] font-medium text-slate-600 dark:text-slate-300">To</span>
+                <span className="text-[11.5px] text-slate-500 dark:text-slate-400">To</span>
                 <input type="date" value={customTo} min={customFrom || undefined} onChange={(e) => setCustomTo(e.target.value)} className={`${selectClass} pr-2.5`} />
               </label>
             </>
           )}
 
           {activeFilters > 0 && (
-            <Button size="sm" variant="ghost" icon={X} onClick={clearFilters} className="ml-auto">
+            <OutlineButton size="md" tone="ghost" icon={X} onClick={clearFilters} className="ml-auto">
               Clear {activeFilters} filter{activeFilters === 1 ? '' : 's'}
-            </Button>
+            </OutlineButton>
           )}
         </div>
 
@@ -272,12 +346,14 @@ export function CaseRegister<S extends string>({
             <Loader2 className="h-4 w-4 animate-spin" /> Loading the register…
           </div>
         ) : visible.length === 0 ? (
-          <EmptyState
-            icon={Inbox}
-            title="No case files to show"
-            description={rows.length === 0 ? `No ${unit}s have been registered yet.` : `Nothing on the register matches: ${scope}.`}
-            action={activeFilters > 0 && rows.length > 0 ? <Button size="sm" onClick={clearFilters}>Show all files</Button> : undefined}
-          />
+          <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">
+            <Inbox className="h-6 w-6 text-slate-300 dark:text-slate-600" />
+            <p className="text-[14px] font-medium text-slate-900 dark:text-white">No case files to show</p>
+            <p className="max-w-md text-[12.5px] text-slate-500 dark:text-slate-400">
+              {rows.length === 0 ? `No ${unit}s have been registered yet.` : `Nothing on the register matches: ${scope}.`}
+            </p>
+            {activeFilters > 0 && rows.length > 0 && <OutlineButton onClick={clearFilters}>Show all files</OutlineButton>}
+          </div>
         ) : (
           <>
             {/* Desktop: the register as a table */}
@@ -298,11 +374,7 @@ export function CaseRegister<S extends string>({
                 </thead>
                 <tbody className={tc.tbody}>
                   {visible.map((row, i) => (
-                    <tr
-                      key={row.key}
-                      onClick={row.onOpen}
-                      className={`${tc.tr} cursor-pointer ${row.overdue ? 'bg-rose-50/40 dark:bg-rose-500/5' : ''}`}
-                    >
+                    <tr key={row.key} onClick={row.onOpen} className={`${tc.tr} cursor-pointer`}>
                       <td className={`${tc.td} tabular-nums text-slate-500 dark:text-slate-400`}>{i + 1}</td>
                       <td className={tc.td}>
                         <div className="font-mono text-[13px] font-semibold text-slate-900 dark:text-white">{row.reference}</div>
@@ -314,18 +386,16 @@ export function CaseRegister<S extends string>({
                       </td>
                       <td className={tc.td}>
                         <div className="max-w-[220px] truncate font-medium text-slate-900 dark:text-white" title={row.party}>{row.party}</div>
-                        {row.partySub && <div className="text-[11px] text-slate-500 dark:text-slate-400">{row.partySub}</div>}
+                        {row.partySub && <div className="max-w-[220px] truncate text-[11px] text-slate-500 dark:text-slate-400">{row.partySub}</div>}
                       </td>
                       <td className={tc.td}>
                         <div className="max-w-[220px] truncate" title={row.subject}>{row.subject}</div>
                         {row.subjectSub && <div className="max-w-[220px] truncate text-[11px] text-slate-500 dark:text-slate-400">{row.subjectSub}</div>}
                       </td>
                       <td className={tc.td}><Officer name={row.officer} /></td>
-                      <td className={tc.td}>
-                        <StatusPill tone={statuses.find((s) => s.value === row.status)?.tone ?? 'slate'}>{row.status}</StatusPill>
-                      </td>
+                      <td className={tc.td}><StatusText tone={toneOf(row.status)}>{row.status}</StatusText></td>
                       <td className={`${tc.td} text-right`}>
-                        <Button
+                        <OutlineButton
                           size="xs"
                           icon={FolderOpen}
                           aria-label={`Open case file ${row.reference}`}
@@ -334,8 +404,8 @@ export function CaseRegister<S extends string>({
                             row.onOpen();
                           }}
                         >
-                          Open file
-                        </Button>
+                          Open
+                        </OutlineButton>
                       </td>
                     </tr>
                   ))}
@@ -343,19 +413,19 @@ export function CaseRegister<S extends string>({
               </table>
             </div>
 
-            {/* Mobile: one card per file */}
-            <ul className="divide-y divide-slate-100 md:hidden dark:divide-slate-800">
+            {/* Mobile: one row per file */}
+            <ul className="divide-y divide-slate-200 md:hidden dark:divide-slate-800">
               {visible.map((row) => (
                 <li key={row.key}>
                   <button
                     type="button"
                     onClick={row.onOpen}
-                    className="flex w-full cursor-pointer items-start gap-3 px-4 py-3 text-left hover:bg-slate-50 dark:hover:bg-slate-800/40"
+                    className="flex w-full cursor-pointer items-start gap-3 px-4 py-3 text-left hover:bg-slate-500/[0.04]"
                   >
                     <div className="min-w-0 flex-1 space-y-1">
                       <div className="flex items-start justify-between gap-2">
                         <span className="truncate font-mono text-[13px] font-semibold text-slate-900 dark:text-white">{row.reference}</span>
-                        <StatusPill tone={statuses.find((s) => s.value === row.status)?.tone ?? 'slate'}>{row.status}</StatusPill>
+                        <StatusText tone={toneOf(row.status)}>{row.status}</StatusText>
                       </div>
                       <div className="truncate text-[13px] text-slate-700 dark:text-slate-200">{row.party}</div>
                       <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">
@@ -373,11 +443,11 @@ export function CaseRegister<S extends string>({
             </ul>
           </>
         )}
-      </Panel>
+      </section>
 
       {/* Hidden on screen; the only thing printed by "Print register" */}
       <RegisterPrint laboratory={laboratory} columns={columns} statuses={statuses} rows={visible} scope={scope} />
-    </DashboardPage>
+    </div>
   );
 }
 
@@ -396,11 +466,11 @@ const AgeNote: React.FC<{ age: number | null; overdue: boolean; inline?: boolean
 const Officer: React.FC<{ name?: string | null }> = ({ name }) =>
   name ? (
     <span className="flex items-center gap-2">
-      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+      <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-slate-200 text-[10px] font-semibold text-slate-600 dark:border-slate-700 dark:text-slate-300">
         {initialsOf(name)}
       </span>
       <span className="truncate text-slate-900 dark:text-white">{name}</span>
     </span>
   ) : (
-    <StatusPill tone="teal" dot={false}>Not assigned</StatusPill>
+    <span className="text-[12.5px] text-amber-700 dark:text-amber-400">Not assigned</span>
   );

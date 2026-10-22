@@ -42,10 +42,10 @@ interface AppSidebarProps {
   myExhibitsCount?: number;
   superAdminTab?: SuperAdminTab;
   superAdminCounts?: Partial<Record<SuperAdminTab, number>>;
-  /** Which laboratory's case register is open (Super Admin case files). */
+  /** Which department's case register is open (Super Admin case files); null is the overview. */
   caseRegister?: CaseRegister;
-  /** Number of files in each laboratory's case register. */
-  caseRegisterCounts?: Partial<Record<CaseRegister, number>>;
+  /** The departments that have case files, with their open and overdue counts; they become the Case files menu. */
+  caseRegisters?: { id: string; label: string; open: number; overdue: number }[];
   /** Which Exhibit Laboratory register tab is open ('mine', 'analysis', ...). */
   labRegisterView?: string;
   /** Number of exhibits in each register tab; 'mine' is the officer's unfinished work. */
@@ -62,8 +62,8 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   myExhibitsCount = 0,
   superAdminTab = 'members',
   superAdminCounts = {},
-  caseRegister = 'water',
-  caseRegisterCounts = {},
+  caseRegister = null,
+  caseRegisters = [],
   labRegisterView,
   labRegisterCounts = {},
 }) => {
@@ -101,7 +101,9 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
       // The officer's own unfinished work needs attention; the other tabs are plain totals.
       return { badge: labRegisterCounts[view], badgeTone: view === 'mine' ? 'alert' : 'count' };
     }
-    return { badge: caseRegisterCounts[id.slice(CASE_REGISTER_NAV_PREFIX.length) as CaseRegister], badgeTone: 'count' };
+    // A department's open case files; shown as needing attention when some are overdue.
+    const register = caseRegisters.find((item) => `${CASE_REGISTER_NAV_PREFIX}${item.id}` === id);
+    return register ? { badge: register.open, badgeTone: register.overdue ? 'alert' : 'count' } : {};
   };
 
   // The Super Admin console, the case registry and the Exhibit Laboratory
@@ -111,7 +113,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
     : activeView === 'super-admin'
     ? `${SUPER_ADMIN_NAV_PREFIX}${superAdminTab === 'audit' ? 'audit' : 'members'}`
     : activeView === 'case-file' && isSuperAdmin
-      ? `${CASE_REGISTER_NAV_PREFIX}${caseRegister}`
+      ? caseRegister ? `${CASE_REGISTER_NAV_PREFIX}${caseRegister}` : 'case-file'
       : activeView === 'laboratory' && labViews.length > 0 && labRegisterView
         ? `${LAB_REGISTER_NAV_PREFIX}${labRegisterView}`
         : activeView;
@@ -125,7 +127,15 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
       .map((item) => {
         const children = item.id === 'laboratory' && labViews.length > 0
           ? labViews.map((view) => ({ id: `${LAB_REGISTER_NAV_PREFIX}${view.id}`, label: view.label }))
-          : item.children;
+          : item.id === 'case-file' && isSuperAdmin
+            // The overview, then only the departments that have case files, so a new one appears with its first file.
+            ? caseRegisters.length
+              ? [
+                  { id: 'case-file', label: 'All departments' },
+                  ...caseRegisters.map((register) => ({ id: `${CASE_REGISTER_NAV_PREFIX}${register.id}`, label: register.label })),
+                ]
+              : []
+            : item.children;
         return {
           ...item,
           badge: badgeFor(item.id),
