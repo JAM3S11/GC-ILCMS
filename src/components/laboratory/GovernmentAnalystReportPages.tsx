@@ -162,8 +162,17 @@ const buildBlocks = (data: GovernmentAnalystReportData): Block[] => [
   {
     key: 'witness',
     node: (
-      <p className="pt-[5mm]">
+      <p className="relative pt-[5mm]">
         As witness my hand this <span className={dotted}>&nbsp;<PrintedDate date={data.approvalDate} dayOf />&nbsp;</span>.
+        {/* The analysing officer signs at the right end of the line, rising into the space above it
+            so the page never reflows. */}
+        {data.analystSignature && (
+          <img
+            src={data.analystSignature}
+            alt=""
+            className="absolute bottom-[-2mm] right-0 h-[12mm] max-w-[45mm] object-contain object-right-bottom"
+          />
+        )}
       </p>
     ),
   },
@@ -172,9 +181,7 @@ const buildBlocks = (data: GovernmentAnalystReportData): Block[] => [
     node: (
       <div className="flex justify-end pt-[3mm]">
         <div className="w-[58mm]">
-          <div className="flex h-[14mm] items-end">
-            {data.analystSignature && <img src={data.analystSignature} alt="" className="max-h-[13mm] max-w-full object-contain" />}
-          </div>
+          <div className="h-[14mm]" />
           <p className="font-bold">{data.signatoryName}</p>
           <p className="font-bold italic underline">GOVERNMENT ANALYST</p>
         </div>
